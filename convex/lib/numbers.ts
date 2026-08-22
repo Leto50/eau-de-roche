@@ -28,3 +28,12 @@ export function assertWholeNumberRange(
     })
   }
 }
+
+export function roundSeptimsDown(value: number): number {
+  const nearestInteger = Math.round(value)
+  const tolerance = Number.EPSILON * Math.max(1, Math.abs(value)) * 8
+
+  return Math.abs(value - nearestInteger) <= tolerance
+    ? nearestInteger
+    : Math.floor(value)
+}

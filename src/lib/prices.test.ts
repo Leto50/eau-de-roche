@@ -4,6 +4,7 @@ import {
   priceDraftFromValue,
   priceDraftToValue,
   priceRatioFromValue,
+  roundSeptimsDown,
 } from "./prices"
 
 describe("priceRatioFromValue", () => {
@@ -32,5 +33,13 @@ describe("priceDraft", () => {
   it("refuse les fractions de septim ou d’unité dans le rapport", () => {
     expect(priceDraftToValue({ septims: "1.5", units: "4" })).toBeNaN()
     expect(priceDraftToValue({ septims: "1", units: "4.5" })).toBeNaN()
+  })
+})
+
+describe("roundSeptimsDown", () => {
+  it("arrondit le montant final au septim inférieur", () => {
+    expect(roundSeptimsDown(0.25)).toBe(0)
+    expect(roundSeptimsDown(1.99)).toBe(1)
+    expect(roundSeptimsDown((1 / 3) * 3)).toBe(1)
   })
 })

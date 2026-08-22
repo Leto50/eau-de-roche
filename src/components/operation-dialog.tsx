@@ -72,6 +72,7 @@ import {
 import {
   priceDraftFromValue,
   priceDraftToValue,
+  roundSeptimsDown,
   type PriceDraft,
 } from "@/lib/prices"
 import { cn } from "@/lib/utils"
@@ -565,11 +566,16 @@ export function OperationDialog({
         : 0)
     )
   }, 0)
-  const previewTotal = Math.max(
+  const previewUnroundedTotal = Math.max(
     0,
     (kind === "sale" ? saleGross : previewQuantity * previewPrice) -
       previewDiscount
   )
+  const previewTotal = roundSeptimsDown(previewUnroundedTotal)
+  const roundingTolerance =
+    Number.EPSILON * Math.max(1, previewUnroundedTotal) * 8
+  const isPreviewRounded =
+    Math.abs(previewTotal - previewUnroundedTotal) > roundingTolerance
   const stockDelta =
     kind === "sale"
       ? -previewQuantity
@@ -922,6 +928,11 @@ export function OperationDialog({
                     {config.totalLabel} : {formatSeptims(previewTotal)}
                   </span>
                 )}
+                {kind !== "production" && isPreviewRounded ? (
+                  <span className="text-muted-foreground">
+                    Arrondi au septim inférieur
+                  </span>
+                ) : null}
               </AlertDescription>
             </Alert>
           ) : kind === "sale" && saleLines.length > 0 ? (
@@ -939,10 +950,17 @@ export function OperationDialog({
                   ? "Stock insuffisant"
                   : `${saleLines.length} ${saleLines.length === 1 ? "référence" : "références"} dans le panier`}
               </AlertTitle>
-              <AlertDescription>
-                {hasInsufficientStock
-                  ? `Stock à corriger : ${insufficientSaleProducts.map((product) => product.name).join(", ")}.`
-                  : `${config.totalLabel} : ${formatSeptims(previewTotal)}`}
+              <AlertDescription className="flex flex-wrap gap-x-5 gap-y-1">
+                <span>
+                  {hasInsufficientStock
+                    ? `Stock à corriger : ${insufficientSaleProducts.map((product) => product.name).join(", ")}.`
+                    : `${config.totalLabel} : ${formatSeptims(previewTotal)}`}
+                </span>
+                {!hasInsufficientStock && isPreviewRounded ? (
+                  <span className="text-muted-foreground">
+                    Arrondi au septim inférieur
+                  </span>
+                ) : null}
               </AlertDescription>
             </Alert>
           ) : null}

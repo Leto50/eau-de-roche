@@ -3,7 +3,11 @@ import { ConvexError, v } from "convex/values"
 import { type Doc, type Id } from "./_generated/dataModel"
 import { mutation, query } from "./_generated/server"
 import { requireUser } from "./lib/auth"
-import { assertFiniteRange, assertWholeNumberRange } from "./lib/numbers"
+import {
+  assertFiniteRange,
+  assertWholeNumberRange,
+  roundSeptimsDown,
+} from "./lib/numbers"
 import { stockOperationKind } from "./lib/validators"
 
 const MAX_TEXT_LENGTH = 500
@@ -226,7 +230,7 @@ export const recordSale = mutation({
       }
     }
 
-    const total = gross - discount
+    const total = roundSeptimsDown(gross - discount)
     const firstLine = preparedLines[0]
     const occurredAt = args.occurredAt
     const transactionId = await ctx.db.insert("transactions", {
@@ -366,9 +370,15 @@ export const record = mutation({
         message: "La remise ne peut pas dépasser le montant brut.",
       })
     }
-    const net = gross - discount
+    const net = roundSeptimsDown(gross - discount)
     const total =
-      args.kind === "purchase" ? -net : args.kind === "production" ? 0 : net
+      args.kind === "purchase"
+        ? net === 0
+          ? 0
+          : -net
+        : args.kind === "production"
+          ? 0
+          : net
     const counterparty = cleanOptionalText(args.counterparty)
     const comment = cleanOptionalText(args.comment)
     const transactionId = await ctx.db.insert("transactions", {

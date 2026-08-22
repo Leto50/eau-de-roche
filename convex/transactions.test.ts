@@ -182,6 +182,41 @@ describe("transactions.record", () => {
     expect(state.transactions).toHaveLength(0)
   })
 
+  it("arrondit un achat au septim inférieur", async () => {
+    const backend = createTestBackend()
+    const member = await asAuthenticatedMember(backend)
+    const { characterId, productId } = await seedStock(backend)
+    await backend.run((ctx) =>
+      ctx.db.patch(productId, { purchasePrice: 1 / 4 })
+    )
+
+    const firstResult = await member.mutation(api.transactions.record, {
+      characterId,
+      kind: "purchase",
+      occurredAt: Date.now(),
+      productId,
+      quantity: 1,
+    })
+    const secondResult = await member.mutation(api.transactions.record, {
+      characterId,
+      kind: "purchase",
+      occurredAt: Date.now(),
+      productId,
+      quantity: 4,
+    })
+
+    const state = await backend.run(async (ctx) => ({
+      product: await ctx.db.get(productId),
+      transactions: await ctx.db.query("transactions").collect(),
+    }))
+    expect(firstResult.resultingStock).toBe(11)
+    expect(secondResult.resultingStock).toBe(15)
+    expect(state.product?.currentStock).toBe(15)
+    expect(state.transactions.map((transaction) => transaction.total)).toEqual([
+      0, -1,
+    ])
+  })
+
   it("refuse l'opération en l'absence d'une session Better Auth valide", async () => {
     const backend = createTestBackend()
     const { characterId, productId } = await seedStock(backend)
@@ -349,5 +384,39 @@ describe("transactions.recordSale", () => {
     expect(state.product?.currentStock).toBe(10)
     expect(state.transactions).toHaveLength(0)
     expect(state.lines).toHaveLength(0)
+  })
+
+  it("cumule le panier avant de l’arrondir au septim inférieur", async () => {
+    const backend = createTestBackend()
+    const member = await asAuthenticatedMember(backend)
+    const { characterId, productId } = await seedStock(backend)
+    const secondProductId = await backend.run(async (ctx) => {
+      await ctx.db.patch(productId, { salePrice: 3 / 4 })
+      return ctx.db.insert("products", {
+        active: true,
+        category: "ingredient",
+        currentStock: 10,
+        minimumStock: 1,
+        name: "Ail",
+        normalizedName: "ail",
+        salePrice: 3 / 4,
+        tracksStock: true,
+      })
+    })
+
+    const result = await member.mutation(api.transactions.recordSale, {
+      characterId,
+      lines: [
+        { kind: "product", productId, quantity: 1 },
+        { kind: "product", productId: secondProductId, quantity: 1 },
+      ],
+      occurredAt: Date.now(),
+    })
+
+    const transaction = await backend.run((ctx) =>
+      ctx.db.query("transactions").first()
+    )
+    expect(result.total).toBe(1)
+    expect(transaction?.total).toBe(1)
   })
 })
