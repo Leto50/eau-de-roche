@@ -1,0 +1,162 @@
+# L’eau de Roche
+
+Application quotidienne de gestion de la boutique RP Skyrim L’eau de Roche,
+issue du classeur `Inventaire 2.xlsx`. Elle réunit le stock, les opérations, les
+commandes, les recettes et les lots dans une interface responsive inspirée d’un
+registre d’apothicaire.
+
+## Socle technique
+
+- TanStack Start et React 19 pour le rendu serveur et le routage.
+- Convex pour les données temps réel et les mutations atomiques.
+- Better Auth intégré à Convex, avec rôles administrateur/employé et inscription
+  publique désactivée côté backend.
+- shadcn/ui pour les primitives interactives et accessibles, configurées avec
+  Tailwind CSS pour conserver la direction artistique Skyrim.
+- ESLint flat strict de type T3 (`recommendedTypeChecked` et
+  `stylisticTypeChecked`), TypeScript strict et Vitest.
+- Adaptateur officiel TanStack Start pour Netlify.
+
+## Développement local
+
+Prérequis : Node.js 22, pnpm 11 et le fichier source
+`~/Téléchargements/Inventaire 2.xlsx` si le seed doit être régénéré.
+
+```bash
+pnpm install
+pnpm dev:convex
+```
+
+Au premier lancement, Convex propose un déploiement cloud de développement ou
+un backend local anonyme. Le CLI écrit ensuite `CONVEX_DEPLOYMENT`,
+`VITE_CONVEX_URL` et `VITE_CONVEX_SITE_URL` dans `.env.local`.
+
+Configurer les secrets sur le déploiement Convex sélectionné :
+
+```bash
+pnpm convex env set SITE_URL http://localhost:3000
+pnpm convex env set BETTER_AUTH_SECRET
+pnpm convex env set INITIAL_ADMIN_EMAIL "administrateur@exemple.fr"
+pnpm convex env set INITIAL_ADMIN_PASSWORD
+pnpm convex env set SEED_SECRET
+```
+
+Les commandes sans valeur demandent celle-ci de manière interactive. Utiliser
+des secrets aléatoires d’au moins 32 octets.
+
+Dans un second terminal :
+
+```bash
+pnpm seed -- '{"seedSecret":"votre-secret-de-seed"}'
+pnpm convex run internal.auth.bootstrapAdmin '{"name":"Administrateur"}'
+pnpm convex env remove INITIAL_ADMIN_PASSWORD
+pnpm dev:web
+```
+
+La commande `bootstrapAdmin` attribue le rôle `admin` à l’adresse définie dans
+`INITIAL_ADMIN_EMAIL`. Si le compte existe déjà, il est promu et conserve son
+mot de passe actuel. Sinon, il est créé avec le mot de passe lu depuis
+`INITIAL_ADMIN_PASSWORD`. C’est une fonction Convex interne : elle est
+accessible au CLI du déploiement, mais pas au navigateur. Supprimer
+immédiatement `INITIAL_ADMIN_PASSWORD` après son exécution. Ouvrir ensuite
+<http://localhost:3000/connexion>. Les autres comptes sont créés par un
+administrateur depuis le menu de l’application. Les mots de passe doivent
+contenir entre 12 et 128 caractères.
+
+`pnpm dev` lance Convex et Vite ensemble une fois la configuration initiale
+terminée.
+
+## Migration du classeur
+
+Le script ne reproduit pas les cellules Excel en erreur. Il extrait les lignes
+métier, normalise les noms, rattache les relations connues et produit un seed
+déterministe :
+
+```bash
+pnpm extract:workbook
+pnpm seed -- '{"seedSecret":"votre-secret-de-seed"}'
+```
+
+Le jeu actuel contient 83 produits, 111 opérations valides, 12 commandes,
+35 recettes, 8 lots, 5 personnages et 11 contacts. L’import Convex est
+idempotent : un `systemSetting` empêche de dupliquer un jeu déjà initialisé.
+La mutation d’import refuse toute requête qui ne présente pas `SEED_SECRET`.
+
+## Règles métier importantes
+
+- Toutes les requêtes et mutations applicatives exigent une session valide.
+- Une vente, un achat ou une production écrit dans une même mutation Convex
+  l’opération, le mouvement de stock, le nouveau stock et l’audit.
+- Une vente est refusée si elle rendrait le stock négatif.
+- Les quantités, prix, remises, dates et textes sont validés côté backend.
+- Un service ne produit aucun mouvement de stock.
+- L’inscription publique est désactivée côté Better Auth, y compris si son
+  endpoint est appelé directement.
+- Seul un utilisateur ayant le rôle `admin` peut appeler l’API de création des
+  comptes employés.
+
+## Vérification
+
+```bash
+pnpm check
+pnpm build
+```
+
+`pnpm check` exécute Prettier en mode contrôle, ESLint sans avertissement,
+TypeScript strict et les tests Convex. Les tests montent également le composant
+Better Auth et vérifient l’atomicité des opérations ainsi que les refus de stock
+négatif et d’accès anonyme.
+
+## Déploiement Convex + Netlify
+
+Le fichier `netlify.toml` et le plugin officiel Netlify/TanStack Start sont déjà
+configurés. Le build Netlify exécute `convex deploy`, injecte automatiquement
+`VITE_CONVEX_URL` et `VITE_CONVEX_SITE_URL`, déploie les fonctions Convex, puis
+produit le client et la fonction SSR Netlify. Des en-têtes empêchent également
+l’intégration en iframe, la détection incorrecte des contenus et l’accès aux
+capteurs inutiles.
+
+1. Créer ou sélectionner un projet Convex cloud avec `pnpm convex dev`.
+2. Créer le site Netlify à partir du dépôt Git afin de connaître son URL finale.
+3. Générer une clé de déploiement de production dans le tableau de bord Convex.
+4. Ajouter `CONVEX_DEPLOY_KEY` aux variables d’environnement du site Netlify.
+5. Configurer les variables du backend de production :
+
+```bash
+pnpm convex env set --prod SITE_URL "https://votre-site.netlify.app"
+pnpm convex env set --prod BETTER_AUTH_SECRET
+pnpm convex env set --prod INITIAL_ADMIN_EMAIL "administrateur@exemple.fr"
+pnpm convex env set --prod INITIAL_ADMIN_PASSWORD
+pnpm convex env set --prod SEED_SECRET
+```
+
+6. Lancer le premier déploiement Netlify. Le fichier `netlify.toml` fournit la
+   commande et le dossier de publication.
+7. Importer une seule fois les données et créer le premier administrateur :
+
+```bash
+pnpm convex run --prod seed:importWorkbook '{"seedSecret":"votre-secret-de-seed"}'
+pnpm convex run --prod internal.auth.bootstrapAdmin '{"name":"Administrateur"}'
+pnpm convex env remove --prod INITIAL_ADMIN_PASSWORD
+```
+
+Après la première connexion, l’administrateur crée les comptes employés depuis
+le menu « Administration ». Il n’existe aucune page d’inscription publique.
+
+Si le domaine Netlify ou le domaine personnalisé change, mettre à jour
+`SITE_URL` sur Convex avant de se reconnecter. Pour les Deploy Previews, utiliser
+une clé Convex de preview et une URL d’authentification dédiée ; leurs données
+sont isolées de la production.
+
+## Commandes utiles
+
+| Commande                | Rôle                                          |
+| ----------------------- | --------------------------------------------- |
+| `pnpm dev`              | Convex et site local en parallèle             |
+| `pnpm extract:workbook` | Régénère `data/inventaire.seed.json`          |
+| `pnpm seed -- '{…}'`    | Importe le seed avec le secret du déploiement |
+| `pnpm lint`             | ESLint strict, zéro avertissement             |
+| `pnpm typecheck`        | Vérification TypeScript sans émission         |
+| `pnpm test`             | Tests métier Convex + Better Auth             |
+| `pnpm build`            | Build client, SSR et fonction Netlify         |
+| `pnpm build:netlify`    | Déploiement Convex puis build Netlify         |

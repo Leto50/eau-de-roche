@@ -1,0 +1,16 @@
+[build]
+  command = "pnpm build:netlify"
+  publish = "dist/client"
+
+[build.environment]
+  NODE_VERSION = "22"
+  PNPM_VERSION = "11.3.0"
+
+[[headers]]
+  for = "/*"
+
+  [headers.values]
+    Permissions-Policy = "camera=(), geolocation=(), microphone=()"
+    Referrer-Policy = "strict-origin-when-cross-origin"
+    X-Content-Type-Options = "nosniff"
+    X-Frame-Options = "DENY"
