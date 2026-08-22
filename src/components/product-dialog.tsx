@@ -75,8 +75,9 @@ export function ProductDialog({
   const [isSubmitting, setIsSubmitting] = useState(false)
 
   const tracksStock = category !== "service"
+  const effectiveTargetStock = tracksStock ? Number(targetStock) : 0
   const stockChanged =
-    product !== undefined && Number(targetStock) !== product.currentStock
+    product !== undefined && effectiveTargetStock !== product.currentStock
 
   function resetForm() {
     setName(product?.name ?? "")
@@ -95,7 +96,7 @@ export function ProductDialog({
 
   async function persist(active: boolean) {
     const submittedMinimum = tracksStock ? Number(minimumStock) : 0
-    const submittedStock = tracksStock ? Number(targetStock) : 0
+    const submittedStock = effectiveTargetStock
     const submittedPurchasePrice = optionalNumber(purchasePrice)
     const submittedSalePrice = optionalNumber(salePrice)
 
@@ -161,6 +162,33 @@ export function ProductDialog({
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     await persist(true)
+  }
+
+  async function archiveProduct() {
+    if (!product) return
+    setIsSubmitting(true)
+    try {
+      await saveProduct({
+        active: false,
+        category: product.category,
+        minimumStock: product.minimumStock,
+        name: product.name,
+        productId: product._id,
+        purchasePrice: product.purchasePrice ?? null,
+        salePrice: product.salePrice ?? null,
+        targetStock: product.currentStock,
+      })
+      toast.success("Référence archivée.")
+      setOpen(false)
+    } catch (error) {
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : "Impossible d’archiver la référence."
+      )
+    } finally {
+      setIsSubmitting(false)
+    }
   }
 
   return (
@@ -251,34 +279,38 @@ export function ProductDialog({
             </div>
           </div>
 
-          {tracksStock ? (
+          {tracksStock || stockChanged ? (
             <div className="grid gap-4 border-y border-border/70 py-4 sm:grid-cols-2">
-              <div className="grid gap-2">
-                <Label htmlFor={`${fieldId}-stock`}>Stock actuel</Label>
-                <Input
-                  id={`${fieldId}-stock`}
-                  min="0"
-                  onChange={(event) => setTargetStock(event.target.value)}
-                  required
-                  step="0.01"
-                  type="number"
-                  value={targetStock}
-                />
-              </div>
-              <div className="grid gap-2">
-                <Label htmlFor={`${fieldId}-minimum-stock`}>
-                  Seuil d’alerte
-                </Label>
-                <Input
-                  id={`${fieldId}-minimum-stock`}
-                  min="0"
-                  onChange={(event) => setMinimumStock(event.target.value)}
-                  required
-                  step="0.01"
-                  type="number"
-                  value={minimumStock}
-                />
-              </div>
+              {tracksStock ? (
+                <>
+                  <div className="grid gap-2">
+                    <Label htmlFor={`${fieldId}-stock`}>Stock actuel</Label>
+                    <Input
+                      id={`${fieldId}-stock`}
+                      min="0"
+                      onChange={(event) => setTargetStock(event.target.value)}
+                      required
+                      step="0.01"
+                      type="number"
+                      value={targetStock}
+                    />
+                  </div>
+                  <div className="grid gap-2">
+                    <Label htmlFor={`${fieldId}-minimum-stock`}>
+                      Seuil d’alerte
+                    </Label>
+                    <Input
+                      id={`${fieldId}-minimum-stock`}
+                      min="0"
+                      onChange={(event) => setMinimumStock(event.target.value)}
+                      required
+                      step="0.01"
+                      type="number"
+                      value={minimumStock}
+                    />
+                  </div>
+                </>
+              ) : null}
               {stockChanged ? (
                 <div className="grid gap-2 sm:col-span-2">
                   <Label htmlFor={`${fieldId}-reason`}>
@@ -326,7 +358,7 @@ export function ProductDialog({
                       <AlertDialogCancel>Conserver</AlertDialogCancel>
                       <AlertDialogAction
                         onClick={() => {
-                          void persist(false)
+                          void archiveProduct()
                         }}
                       >
                         Archiver la référence

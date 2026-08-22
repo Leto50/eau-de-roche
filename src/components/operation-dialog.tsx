@@ -548,7 +548,13 @@ export function OperationDialog({
   const previewDiscount = Number.isFinite(parsedDiscount) ? parsedDiscount : 0
   const saleGross = saleLines.reduce((total, line) => {
     const lineQuantity = Number(line.quantity)
-    const linePrice = Number(line.unitPrice)
+    const fallbackLinePrice =
+      line.kind === "product"
+        ? products.find((product) => product._id === line.id)?.salePrice
+        : bundles.find((bundle) => bundle._id === line.id)?.price
+    const linePrice = line.unitPrice.trim()
+      ? Number(line.unitPrice)
+      : (fallbackLinePrice ?? 0)
     return (
       total +
       (Number.isFinite(lineQuantity) && Number.isFinite(linePrice)
