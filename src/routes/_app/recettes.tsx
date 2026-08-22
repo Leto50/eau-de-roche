@@ -9,6 +9,7 @@ import { BundleArchivesDialog, BundleDialog } from "@/components/bundle-dialog"
 import { PageError } from "@/components/page-error"
 import { PageHeader } from "@/components/page-header"
 import { PageSkeleton } from "@/components/page-skeleton"
+import { RecipeArchivesDialog, RecipeDialog } from "@/components/recipe-dialog"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -132,12 +133,25 @@ function RecipesPage() {
               Recettes
             </h2>
           </div>
-          <BookMarked aria-hidden="true" className="size-5 text-primary" />
+          <div className="flex items-center gap-2">
+            {isAdmin ? (
+              <>
+                <RecipeArchivesDialog />
+                <RecipeDialog products={products} />
+              </>
+            ) : null}
+            <BookMarked aria-hidden="true" className="size-5 text-primary" />
+          </div>
         </div>
         {visibleRecipes.length > 0 ? (
           <div className="grid grid-cols-3 gap-3 max-xl:grid-cols-2 max-md:grid-cols-1">
             {visibleRecipes.map((recipe) => (
-              <RecipeEntry key={recipe._id} recipe={recipe} />
+              <RecipeEntry
+                isAdmin={isAdmin}
+                key={recipe._id}
+                products={products}
+                recipe={recipe}
+              />
             ))}
           </div>
         ) : (
@@ -190,7 +204,15 @@ function RecipesPage() {
   )
 }
 
-function RecipeEntry({ recipe }: Readonly<{ recipe: Recipe }>) {
+function RecipeEntry({
+  isAdmin,
+  products,
+  recipe,
+}: Readonly<{
+  isAdmin: boolean
+  products: readonly Doc<"products">[]
+  recipe: Recipe
+}>) {
   return (
     <Card className="min-h-48 gap-0 rounded-none border-[#5b462b]/30 border-t-[#684f2d]/60 bg-linear-to-br from-[#fffbed]/60 to-[#e3d3b3]/20 py-0 ring-0">
       <CardHeader className="p-4 pb-0">
@@ -200,11 +222,24 @@ function RecipeEntry({ recipe }: Readonly<{ recipe: Recipe }>) {
         <CardTitle className="font-display text-lg font-medium">
           {recipe.name}
         </CardTitle>
-        {recipe.cost !== undefined ? (
-          <CardAction className="text-sm font-semibold">
-            {formatSeptims(recipe.cost)}
-          </CardAction>
-        ) : null}
+        <CardAction className="flex items-center gap-1 text-sm font-semibold">
+          {recipe.cost !== undefined ? formatSeptims(recipe.cost) : null}
+          {isAdmin ? (
+            <RecipeDialog
+              products={products}
+              recipe={recipe}
+              trigger={
+                <Button
+                  aria-label={`Modifier ${recipe.name}`}
+                  size="icon"
+                  variant="ghost"
+                >
+                  <Pencil aria-hidden="true" />
+                </Button>
+              }
+            />
+          ) : null}
+        </CardAction>
       </CardHeader>
       <CardContent className="p-4 pt-3">
         {recipe.effect ? (

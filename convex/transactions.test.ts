@@ -1,75 +1,7 @@
-import betterAuthTest from "@convex-dev/better-auth/test"
-import { convexTest } from "convex-test"
 import { describe, expect, it } from "vitest"
 
-import { api, components } from "./_generated/api"
-import schema from "./schema"
-import { modules } from "./test.setup"
-
-function documentId(value: unknown): string {
-  if (
-    typeof value !== "object" ||
-    value === null ||
-    !("_id" in value) ||
-    typeof value._id !== "string"
-  ) {
-    throw new Error(
-      "Le composant d'authentification n'a pas renvoyé d'identifiant."
-    )
-  }
-  return value._id
-}
-
-function createTestBackend() {
-  const backend = convexTest(schema, modules)
-  betterAuthTest.register(backend)
-  return backend
-}
-
-async function asAuthenticatedMember(
-  backend: ReturnType<typeof createTestBackend>
-) {
-  const now = Date.now()
-  const createdUser: unknown = await backend.mutation(
-    components.betterAuth.adapter.create,
-    {
-      input: {
-        data: {
-          createdAt: now,
-          email: "employe@example.test",
-          emailVerified: true,
-          name: "Employé test",
-          updatedAt: now,
-        },
-        model: "user",
-      },
-    }
-  )
-  const userId = documentId(createdUser)
-  const createdSession: unknown = await backend.mutation(
-    components.betterAuth.adapter.create,
-    {
-      input: {
-        data: {
-          createdAt: now,
-          expiresAt: now + 60_000,
-          token: "test-session-token",
-          updatedAt: now,
-          userId,
-        },
-        model: "session",
-      },
-    }
-  )
-  const sessionId = documentId(createdSession)
-
-  return backend.withIdentity({
-    issuer: "https://auth.example.test",
-    sessionId,
-    subject: userId,
-    tokenIdentifier: `https://auth.example.test|${userId}`,
-  })
-}
+import { api } from "./_generated/api"
+import { asAuthenticatedUser, createTestBackend } from "./test.helpers"
 
 async function seedStock(backend: ReturnType<typeof createTestBackend>) {
   return backend.run(async (ctx) => {
@@ -95,7 +27,7 @@ async function seedStock(backend: ReturnType<typeof createTestBackend>) {
 describe("transactions.record", () => {
   it("écrit atomiquement la vente, le mouvement, l'audit et le nouveau stock", async () => {
     const backend = createTestBackend()
-    const member = await asAuthenticatedMember(backend)
+    const member = await asAuthenticatedUser(backend)
     const { characterId, productId } = await seedStock(backend)
 
     const result = await member.mutation(api.transactions.record, {
@@ -134,7 +66,7 @@ describe("transactions.record", () => {
 
   it("refuse une vente qui rendrait le stock négatif sans écriture partielle", async () => {
     const backend = createTestBackend()
-    const member = await asAuthenticatedMember(backend)
+    const member = await asAuthenticatedUser(backend)
     const { characterId, productId } = await seedStock(backend)
 
     await expect(
@@ -161,7 +93,7 @@ describe("transactions.record", () => {
 
   it("refuse une quantité fractionnaire sans modifier le stock", async () => {
     const backend = createTestBackend()
-    const member = await asAuthenticatedMember(backend)
+    const member = await asAuthenticatedUser(backend)
     const { characterId, productId } = await seedStock(backend)
 
     await expect(
@@ -184,7 +116,7 @@ describe("transactions.record", () => {
 
   it("arrondit un achat au septim inférieur", async () => {
     const backend = createTestBackend()
-    const member = await asAuthenticatedMember(backend)
+    const member = await asAuthenticatedUser(backend)
     const { characterId, productId } = await seedStock(backend)
     await backend.run((ctx) =>
       ctx.db.patch(productId, { purchasePrice: 1 / 4 })
@@ -236,7 +168,7 @@ describe("transactions.record", () => {
 describe("transactions.recordTrade", () => {
   it("enregistre un achat multi-produits dans une seule transaction", async () => {
     const backend = createTestBackend()
-    const member = await asAuthenticatedMember(backend)
+    const member = await asAuthenticatedUser(backend)
     const { characterId, productId } = await seedStock(backend)
     const secondProductId = await backend.run(async (ctx) => {
       await ctx.db.patch(productId, { purchasePrice: 1 / 4 })
@@ -296,7 +228,7 @@ describe("transactions.recordTrade", () => {
 
   it("annule tout l’achat si une référence est indisponible", async () => {
     const backend = createTestBackend()
-    const member = await asAuthenticatedMember(backend)
+    const member = await asAuthenticatedUser(backend)
     const { characterId, productId } = await seedStock(backend)
     const archivedProductId = await backend.run((ctx) =>
       ctx.db.insert("products", {
@@ -337,7 +269,7 @@ describe("transactions.recordTrade", () => {
 
   it("enregistre une vente multi-références et déstocke les composants des lots", async () => {
     const backend = createTestBackend()
-    const member = await asAuthenticatedMember(backend)
+    const member = await asAuthenticatedUser(backend)
     const { characterId, productId } = await seedStock(backend)
     const { bundleId, secondProductId } = await backend.run(async (ctx) => {
       const secondProductId = await ctx.db.insert("products", {
@@ -426,7 +358,7 @@ describe("transactions.recordTrade", () => {
 
   it("refuse tout le panier si un composant de lot manque en stock", async () => {
     const backend = createTestBackend()
-    const member = await asAuthenticatedMember(backend)
+    const member = await asAuthenticatedUser(backend)
     const { characterId, productId } = await seedStock(backend)
     const bundleId = await backend.run(async (ctx) => {
       const bundleId = await ctx.db.insert("bundles", {
@@ -468,7 +400,7 @@ describe("transactions.recordTrade", () => {
 
   it("refuse une ligne fractionnaire sans enregistrer le panier", async () => {
     const backend = createTestBackend()
-    const member = await asAuthenticatedMember(backend)
+    const member = await asAuthenticatedUser(backend)
     const { characterId, productId } = await seedStock(backend)
 
     await expect(
@@ -492,7 +424,7 @@ describe("transactions.recordTrade", () => {
 
   it("cumule le panier avant de l’arrondir au septim inférieur", async () => {
     const backend = createTestBackend()
-    const member = await asAuthenticatedMember(backend)
+    const member = await asAuthenticatedUser(backend)
     const { characterId, productId } = await seedStock(backend)
     const secondProductId = await backend.run(async (ctx) => {
       await ctx.db.patch(productId, { salePrice: 3 / 4 })
@@ -523,5 +455,94 @@ describe("transactions.recordTrade", () => {
     )
     expect(result.total).toBe(1)
     expect(transaction?.total).toBe(1)
+  })
+})
+
+describe("transactions.cancel", () => {
+  it("annule une vente en rétablissant le stock et conserve sa trace", async () => {
+    const backend = createTestBackend()
+    const member = await asAuthenticatedUser(backend)
+    const admin = await asAuthenticatedUser(backend, "admin")
+    const { characterId, productId } = await seedStock(backend)
+    const result = await member.mutation(api.transactions.record, {
+      characterId,
+      kind: "sale",
+      occurredAt: Date.now(),
+      productId,
+      quantity: 3,
+    })
+
+    await admin.mutation(api.transactions.cancel, {
+      reason: "Vente saisie deux fois",
+      transactionId: result.transactionId,
+    })
+
+    const state = await backend.run(async (ctx) => ({
+      audits: await ctx.db.query("auditLogs").collect(),
+      movements: await ctx.db
+        .query("stockMovements")
+        .withIndex("by_transaction", (index) =>
+          index.eq("transactionId", result.transactionId)
+        )
+        .collect(),
+      product: await ctx.db.get(productId),
+      transaction: await ctx.db.get(result.transactionId),
+    }))
+    expect(state.product?.currentStock).toBe(10)
+    expect(state.transaction).toMatchObject({
+      cancellationReason: "Vente saisie deux fois",
+    })
+    expect(state.movements.map((movement) => movement.delta)).toEqual([-3, 3])
+    expect(state.audits.at(-1)?.action).toBe("transaction.cancelled")
+  })
+
+  it("refuse d’annuler un achat lorsque les unités ont déjà été utilisées", async () => {
+    const backend = createTestBackend()
+    const member = await asAuthenticatedUser(backend)
+    const admin = await asAuthenticatedUser(backend, "admin")
+    const { characterId, productId } = await seedStock(backend)
+    const result = await member.mutation(api.transactions.record, {
+      characterId,
+      kind: "purchase",
+      occurredAt: Date.now(),
+      productId,
+      quantity: 3,
+    })
+    await backend.run((ctx) => ctx.db.patch(productId, { currentStock: 2 }))
+
+    await expect(
+      admin.mutation(api.transactions.cancel, {
+        reason: "Achat incorrect",
+        transactionId: result.transactionId,
+      })
+    ).rejects.toThrowError("stock")
+
+    const transaction = await backend.run((ctx) =>
+      ctx.db.get(result.transactionId)
+    )
+    expect(transaction?.cancelledAt).toBeUndefined()
+  })
+
+  it("réserve l’annulation aux administrateurs", async () => {
+    const backend = createTestBackend()
+    const employee = await asAuthenticatedUser(backend)
+    const transactionId = await backend.run((ctx) =>
+      ctx.db.insert("transactions", {
+        actorName: "Intendant",
+        kind: "service",
+        occurredAt: Date.now(),
+        productName: "Conseil alchimique",
+        quantity: 1,
+        source: "web",
+        total: 5,
+      })
+    )
+
+    await expect(
+      employee.mutation(api.transactions.cancel, {
+        reason: "Erreur de saisie",
+        transactionId,
+      })
+    ).rejects.toThrowError("réservée aux administrateurs")
   })
 })

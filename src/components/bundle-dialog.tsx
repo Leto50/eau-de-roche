@@ -3,7 +3,6 @@ import { type FunctionReturnType } from "convex/server"
 import {
   Archive,
   ArchiveRestore,
-  ChevronsUpDown,
   LoaderCircle,
   PackagePlus,
   Pencil,
@@ -33,13 +32,7 @@ import {
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import { PriceInput } from "@/components/price-input"
-import {
-  Command,
-  CommandEmpty,
-  CommandInput,
-  CommandItem,
-  CommandList,
-} from "@/components/ui/command"
+import { ProductPicker } from "@/components/product-picker"
 import {
   Dialog,
   DialogContent,
@@ -51,16 +44,11 @@ import {
 } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Separator } from "@/components/ui/separator"
 import { api } from "../../convex/_generated/api"
 import { type Doc } from "../../convex/_generated/dataModel"
-import { formatNumber, formatSeptims } from "@/lib/format"
+import { formatSeptims } from "@/lib/format"
 import {
   priceDraftFromValue,
   priceDraftToValue,
@@ -73,63 +61,6 @@ interface BundleItemDraft {
   key: number
   productId: string
   quantity: string
-}
-
-function BundleProductPicker({
-  onChange,
-  products,
-  selectedProduct,
-}: Readonly<{
-  onChange: (productId: string) => void
-  products: readonly Doc<"products">[]
-  selectedProduct: Doc<"products"> | undefined
-}>) {
-  const [open, setOpen] = useState(false)
-
-  return (
-    <Popover onOpenChange={setOpen} open={open}>
-      <PopoverTrigger asChild>
-        <Button
-          aria-expanded={open}
-          className="h-9 min-w-0 flex-1 justify-between bg-background/50 px-3 font-normal"
-          role="combobox"
-          type="button"
-          variant="outline"
-        >
-          <span className="truncate">
-            {selectedProduct?.name ?? "Choisir un produit…"}
-          </span>
-          <ChevronsUpDown aria-hidden="true" className="size-3.5" />
-        </Button>
-      </PopoverTrigger>
-      <PopoverContent
-        align="start"
-        className="w-[var(--radix-popover-trigger-width)] rounded-[0.2rem] border-[#6a5436] bg-[#f4e8cf] p-0"
-      >
-        <Command className="rounded-[0.2rem] bg-transparent">
-          <CommandInput placeholder="Nom du produit…" />
-          <CommandList>
-            <CommandEmpty>Aucun produit trouvé.</CommandEmpty>
-            {products.map((product) => (
-              <CommandItem
-                key={product._id}
-                onSelect={() => {
-                  onChange(product._id)
-                  setOpen(false)
-                }}
-                value={product.name}
-              >
-                <span className="min-w-0 flex-1 truncate">{product.name}</span>
-                <span className="text-[0.68rem] text-muted-foreground tabular-nums">
-                  {formatNumber(product.currentStock)} en stock
-                </span>
-              </CommandItem>
-            ))}
-          </CommandList>
-        </Command>
-      </PopoverContent>
-    </Popover>
-  )
 }
 
 export function BundleDialog({
@@ -347,9 +278,6 @@ export function BundleDialog({
             </div>
 
             {items.map((item, index) => {
-              const selectedProduct = availableProducts.find(
-                (product) => product._id === item.productId
-              )
               return (
                 <div
                   className="flex items-end gap-2 border-l-2 border-primary/35 pl-3"
@@ -357,12 +285,12 @@ export function BundleDialog({
                 >
                   <div className="grid min-w-0 flex-1 gap-2">
                     <Label>Produit {index + 1}</Label>
-                    <BundleProductPicker
+                    <ProductPicker
                       onChange={(productId) =>
-                        updateItem(item.key, { productId })
+                        updateItem(item.key, { productId: productId ?? "" })
                       }
                       products={availableProducts}
-                      selectedProduct={selectedProduct}
+                      selectedProductId={item.productId}
                     />
                   </div>
                   <div className="grid w-24 gap-2">

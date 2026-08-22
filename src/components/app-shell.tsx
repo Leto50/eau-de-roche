@@ -8,6 +8,7 @@ import {
   LogOut,
   ScrollText,
   UserPlus,
+  UsersRound,
   type LucideIcon,
 } from "lucide-react"
 import { useState, type ReactNode } from "react"
@@ -38,7 +39,13 @@ import {
 interface NavigationItem {
   icon: LucideIcon
   label: string
-  to: "/" | "/commandes" | "/inventaire" | "/journal" | "/recettes"
+  to:
+    | "/"
+    | "/commandes"
+    | "/inventaire"
+    | "/journal"
+    | "/personnages"
+    | "/recettes"
 }
 
 const navigation: readonly NavigationItem[] = [
@@ -111,6 +118,9 @@ function Administration({
   onCreateAccount,
 }: Readonly<{ onCreateAccount: () => void }>) {
   const { data: session } = authClient.useSession()
+  const pathname = useRouterState({
+    select: (state) => state.location.pathname,
+  })
   const { isMobile, setOpenMobile } = useSidebar()
   const isHydrated = useHydrated()
   const isAdmin = session?.user.role?.split(",").includes("admin") ?? false
@@ -123,7 +133,20 @@ function Administration({
         Administration
       </SidebarGroupLabel>
       <SidebarGroupContent>
-        <SidebarMenu>
+        <SidebarMenu className="gap-1">
+          <SidebarMenuItem>
+            <SidebarMenuButton
+              asChild
+              className="h-10 text-sm tracking-[0.02em] data-active:border data-active:border-sidebar-border data-active:bg-sidebar-accent data-active:text-sidebar-accent-foreground"
+              isActive={pathname.startsWith("/personnages")}
+              tooltip="Personnages"
+            >
+              <Link onClick={() => setOpenMobile(false)} to="/personnages">
+                <UsersRound aria-hidden="true" strokeWidth={1.7} />
+                <span>Personnages</span>
+              </Link>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
           <SidebarMenuItem>
             <SidebarMenuButton
               className="h-10 text-sm tracking-[0.02em]"

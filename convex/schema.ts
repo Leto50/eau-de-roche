@@ -50,6 +50,9 @@ export default defineSchema({
     actorCharacterId: v.optional(v.id("characters")),
     actorName: v.string(),
     actorUserId: v.optional(v.string()),
+    cancellationReason: v.optional(v.string()),
+    cancelledAt: v.optional(v.number()),
+    cancelledByUserId: v.optional(v.string()),
     comment: v.optional(v.string()),
     counterparty: v.optional(v.string()),
     discount: v.optional(v.number()),
@@ -120,6 +123,7 @@ export default defineSchema({
     .index("by_order", ["orderId"]),
 
   recipes: defineTable({
+    active: v.optional(v.boolean()),
     cost: v.optional(v.number()),
     effect: v.optional(v.string()),
     family: v.string(),

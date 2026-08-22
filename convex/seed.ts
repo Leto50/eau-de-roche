@@ -195,6 +195,7 @@ export const importWorkbook = mutation({
     for (const recipe of seedData.recipes) {
       const product = products.get(normalizeName(recipe.name))
       const recipeId = await ctx.db.insert("recipes", {
+        active: true,
         ...(recipe.cost === undefined ? {} : { cost: recipe.cost }),
         ...(recipe.effect ? { effect: recipe.effect } : {}),
         family: recipe.family,

@@ -2,7 +2,7 @@ import { ConvexError, v } from "convex/values"
 
 import { type Doc, type Id } from "./_generated/dataModel"
 import { mutation, query } from "./_generated/server"
-import { requireUser } from "./lib/auth"
+import { requireAdmin, requireUser } from "./lib/auth"
 import {
   assertFiniteRange,
   assertWholeNumberRange,
@@ -51,6 +51,91 @@ export const list = query({
           : [],
       }))
     )
+  },
+})
+
+export const cancel = mutation({
+  args: {
+    reason: v.string(),
+    transactionId: v.id("transactions"),
+  },
+  handler: async (ctx, args) => {
+    const user = await requireAdmin(ctx)
+    const transaction = await ctx.db.get(args.transactionId)
+    if (!transaction) {
+      throw new ConvexError({
+        code: "NOT_FOUND",
+        message: "Opération introuvable.",
+      })
+    }
+    if (transaction.cancelledAt !== undefined) {
+      throw new ConvexError({
+        code: "ALREADY_CANCELLED",
+        message: "Cette opération est déjà annulée.",
+      })
+    }
+    const reason = cleanOptionalText(args.reason)
+    if (!reason) {
+      throw new ConvexError({
+        code: "INVALID_INPUT",
+        message: "Le motif de l’annulation est obligatoire.",
+      })
+    }
+
+    const movements = await ctx.db
+      .query("stockMovements")
+      .withIndex("by_transaction", (index) =>
+        index.eq("transactionId", transaction._id)
+      )
+      .collect()
+    const reversals = await Promise.all(
+      movements.map(async (movement) => {
+        const product = await ctx.db.get(movement.productId)
+        if (!product) {
+          throw new ConvexError({
+            code: "NOT_FOUND",
+            message: "Un produit lié à l’opération est introuvable.",
+          })
+        }
+        const resultingStock = product.currentStock - movement.delta
+        if (resultingStock < 0) {
+          throw new ConvexError({
+            code: "INSUFFICIENT_STOCK",
+            message: `Impossible d’annuler : le stock de « ${product.name} » est insuffisant.`,
+          })
+        }
+        return { movement, product, resultingStock }
+      })
+    )
+
+    const cancelledAt = Date.now()
+    for (const reversal of reversals) {
+      await ctx.db.patch(reversal.product._id, {
+        currentStock: reversal.resultingStock,
+      })
+      await ctx.db.insert("stockMovements", {
+        delta: -reversal.movement.delta,
+        occurredAt: cancelledAt,
+        previousStock: reversal.product.currentStock,
+        productId: reversal.product._id,
+        reason: "adjustment",
+        resultingStock: reversal.resultingStock,
+        transactionId: transaction._id,
+      })
+    }
+    await ctx.db.patch(transaction._id, {
+      cancellationReason: reason,
+      cancelledAt,
+      cancelledByUserId: String(user._id),
+    })
+    await ctx.db.insert("auditLogs", {
+      action: "transaction.cancelled",
+      actorUserId: String(user._id),
+      createdAt: cancelledAt,
+      detail: reason,
+      entityId: transaction._id,
+      entityType: "transaction",
+    })
   },
 })
 

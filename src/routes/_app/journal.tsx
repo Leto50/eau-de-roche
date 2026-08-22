@@ -2,14 +2,27 @@ import { convexQuery } from "@convex-dev/react-query"
 import { useSuspenseQuery } from "@tanstack/react-query"
 import { createFileRoute } from "@tanstack/react-router"
 import { type FunctionReturnType } from "convex/server"
-import { ChevronDown, ScrollText } from "lucide-react"
-import { useState } from "react"
+import { useMutation } from "convex/react"
+import { ChevronDown, LoaderCircle, ScrollText, Undo2 } from "lucide-react"
+import { useState, type FormEvent } from "react"
+import { toast } from "sonner"
 
 import { OperationDialog } from "@/components/operation-dialog"
 import { PageError } from "@/components/page-error"
 import { PageHeader } from "@/components/page-header"
 import { PageSkeleton } from "@/components/page-skeleton"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
@@ -33,8 +46,12 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
+import { Label } from "@/components/ui/label"
+import { Textarea } from "@/components/ui/textarea"
 import { api } from "../../../convex/_generated/api"
 import { type Doc } from "../../../convex/_generated/dataModel"
+import { useHydrated } from "@/hooks/use-hydrated"
+import { authClient } from "@/lib/auth-client"
 import {
   formatDate,
   formatNumber,
@@ -79,6 +96,8 @@ const operationToneClasses: Readonly<
 }
 
 function JournalPage() {
+  const { data: session } = authClient.useSession()
+  const isHydrated = useHydrated()
   const { data: transactions } = useSuspenseQuery(
     convexQuery(api.transactions.list, { limit: 150 })
   )
@@ -91,6 +110,8 @@ function JournalPage() {
   const { data: bundles } = useSuspenseQuery(
     convexQuery(api.recipes.listBundles, {})
   )
+  const isAdmin =
+    isHydrated && (session?.user.role?.split(",").includes("admin") ?? false)
 
   return (
     <div className="animate-in duration-300 fade-in slide-in-from-bottom-1 motion-reduce:animate-none">
@@ -121,11 +142,17 @@ function JournalPage() {
                     <TableHead>Personnage</TableHead>
                     <TableHead className="text-right">Quantité</TableHead>
                     <TableHead className="pr-4 text-right">Montant</TableHead>
+                    {isAdmin ? (
+                      <TableHead className="w-12">
+                        <span className="sr-only">Actions</span>
+                      </TableHead>
+                    ) : null}
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {transactions.map((transaction) => (
                     <JournalRow
+                      isAdmin={isAdmin}
                       key={transaction._id}
                       transaction={transaction}
                     />
@@ -137,7 +164,11 @@ function JournalPage() {
 
           <div className="mt-6 grid gap-3 md:hidden">
             {transactions.map((transaction) => (
-              <JournalCard key={transaction._id} transaction={transaction} />
+              <JournalCard
+                isAdmin={isAdmin}
+                key={transaction._id}
+                transaction={transaction}
+              />
             ))}
           </div>
         </>
@@ -167,14 +198,26 @@ function OperationPill({
   )
 }
 
-function JournalRow({ transaction }: Readonly<{ transaction: Transaction }>) {
+function JournalRow({
+  isAdmin,
+  transaction,
+}: Readonly<{ isAdmin: boolean; transaction: Transaction }>) {
+  const isCancelled = transaction.cancelledAt !== undefined
   return (
-    <TableRow className="border-[#5b462b]/20 hover:bg-[#fffdeb]/40">
+    <TableRow
+      className={cn(
+        "border-[#5b462b]/20 hover:bg-[#fffdeb]/40",
+        isCancelled && "opacity-60"
+      )}
+    >
       <TableCell className="pl-4 text-muted-foreground">
         {formatDate(transaction.occurredAt)}
       </TableCell>
       <TableCell>
-        <OperationPill kind={transaction.kind} />
+        <div className="flex flex-wrap items-center gap-1.5">
+          <OperationPill kind={transaction.kind} />
+          {isCancelled ? <Badge variant="secondary">Annulée</Badge> : null}
+        </div>
       </TableCell>
       <TableCell className="max-w-72">
         <span className="block truncate font-semibold">
@@ -186,6 +229,11 @@ function JournalRow({ transaction }: Readonly<{ transaction: Transaction }>) {
           </span>
         ) : null}
         <TransactionLines lines={transaction.lines} />
+        {transaction.cancellationReason ? (
+          <span className="block text-xs text-muted-foreground italic">
+            {transaction.cancellationReason}
+          </span>
+        ) : null}
       </TableCell>
       <TableCell className="max-w-40 truncate text-muted-foreground">
         {transaction.actorName}
@@ -196,19 +244,36 @@ function JournalRow({ transaction }: Readonly<{ transaction: Transaction }>) {
       <TableCell
         className={cn(
           "pr-4 text-right font-semibold tabular-nums",
+          isCancelled && "line-through",
           transaction.total >= 0 ? "text-[#456044]" : "text-[#8a3e2f]"
         )}
       >
         {transaction.total >= 0 ? "+" : ""}
         {formatSeptims(transaction.total)}
       </TableCell>
+      {isAdmin ? (
+        <TableCell className="pr-2">
+          {isCancelled ? null : (
+            <TransactionCancellation transaction={transaction} />
+          )}
+        </TableCell>
+      ) : null}
     </TableRow>
   )
 }
 
-function JournalCard({ transaction }: Readonly<{ transaction: Transaction }>) {
+function JournalCard({
+  isAdmin,
+  transaction,
+}: Readonly<{ isAdmin: boolean; transaction: Transaction }>) {
+  const isCancelled = transaction.cancelledAt !== undefined
   return (
-    <Card className="rounded-none border-[#5b462b]/35 bg-[#fff8e7]/30 shadow-[2px_3px_0_rgba(84,63,37,0.05)] ring-0">
+    <Card
+      className={cn(
+        "rounded-none border-[#5b462b]/35 bg-[#fff8e7]/30 shadow-[2px_3px_0_rgba(84,63,37,0.05)] ring-0",
+        isCancelled && "opacity-60"
+      )}
+    >
       <CardHeader>
         <CardTitle className="font-display text-base">
           {transaction.productName}
@@ -217,8 +282,15 @@ function JournalCard({ transaction }: Readonly<{ transaction: Transaction }>) {
           {transaction.actorName}
           {transaction.counterparty ? ` · ${transaction.counterparty}` : ""}
         </CardDescription>
-        <CardAction>
-          <OperationPill kind={transaction.kind} />
+        <CardAction className="flex items-center gap-1">
+          {isCancelled ? (
+            <Badge variant="secondary">Annulée</Badge>
+          ) : (
+            <OperationPill kind={transaction.kind} />
+          )}
+          {isAdmin && !isCancelled ? (
+            <TransactionCancellation transaction={transaction} />
+          ) : null}
         </CardAction>
       </CardHeader>
       <CardContent className="grid gap-3 border-t border-border/60 pt-4">
@@ -234,6 +306,7 @@ function JournalCard({ transaction }: Readonly<{ transaction: Transaction }>) {
           <p
             className={cn(
               "font-display text-lg",
+              isCancelled && "line-through",
               transaction.total >= 0 ? "text-[#456044]" : "text-[#8a3e2f]"
             )}
           >
@@ -242,8 +315,105 @@ function JournalCard({ transaction }: Readonly<{ transaction: Transaction }>) {
           </p>
         </div>
         <TransactionLines lines={transaction.lines} />
+        {transaction.cancellationReason ? (
+          <p className="text-xs text-muted-foreground italic">
+            {transaction.cancellationReason}
+          </p>
+        ) : null}
       </CardContent>
     </Card>
+  )
+}
+
+function TransactionCancellation({
+  transaction,
+}: Readonly<{ transaction: Transaction }>) {
+  const cancelTransaction = useMutation(api.transactions.cancel)
+  const [open, setOpen] = useState(false)
+  const [reason, setReason] = useState("")
+  const [isSubmitting, setIsSubmitting] = useState(false)
+
+  function handleOpenChange(nextOpen: boolean) {
+    if (nextOpen && !open) setReason("")
+    setOpen(nextOpen)
+  }
+
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (!reason.trim()) {
+      toast.error("Le motif de l’annulation est obligatoire.")
+      return
+    }
+    setIsSubmitting(true)
+    try {
+      await cancelTransaction({
+        reason: reason.trim(),
+        transactionId: transaction._id,
+      })
+      toast.success("Opération annulée et stock corrigé.")
+      setOpen(false)
+    } catch (error) {
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : "Impossible d’annuler cette opération."
+      )
+    } finally {
+      setIsSubmitting(false)
+    }
+  }
+
+  return (
+    <AlertDialog onOpenChange={handleOpenChange} open={open}>
+      <AlertDialogTrigger asChild>
+        <Button
+          aria-label={`Annuler ${operationLabels[transaction.kind]} — ${transaction.productName}`}
+          size="icon"
+          type="button"
+          variant="ghost"
+        >
+          <Undo2 aria-hidden="true" />
+        </Button>
+      </AlertDialogTrigger>
+      <AlertDialogContent className="rounded-[0.2rem] border-[#6a5436] bg-[#eee1c7]">
+        <form onSubmit={handleSubmit}>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Annuler cette opération ?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Le stock sera corrigé par le mouvement inverse. L’opération
+              restera visible dans le journal pour conserver une trace fiable.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <div className="my-5 grid gap-2">
+            <Label htmlFor={`cancel-${transaction._id}`}>
+              Motif de l’annulation
+            </Label>
+            <Textarea
+              id={`cancel-${transaction._id}`}
+              maxLength={500}
+              onChange={(event) => setReason(event.target.value)}
+              placeholder="Erreur de saisie, doublon, opération non réalisée…"
+              required
+              value={reason}
+            />
+          </div>
+          <AlertDialogFooter>
+            <AlertDialogCancel type="button">Conserver</AlertDialogCancel>
+            <AlertDialogAction disabled={isSubmitting} type="submit">
+              {isSubmitting ? (
+                <LoaderCircle
+                  aria-hidden="true"
+                  className="animate-spin motion-reduce:animate-none"
+                />
+              ) : (
+                <Undo2 aria-hidden="true" />
+              )}
+              Annuler l’opération
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </form>
+      </AlertDialogContent>
+    </AlertDialog>
   )
 }
 
