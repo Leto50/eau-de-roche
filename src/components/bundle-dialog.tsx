@@ -32,6 +32,7 @@ import {
 } from "@/components/ui/alert-dialog"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
+import { PriceInput } from "@/components/price-input"
 import {
   Command,
   CommandEmpty,
@@ -59,7 +60,12 @@ import { ScrollArea } from "@/components/ui/scroll-area"
 import { Separator } from "@/components/ui/separator"
 import { api } from "../../convex/_generated/api"
 import { type Doc } from "../../convex/_generated/dataModel"
-import { formatNumber } from "@/lib/format"
+import { formatNumber, formatSeptims } from "@/lib/format"
+import {
+  priceDraftFromValue,
+  priceDraftToValue,
+  type PriceDraft,
+} from "@/lib/prices"
 
 type Bundle = FunctionReturnType<typeof api.recipes.listBundles>[number]
 
@@ -141,7 +147,9 @@ export function BundleDialog({
   const nextLineKey = useRef(1)
   const [open, setOpen] = useState(false)
   const [name, setName] = useState("")
-  const [price, setPrice] = useState("")
+  const [price, setPrice] = useState<PriceDraft>(() =>
+    priceDraftFromValue(undefined)
+  )
   const [items, setItems] = useState<BundleItemDraft[]>([
     { key: 0, productId: "", quantity: "1" },
   ])
@@ -150,7 +158,7 @@ export function BundleDialog({
 
   function resetForm() {
     setName(bundle?.name ?? "")
-    setPrice(bundle?.price?.toString() ?? "")
+    setPrice(priceDraftFromValue(bundle?.price))
     if (bundle?.items.length) {
       setItems(
         bundle.items.map((item, index) => ({
@@ -195,7 +203,7 @@ export function BundleDialog({
       )?._id,
       quantity: Number(item.quantity),
     }))
-    const submittedPrice = price.trim() ? Number(price) : null
+    const submittedPrice = priceDraftToValue(price)
 
     if (!name.trim()) {
       toast.error("Le nom du lot est obligatoire.")
@@ -223,11 +231,10 @@ export function BundleDialog({
       toast.error("Un produit ne peut apparaître qu’une fois dans un lot.")
       return
     }
-    if (
-      submittedPrice !== null &&
-      (!Number.isFinite(submittedPrice) || submittedPrice < 0)
-    ) {
-      toast.error("Le prix doit être un nombre positif.")
+    if (submittedPrice !== null && !Number.isFinite(submittedPrice)) {
+      toast.error(
+        "Indiquez un nombre entier de septims pour un nombre entier d’unités."
+      )
       return
     }
 
@@ -297,7 +304,7 @@ export function BundleDialog({
         </DialogHeader>
 
         <form className="grid gap-5" onSubmit={handleSubmit}>
-          <div className="grid gap-4 sm:grid-cols-[minmax(0,1fr)_10rem]">
+          <div className="grid gap-4 sm:grid-cols-2">
             <div className="grid gap-2">
               <Label htmlFor={`${fieldId}-name`}>Nom du lot</Label>
               <Input
@@ -310,14 +317,10 @@ export function BundleDialog({
               />
             </div>
             <div className="grid gap-2">
-              <Label htmlFor={`${fieldId}-price`}>Prix, septims</Label>
-              <Input
+              <Label htmlFor={`${fieldId}-price`}>Prix du lot</Label>
+              <PriceInput
                 id={`${fieldId}-price`}
-                min="0"
-                onChange={(event) => setPrice(event.target.value)}
-                placeholder="Non renseigné"
-                step="any"
-                type="number"
+                onValueChange={setPrice}
                 value={price}
               />
             </div>
@@ -525,7 +528,7 @@ export function BundleArchivesDialog() {
                     <p className="text-xs text-muted-foreground">
                       {bundle.price === undefined
                         ? "Prix non renseigné"
-                        : `${formatNumber(bundle.price)} septims`}
+                        : formatSeptims(bundle.price)}
                     </p>
                   </div>
                   <Button

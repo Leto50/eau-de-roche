@@ -22,6 +22,7 @@ import {
 } from "@/components/ui/alert-dialog"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
+import { PriceInput } from "@/components/price-input"
 import {
   Dialog,
   DialogContent,
@@ -45,6 +46,11 @@ import { Textarea } from "@/components/ui/textarea"
 import { api } from "../../convex/_generated/api"
 import { type Doc } from "../../convex/_generated/dataModel"
 import { categoryLabels } from "@/lib/format"
+import {
+  priceDraftFromValue,
+  priceDraftToValue,
+  type PriceDraft,
+} from "@/lib/prices"
 
 type ProductCategory = Doc<"products">["category"]
 
@@ -57,10 +63,6 @@ const categories: readonly ProductCategory[] = [
 
 function isProductCategory(value: string): value is ProductCategory {
   return categories.some((category) => category === value)
-}
-
-function optionalNumber(value: string): number | null {
-  return value.trim() ? Number(value) : null
 }
 
 export function ProductDialog({
@@ -76,8 +78,12 @@ export function ProductDialog({
   const [open, setOpen] = useState(false)
   const [name, setName] = useState("")
   const [category, setCategory] = useState<ProductCategory>("potion")
-  const [purchasePrice, setPurchasePrice] = useState("")
-  const [salePrice, setSalePrice] = useState("")
+  const [purchasePrice, setPurchasePrice] = useState<PriceDraft>(() =>
+    priceDraftFromValue(undefined)
+  )
+  const [salePrice, setSalePrice] = useState<PriceDraft>(() =>
+    priceDraftFromValue(undefined)
+  )
   const [minimumStock, setMinimumStock] = useState("0")
   const [targetStock, setTargetStock] = useState("0")
   const [adjustmentReason, setAdjustmentReason] = useState("")
@@ -91,8 +97,8 @@ export function ProductDialog({
   function resetForm() {
     setName(product?.name ?? "")
     setCategory(product?.category ?? "potion")
-    setPurchasePrice(product?.purchasePrice?.toString() ?? "")
-    setSalePrice(product?.salePrice?.toString() ?? "")
+    setPurchasePrice(priceDraftFromValue(product?.purchasePrice))
+    setSalePrice(priceDraftFromValue(product?.salePrice))
     setMinimumStock(product?.minimumStock.toString() ?? "0")
     setTargetStock(product?.currentStock.toString() ?? "0")
     setAdjustmentReason("")
@@ -106,8 +112,8 @@ export function ProductDialog({
   async function persist(active: boolean) {
     const submittedMinimum = tracksStock ? Number(minimumStock) : 0
     const submittedStock = effectiveTargetStock
-    const submittedPurchasePrice = optionalNumber(purchasePrice)
-    const submittedSalePrice = optionalNumber(salePrice)
+    const submittedPurchasePrice = priceDraftToValue(purchasePrice)
+    const submittedSalePrice = priceDraftToValue(salePrice)
 
     if (!name.trim()) {
       toast.error("Le nom de la référence est obligatoire.")
@@ -119,15 +125,18 @@ export function ProductDialog({
       !Number.isInteger(submittedMinimum) ||
       !Number.isInteger(submittedStock) ||
       submittedMinimum < 0 ||
-      submittedStock < 0 ||
+      submittedStock < 0
+    ) {
+      toast.error("Les stocks doivent être des nombres entiers positifs.")
+      return false
+    }
+    if (
       (submittedPurchasePrice !== null &&
-        (!Number.isFinite(submittedPurchasePrice) ||
-          submittedPurchasePrice < 0)) ||
-      (submittedSalePrice !== null &&
-        (!Number.isFinite(submittedSalePrice) || submittedSalePrice < 0))
+        !Number.isFinite(submittedPurchasePrice)) ||
+      (submittedSalePrice !== null && !Number.isFinite(submittedSalePrice))
     ) {
       toast.error(
-        "Les stocks doivent être des nombres entiers positifs. Les prix peuvent être fractionnaires."
+        "Indiquez un nombre entier de septims pour un nombre entier d’unités."
       )
       return false
     }
@@ -252,30 +261,18 @@ export function ProductDialog({
 
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="grid gap-2">
-              <Label htmlFor={`${fieldId}-purchase-price`}>
-                Prix d’achat, septims
-              </Label>
-              <Input
+              <Label htmlFor={`${fieldId}-purchase-price`}>Prix d’achat</Label>
+              <PriceInput
                 id={`${fieldId}-purchase-price`}
-                min="0"
-                onChange={(event) => setPurchasePrice(event.target.value)}
-                placeholder="Non renseigné"
-                step="any"
-                type="number"
+                onValueChange={setPurchasePrice}
                 value={purchasePrice}
               />
             </div>
             <div className="grid gap-2">
-              <Label htmlFor={`${fieldId}-sale-price`}>
-                Prix de vente, septims
-              </Label>
-              <Input
+              <Label htmlFor={`${fieldId}-sale-price`}>Prix de vente</Label>
+              <PriceInput
                 id={`${fieldId}-sale-price`}
-                min="0"
-                onChange={(event) => setSalePrice(event.target.value)}
-                placeholder="Non renseigné"
-                step="any"
-                type="number"
+                onValueChange={setSalePrice}
                 value={salePrice}
               />
             </div>

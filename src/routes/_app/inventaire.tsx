@@ -34,7 +34,7 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { api } from "../../../convex/_generated/api"
 import { type Doc } from "../../../convex/_generated/dataModel"
 import { useHydrated } from "@/hooks/use-hydrated"
-import { categoryLabels, formatNumber, formatSeptims } from "@/lib/format"
+import { categoryLabels, formatNumber, formatUnitPrice } from "@/lib/format"
 import { authClient } from "@/lib/auth-client"
 import { cn } from "@/lib/utils"
 
@@ -238,7 +238,7 @@ function ProductState({ product }: Readonly<{ product: Doc<"products"> }>) {
 
 function productPrice(product: Doc<"products">): string {
   const price = product.salePrice ?? product.purchasePrice
-  return price === undefined ? "—" : formatSeptims(price)
+  return price === undefined ? "—" : formatUnitPrice(price)
 }
 
 function InventoryRow({

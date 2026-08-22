@@ -20,6 +20,7 @@ import { toast } from "sonner"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
+import { PriceInput } from "@/components/price-input"
 import {
   Collapsible,
   CollapsibleContent,
@@ -66,7 +67,13 @@ import {
   formatNumber,
   formatQuantity,
   formatSeptims,
+  formatUnitPrice,
 } from "@/lib/format"
+import {
+  priceDraftFromValue,
+  priceDraftToValue,
+  type PriceDraft,
+} from "@/lib/prices"
 import { cn } from "@/lib/utils"
 
 export type OperationKind = "production" | "purchase" | "sale" | "service"
@@ -77,7 +84,7 @@ interface SaleLine {
   kind: "bundle" | "product"
   name: string
   quantity: string
-  unitPrice: string
+  unitPrice: PriceDraft
 }
 
 type SaleMutationLine =
@@ -341,7 +348,7 @@ function SaleReferencePicker({
                           kind: "product",
                           name: product.name,
                           quantity: "1",
-                          unitPrice: product.salePrice?.toString() ?? "",
+                          unitPrice: priceDraftFromValue(product.salePrice),
                         })
                         setOpen(false)
                       }}
@@ -369,7 +376,7 @@ function SaleReferencePicker({
                           kind: "bundle",
                           name: bundle.name,
                           quantity: "1",
-                          unitPrice: bundle.price?.toString() ?? "",
+                          unitPrice: priceDraftFromValue(bundle.price),
                         })
                         setOpen(false)
                       }}
@@ -428,7 +435,7 @@ function SaleCart({
           <CardContent className="divide-y divide-border/70 px-0">
             {lines.map((line) => (
               <div
-                className="grid gap-3 p-3 sm:grid-cols-[minmax(0,1fr)_6rem_8rem_2rem] sm:items-end"
+                className="grid gap-3 p-3 sm:grid-cols-[minmax(0,1fr)_5rem_minmax(15rem,18rem)_2rem] sm:items-end"
                 key={`${line.kind}:${line.id}`}
               >
                 <div className="min-w-0 self-center">
@@ -459,17 +466,13 @@ function SaleCart({
                   <Label htmlFor={`sale-price-${line.kind}-${line.id}`}>
                     Prix unitaire
                   </Label>
-                  <Input
+                  <PriceInput
                     id={`sale-price-${line.kind}-${line.id}`}
-                    min="0"
-                    onChange={(event) =>
+                    onValueChange={(value) =>
                       onUpdate(line.kind, line.id, {
-                        unitPrice: event.target.value,
+                        unitPrice: value,
                       })
                     }
-                    placeholder="0"
-                    step="any"
-                    type="number"
                     value={line.unitPrice}
                   />
                 </div>
@@ -519,7 +522,9 @@ export function OperationDialog({
   const [productId, setProductId] = useState("")
   const [characterId, setCharacterId] = useState("")
   const [quantity, setQuantity] = useState("1")
-  const [unitPrice, setUnitPrice] = useState("")
+  const [unitPrice, setUnitPrice] = useState<PriceDraft>(() =>
+    priceDraftFromValue(undefined)
+  )
   const [saleLines, setSaleLines] = useState<SaleLine[]>([])
   const [discount, setDiscount] = useState("")
   const [counterparty, setCounterparty] = useState("")
@@ -540,9 +545,8 @@ export function OperationDialog({
   const parsedQuantity = Number(quantity)
   const previewQuantity =
     Number.isFinite(parsedQuantity) && parsedQuantity > 0 ? parsedQuantity : 0
-  const parsedPrice = unitPrice.trim()
-    ? Number(unitPrice)
-    : (suggestedPrice ?? 0)
+  const enteredPrice = priceDraftToValue(unitPrice)
+  const parsedPrice = enteredPrice ?? suggestedPrice ?? 0
   const previewPrice = Number.isFinite(parsedPrice) ? parsedPrice : 0
   const parsedDiscount = discount.trim() ? Number(discount) : 0
   const previewDiscount = Number.isFinite(parsedDiscount) ? parsedDiscount : 0
@@ -552,9 +556,8 @@ export function OperationDialog({
       line.kind === "product"
         ? products.find((product) => product._id === line.id)?.salePrice
         : bundles.find((bundle) => bundle._id === line.id)?.price
-    const linePrice = line.unitPrice.trim()
-      ? Number(line.unitPrice)
-      : (fallbackLinePrice ?? 0)
+    const enteredLinePrice = priceDraftToValue(line.unitPrice)
+    const linePrice = enteredLinePrice ?? fallbackLinePrice ?? 0
     return (
       total +
       (Number.isFinite(lineQuantity) && Number.isFinite(linePrice)
@@ -611,7 +614,7 @@ export function OperationDialog({
   function resetForm() {
     setProductId("")
     setQuantity("1")
-    setUnitPrice("")
+    setUnitPrice(priceDraftFromValue(undefined))
     setSaleLines([])
     setDiscount("")
     setCounterparty("")
@@ -624,7 +627,7 @@ export function OperationDialog({
     if (!isOperationKind(value)) return
     setKind(value)
     setProductId("")
-    setUnitPrice("")
+    setUnitPrice(priceDraftFromValue(undefined))
     setDiscount("")
   }
 
@@ -659,7 +662,8 @@ export function OperationDialog({
     const product = products.find((entry) => entry._id === productId)
     const character = characters.find((entry) => entry._id === characterId)
     const submittedQuantity = Number(quantity)
-    const submittedPrice = unitPrice.trim() ? Number(unitPrice) : undefined
+    const parsedSubmittedPrice = priceDraftToValue(unitPrice)
+    const submittedPrice = parsedSubmittedPrice ?? undefined
     const submittedDiscount = discount.trim() ? Number(discount) : undefined
     const occurredAt = dateInputToTimestamp(occurredOn)
 
@@ -680,6 +684,16 @@ export function OperationDialog({
       toast.error("La quantité doit être un nombre entier supérieur à zéro.")
       return
     }
+    if (
+      kind !== "sale" &&
+      submittedPrice !== undefined &&
+      !Number.isFinite(submittedPrice)
+    ) {
+      toast.error(
+        "Indiquez un nombre entier de septims pour un nombre entier d’unités."
+      )
+      return
+    }
     if (kind === "sale" && saleLines.length === 0) {
       toast.error("Ajoutez au moins une référence au panier.")
       return
@@ -690,9 +704,8 @@ export function OperationDialog({
       if (kind === "sale") {
         const preparedLines = saleLines.flatMap<SaleMutationLine>((line) => {
           const lineQuantity = Number(line.quantity)
-          const linePrice = line.unitPrice.trim()
-            ? Number(line.unitPrice)
-            : undefined
+          const parsedLinePrice = priceDraftToValue(line.unitPrice)
+          const linePrice = parsedLinePrice ?? undefined
           if (
             !Number.isFinite(lineQuantity) ||
             !Number.isInteger(lineQuantity) ||
@@ -968,22 +981,18 @@ export function OperationDialog({
               >
                 {kind === "production" || kind === "sale" ? null : (
                   <div className="grid gap-2">
-                    <Label htmlFor="operation-unit-price">
-                      Prix unitaire, septims
-                    </Label>
-                    <Input
+                    <Label htmlFor="operation-unit-price">Prix unitaire</Label>
+                    <PriceInput
                       id="operation-unit-price"
-                      min="0"
-                      onChange={(event) => setUnitPrice(event.target.value)}
-                      placeholder={
-                        suggestedPrice === undefined
-                          ? "Non renseigné"
-                          : formatNumber(suggestedPrice)
-                      }
-                      step="any"
-                      type="number"
+                      onValueChange={setUnitPrice}
                       value={unitPrice}
                     />
+                    {suggestedPrice === undefined ||
+                    unitPrice.septims.trim() ? null : (
+                      <p className="text-xs text-muted-foreground">
+                        Tarif habituel : {formatUnitPrice(suggestedPrice)}
+                      </p>
+                    )}
                   </div>
                 )}
                 {kind === "production" ? null : (

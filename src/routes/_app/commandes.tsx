@@ -41,6 +41,7 @@ import {
   formatDate,
   formatNumber,
   formatSeptims,
+  formatUnitPrice,
   orderStatusLabels,
 } from "@/lib/format"
 import { cn } from "@/lib/utils"
@@ -241,7 +242,7 @@ function OrderEntry({
                   <p className="truncate font-semibold">{line.productName}</p>
                   {line.unitPrice !== undefined ? (
                     <p className="text-xs text-muted-foreground">
-                      {formatSeptims(line.unitPrice)} l’unité
+                      {formatUnitPrice(line.unitPrice)}
                     </p>
                   ) : null}
                 </TableCell>
