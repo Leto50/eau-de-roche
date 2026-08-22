@@ -1,14 +1,16 @@
 import { convexQuery } from "@convex-dev/react-query"
 import { useSuspenseQuery } from "@tanstack/react-query"
 import { createFileRoute } from "@tanstack/react-router"
-import { CircleAlert, Search, SlidersHorizontal } from "lucide-react"
+import { CircleAlert, Pencil, Search, SlidersHorizontal } from "lucide-react"
 import { useState } from "react"
 
 import { PageError } from "@/components/page-error"
 import { PageHeader } from "@/components/page-header"
 import { PageSkeleton } from "@/components/page-skeleton"
+import { ProductDialog } from "@/components/product-dialog"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
+import { Button } from "@/components/ui/button"
 import {
   Card,
   CardAction,
@@ -29,6 +31,7 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { api } from "../../../convex/_generated/api"
 import { type Doc } from "../../../convex/_generated/dataModel"
 import { categoryLabels, formatNumber, formatSeptims } from "@/lib/format"
+import { authClient } from "@/lib/auth-client"
 import { cn } from "@/lib/utils"
 
 type CategoryFilter = "all" | Doc<"products">["category"]
@@ -60,9 +63,11 @@ export const Route = createFileRoute("/_app/inventaire")({
 })
 
 function InventoryPage() {
+  const { data: session } = authClient.useSession()
   const { data: products } = useSuspenseQuery(
     convexQuery(api.products.list, {})
   )
+  const isAdmin = session?.user.role?.split(",").includes("admin") ?? false
   const [category, setCategory] = useState<CategoryFilter>("all")
   const [search, setSearch] = useState("")
   const normalizedSearch = search.trim().toLocaleLowerCase("fr")
@@ -79,7 +84,11 @@ function InventoryPage() {
 
   return (
     <div className="animate-in duration-300 fade-in slide-in-from-bottom-1 motion-reduce:animate-none">
-      <PageHeader eyebrow="Gestion des stocks" title="Inventaire">
+      <PageHeader
+        action={isAdmin ? <ProductDialog /> : undefined}
+        eyebrow="Gestion des stocks"
+        title="Inventaire"
+      >
         Les produits, ingrédients et services disponibles dans la boutique.
       </PageHeader>
 
@@ -142,11 +151,20 @@ function InventoryPage() {
                     <TableHead className="text-right">Seuil</TableHead>
                     <TableHead className="text-right">Prix</TableHead>
                     <TableHead className="pr-4 text-right">État</TableHead>
+                    {isAdmin ? (
+                      <TableHead className="w-10">
+                        <span className="sr-only">Modifier</span>
+                      </TableHead>
+                    ) : null}
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {filteredProducts.map((product) => (
-                    <InventoryRow key={product._id} product={product} />
+                    <InventoryRow
+                      isAdmin={isAdmin}
+                      key={product._id}
+                      product={product}
+                    />
                   ))}
                 </TableBody>
               </Table>
@@ -155,7 +173,11 @@ function InventoryPage() {
 
           <div className="mt-4 grid gap-3 md:hidden">
             {filteredProducts.map((product) => (
-              <InventoryCard key={product._id} product={product} />
+              <InventoryCard
+                isAdmin={isAdmin}
+                key={product._id}
+                product={product}
+              />
             ))}
           </div>
         </>
@@ -206,7 +228,10 @@ function productPrice(product: Doc<"products">): string {
   return price === undefined ? "—" : formatSeptims(price)
 }
 
-function InventoryRow({ product }: Readonly<{ product: Doc<"products"> }>) {
+function InventoryRow({
+  isAdmin,
+  product,
+}: Readonly<{ isAdmin: boolean; product: Doc<"products"> }>) {
   return (
     <TableRow className="border-[#5b462b]/20 hover:bg-[#fffdeb]/40">
       <TableCell className="max-w-80 truncate pl-4 font-semibold">
@@ -225,11 +250,30 @@ function InventoryRow({ product }: Readonly<{ product: Doc<"products"> }>) {
       <TableCell className="pr-4 text-right">
         <ProductState product={product} />
       </TableCell>
+      {isAdmin ? (
+        <TableCell>
+          <ProductDialog
+            product={product}
+            trigger={
+              <Button
+                aria-label={`Modifier ${product.name}`}
+                size="icon"
+                variant="ghost"
+              >
+                <Pencil aria-hidden="true" />
+              </Button>
+            }
+          />
+        </TableCell>
+      ) : null}
     </TableRow>
   )
 }
 
-function InventoryCard({ product }: Readonly<{ product: Doc<"products"> }>) {
+function InventoryCard({
+  isAdmin,
+  product,
+}: Readonly<{ isAdmin: boolean; product: Doc<"products"> }>) {
   return (
     <Card className="rounded-none border-[#5b462b]/35 bg-[#fff8e7]/30 shadow-[2px_3px_0_rgba(84,63,37,0.05)] ring-0">
       <CardHeader>
@@ -238,7 +282,23 @@ function InventoryCard({ product }: Readonly<{ product: Doc<"products"> }>) {
           {categoryLabels[product.category]}
         </Badge>
         <CardAction>
-          <ProductState product={product} />
+          <div className="flex items-center gap-1">
+            <ProductState product={product} />
+            {isAdmin ? (
+              <ProductDialog
+                product={product}
+                trigger={
+                  <Button
+                    aria-label={`Modifier ${product.name}`}
+                    size="icon"
+                    variant="ghost"
+                  >
+                    <Pencil aria-hidden="true" />
+                  </Button>
+                }
+              />
+            ) : null}
+          </div>
         </CardAction>
       </CardHeader>
       <CardContent>

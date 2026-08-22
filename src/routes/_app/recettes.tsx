@@ -2,14 +2,16 @@ import { convexQuery } from "@convex-dev/react-query"
 import { useSuspenseQuery } from "@tanstack/react-query"
 import { createFileRoute } from "@tanstack/react-router"
 import { type FunctionReturnType } from "convex/server"
-import { BookMarked, PackageOpen, Search, Sparkles } from "lucide-react"
+import { BookMarked, PackageOpen, Pencil, Search, Sparkles } from "lucide-react"
 import { useState } from "react"
 
+import { BundleDialog } from "@/components/bundle-dialog"
 import { PageError } from "@/components/page-error"
 import { PageHeader } from "@/components/page-header"
 import { PageSkeleton } from "@/components/page-skeleton"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
+import { Button } from "@/components/ui/button"
 import {
   Card,
   CardAction,
@@ -27,6 +29,8 @@ import {
 } from "@/components/ui/select"
 import { Separator } from "@/components/ui/separator"
 import { api } from "../../../convex/_generated/api"
+import { type Doc } from "../../../convex/_generated/dataModel"
+import { authClient } from "@/lib/auth-client"
 import { formatNumber, formatSeptims } from "@/lib/format"
 
 type Recipe = FunctionReturnType<typeof api.recipes.list>[number]
@@ -41,16 +45,24 @@ export const Route = createFileRoute("/_app/recettes")({
       context.queryClient.ensureQueryData(
         convexQuery(api.recipes.listBundles, {})
       ),
+      context.queryClient.ensureQueryData(
+        convexQuery(api.products.selectable, {})
+      ),
     ])
   },
   pendingComponent: PageSkeleton,
 })
 
 function RecipesPage() {
+  const { data: session } = authClient.useSession()
   const { data: recipes } = useSuspenseQuery(convexQuery(api.recipes.list, {}))
   const { data: bundles } = useSuspenseQuery(
     convexQuery(api.recipes.listBundles, {})
   )
+  const { data: products } = useSuspenseQuery(
+    convexQuery(api.products.selectable, {})
+  )
+  const isAdmin = session?.user.role?.split(",").includes("admin") ?? false
   const [search, setSearch] = useState("")
   const [family, setFamily] = useState("all")
   const families = [...new Set(recipes.map((recipe) => recipe.family))].sort(
@@ -150,11 +162,19 @@ function RecipesPage() {
               Lots préparés
             </h2>
           </div>
-          <PackageOpen aria-hidden="true" className="size-5 text-primary" />
+          <div className="flex items-center gap-2">
+            {isAdmin ? <BundleDialog products={products} /> : null}
+            <PackageOpen aria-hidden="true" className="size-5 text-primary" />
+          </div>
         </div>
         <div className="grid grid-cols-4 gap-3 max-xl:grid-cols-2 max-md:grid-cols-1">
           {bundles.map((bundle) => (
-            <BundleEntry bundle={bundle} key={bundle._id} />
+            <BundleEntry
+              bundle={bundle}
+              isAdmin={isAdmin}
+              key={bundle._id}
+              products={products}
+            />
           ))}
         </div>
       </section>
@@ -206,15 +226,40 @@ function RecipeEntry({ recipe }: Readonly<{ recipe: Recipe }>) {
   )
 }
 
-function BundleEntry({ bundle }: Readonly<{ bundle: Bundle }>) {
+function BundleEntry({
+  bundle,
+  isAdmin,
+  products,
+}: Readonly<{
+  bundle: Bundle
+  isAdmin: boolean
+  products: readonly Doc<"products">[]
+}>) {
   return (
     <Card className="gap-0 rounded-none border-0 border-l-2 border-l-[#755832]/55 bg-[#795f38]/5 py-0 ring-0">
       <CardHeader className="p-4 pb-0">
         <CardTitle className="font-display text-base font-medium">
           {bundle.name}
         </CardTitle>
-        <CardAction className="font-semibold text-primary">
-          {bundle.price === undefined ? "—" : formatSeptims(bundle.price)}
+        <CardAction className="flex items-center gap-1 font-semibold text-primary">
+          <span>
+            {bundle.price === undefined ? "—" : formatSeptims(bundle.price)}
+          </span>
+          {isAdmin ? (
+            <BundleDialog
+              bundle={bundle}
+              products={products}
+              trigger={
+                <Button
+                  aria-label={`Modifier ${bundle.name}`}
+                  size="icon"
+                  variant="ghost"
+                >
+                  <Pencil aria-hidden="true" />
+                </Button>
+              }
+            />
+          ) : null}
         </CardAction>
       </CardHeader>
       <CardContent className="p-4 pt-3">
