@@ -1,5 +1,11 @@
-import { useMutation } from "convex/react"
-import { Archive, LoaderCircle, PackagePlus, Pencil } from "lucide-react"
+import { useMutation, useQuery } from "convex/react"
+import {
+  Archive,
+  ArchiveRestore,
+  LoaderCircle,
+  PackagePlus,
+  Pencil,
+} from "lucide-react"
 import { useId, useState, type FormEvent, type ReactElement } from "react"
 import { toast } from "sonner"
 
@@ -14,6 +20,7 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog"
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
@@ -26,6 +33,7 @@ import {
 } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import { ScrollArea } from "@/components/ui/scroll-area"
 import {
   Select,
   SelectContent,
@@ -63,6 +71,7 @@ export function ProductDialog({
   trigger?: ReactElement
 }>) {
   const saveProduct = useMutation(api.products.save)
+  const setProductActive = useMutation(api.products.setActive)
   const fieldId = useId()
   const [open, setOpen] = useState(false)
   const [name, setName] = useState("")
@@ -168,16 +177,7 @@ export function ProductDialog({
     if (!product) return
     setIsSubmitting(true)
     try {
-      await saveProduct({
-        active: false,
-        category: product.category,
-        minimumStock: product.minimumStock,
-        name: product.name,
-        productId: product._id,
-        purchasePrice: product.purchasePrice ?? null,
-        salePrice: product.salePrice ?? null,
-        targetStock: product.currentStock,
-      })
+      await setProductActive({ active: false, productId: product._id })
       toast.success("Référence archivée.")
       setOpen(false)
     } catch (error) {
@@ -392,6 +392,105 @@ export function ProductDialog({
             </div>
           </DialogFooter>
         </form>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+export function ProductArchivesDialog() {
+  const archivedProducts = useQuery(api.products.listArchived)
+  const setProductActive = useMutation(api.products.setActive)
+  const [restoringId, setRestoringId] = useState<string>()
+
+  async function restoreProduct(product: Doc<"products">) {
+    setRestoringId(product._id)
+    try {
+      await setProductActive({ active: true, productId: product._id })
+      toast.success(`« ${product.name} » est de nouveau disponible.`)
+    } catch (error) {
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : "Impossible de réactiver la référence."
+      )
+    } finally {
+      setRestoringId(undefined)
+    }
+  }
+
+  return (
+    <Dialog>
+      <DialogTrigger asChild>
+        <Button variant="outline">
+          <ArchiveRestore aria-hidden="true" />
+          Archives
+        </Button>
+      </DialogTrigger>
+      <DialogContent className="rounded-[0.2rem] border-[#6a5436] bg-[#eee1c7] ring-0 sm:max-w-lg">
+        <DialogHeader className="pr-8">
+          <p className="text-[0.66rem] font-bold tracking-[0.2em] text-primary uppercase">
+            Catalogue de la boutique
+          </p>
+          <DialogTitle className="font-display text-2xl">
+            Références archivées
+          </DialogTitle>
+          <DialogDescription>
+            Réactivez une référence pour la rendre à nouveau disponible.
+          </DialogDescription>
+        </DialogHeader>
+
+        {archivedProducts === undefined ? (
+          <p className="py-6 text-center text-sm text-muted-foreground">
+            Chargement des archives…
+          </p>
+        ) : archivedProducts.length === 0 ? (
+          <Alert className="border-primary/20 bg-primary/[0.04]">
+            <ArchiveRestore aria-hidden="true" />
+            <AlertTitle>Aucune référence archivée</AlertTitle>
+            <AlertDescription>
+              Les références retirées du catalogue apparaîtront ici.
+            </AlertDescription>
+          </Alert>
+        ) : (
+          <ScrollArea className="max-h-80 pr-3">
+            <div className="grid divide-y divide-border/70">
+              {archivedProducts.map((product) => (
+                <div
+                  className="flex items-center justify-between gap-3 py-3"
+                  key={product._id}
+                >
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-semibold">
+                      {product.name}
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      {categoryLabels[product.category]}
+                    </p>
+                  </div>
+                  <Button
+                    disabled={restoringId !== undefined}
+                    onClick={() => {
+                      void restoreProduct(product)
+                    }}
+                    size="sm"
+                    type="button"
+                    variant="outline"
+                  >
+                    {restoringId === product._id ? (
+                      <LoaderCircle
+                        aria-hidden="true"
+                        className="animate-spin motion-reduce:animate-none"
+                      />
+                    ) : (
+                      <ArchiveRestore aria-hidden="true" />
+                    )}
+                    Réactiver
+                  </Button>
+                </div>
+              ))}
+            </div>
+          </ScrollArea>
+        )}
       </DialogContent>
     </Dialog>
   )

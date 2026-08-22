@@ -45,6 +45,14 @@ describe("bundles.save", () => {
       name: "Nécessaire d’exploration",
       price: 39,
     })
+    await admin.mutation(api.bundles.setActive, {
+      active: false,
+      bundleId,
+    })
+    await admin.mutation(api.bundles.setActive, {
+      active: true,
+      bundleId,
+    })
 
     const state = await backend.run(async (ctx) => ({
       audits: await ctx.db.query("auditLogs").collect(),
@@ -75,6 +83,8 @@ describe("bundles.save", () => {
     expect(state.audits.map((audit) => audit.action)).toEqual([
       "bundle.created",
       "bundle.updated",
+      "bundle.archived",
+      "bundle.reactivated",
     ])
   })
 

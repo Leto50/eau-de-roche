@@ -10,11 +10,12 @@ import {
   UserPlus,
   type LucideIcon,
 } from "lucide-react"
-import { useState, useSyncExternalStore, type ReactNode } from "react"
+import { useState, type ReactNode } from "react"
 
 import { AccountDialog } from "@/components/account-dialog"
 import { ShopMark } from "@/components/shop-mark"
 import { Button } from "@/components/ui/button"
+import { useHydrated } from "@/hooks/use-hydrated"
 import {
   Sidebar,
   SidebarContent,
@@ -47,18 +48,6 @@ const navigation: readonly NavigationItem[] = [
   { icon: ClipboardList, label: "Commandes", to: "/commandes" },
   { icon: BookOpenText, label: "Recettes & lots", to: "/recettes" },
 ]
-
-const subscribeToHydration = () => () => undefined
-const getClientHydrationSnapshot = () => true
-const getServerHydrationSnapshot = () => false
-
-function useHydrated() {
-  return useSyncExternalStore(
-    subscribeToHydration,
-    getClientHydrationSnapshot,
-    getServerHydrationSnapshot
-  )
-}
 
 function Navigation() {
   const pathname = useRouterState({

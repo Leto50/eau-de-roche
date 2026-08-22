@@ -1,7 +1,8 @@
-import { useMutation } from "convex/react"
+import { useMutation, useQuery } from "convex/react"
 import { type FunctionReturnType } from "convex/server"
 import {
   Archive,
+  ArchiveRestore,
   ChevronsUpDown,
   LoaderCircle,
   PackagePlus,
@@ -29,6 +30,7 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog"
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import {
   Command,
@@ -53,6 +55,7 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover"
+import { ScrollArea } from "@/components/ui/scroll-area"
 import { Separator } from "@/components/ui/separator"
 import { api } from "../../convex/_generated/api"
 import { type Doc } from "../../convex/_generated/dataModel"
@@ -445,6 +448,107 @@ export function BundleDialog({
             </div>
           </DialogFooter>
         </form>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+export function BundleArchivesDialog() {
+  const archivedBundles = useQuery(api.bundles.listArchived)
+  const setBundleActive = useMutation(api.bundles.setActive)
+  const [restoringId, setRestoringId] = useState<string>()
+
+  async function restoreBundle(bundle: Doc<"bundles">) {
+    setRestoringId(bundle._id)
+    try {
+      await setBundleActive({ active: true, bundleId: bundle._id })
+      toast.success(`« ${bundle.name} » est de nouveau disponible.`)
+    } catch (error) {
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : "Impossible de réactiver le lot."
+      )
+    } finally {
+      setRestoringId(undefined)
+    }
+  }
+
+  return (
+    <Dialog>
+      <DialogTrigger asChild>
+        <Button variant="outline">
+          <ArchiveRestore aria-hidden="true" />
+          Archives
+        </Button>
+      </DialogTrigger>
+      <DialogContent className="rounded-[0.2rem] border-[#6a5436] bg-[#eee1c7] ring-0 sm:max-w-lg">
+        <DialogHeader className="pr-8">
+          <p className="text-[0.66rem] font-bold tracking-[0.2em] text-primary uppercase">
+            Vente groupée
+          </p>
+          <DialogTitle className="font-display text-2xl">
+            Lots archivés
+          </DialogTitle>
+          <DialogDescription>
+            Réactivez un lot pour le proposer à nouveau lors des ventes.
+          </DialogDescription>
+        </DialogHeader>
+
+        {archivedBundles === undefined ? (
+          <p className="py-6 text-center text-sm text-muted-foreground">
+            Chargement des archives…
+          </p>
+        ) : archivedBundles.length === 0 ? (
+          <Alert className="border-primary/20 bg-primary/[0.04]">
+            <ArchiveRestore aria-hidden="true" />
+            <AlertTitle>Aucun lot archivé</AlertTitle>
+            <AlertDescription>
+              Les lots retirés de la vente apparaîtront ici.
+            </AlertDescription>
+          </Alert>
+        ) : (
+          <ScrollArea className="max-h-80 pr-3">
+            <div className="grid divide-y divide-border/70">
+              {archivedBundles.map((bundle) => (
+                <div
+                  className="flex items-center justify-between gap-3 py-3"
+                  key={bundle._id}
+                >
+                  <div className="min-w-0">
+                    <p className="truncate text-sm font-semibold">
+                      {bundle.name}
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      {bundle.price === undefined
+                        ? "Prix non renseigné"
+                        : `${formatNumber(bundle.price)} septims`}
+                    </p>
+                  </div>
+                  <Button
+                    disabled={restoringId !== undefined}
+                    onClick={() => {
+                      void restoreBundle(bundle)
+                    }}
+                    size="sm"
+                    type="button"
+                    variant="outline"
+                  >
+                    {restoringId === bundle._id ? (
+                      <LoaderCircle
+                        aria-hidden="true"
+                        className="animate-spin motion-reduce:animate-none"
+                      />
+                    ) : (
+                      <ArchiveRestore aria-hidden="true" />
+                    )}
+                    Réactiver
+                  </Button>
+                </div>
+              ))}
+            </div>
+          </ScrollArea>
+        )}
       </DialogContent>
     </Dialog>
   )

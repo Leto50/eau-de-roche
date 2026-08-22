@@ -32,6 +32,14 @@ describe("products.save", () => {
       salePrice: 15,
       targetStock: 10,
     })
+    await admin.mutation(api.products.setActive, {
+      active: false,
+      productId,
+    })
+    await admin.mutation(api.products.setActive, {
+      active: true,
+      productId,
+    })
 
     const state = await backend.run(async (ctx) => ({
       audits: await ctx.db.query("auditLogs").collect(),
@@ -60,6 +68,8 @@ describe("products.save", () => {
     expect(state.audits.map((audit) => audit.action)).toEqual([
       "product.stock_adjusted",
       "product.updated",
+      "product.archived",
+      "product.reactivated",
     ])
   })
 

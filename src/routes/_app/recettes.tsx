@@ -5,7 +5,7 @@ import { type FunctionReturnType } from "convex/server"
 import { BookMarked, PackageOpen, Pencil, Search, Sparkles } from "lucide-react"
 import { useState } from "react"
 
-import { BundleDialog } from "@/components/bundle-dialog"
+import { BundleArchivesDialog, BundleDialog } from "@/components/bundle-dialog"
 import { PageError } from "@/components/page-error"
 import { PageHeader } from "@/components/page-header"
 import { PageSkeleton } from "@/components/page-skeleton"
@@ -30,6 +30,7 @@ import {
 import { Separator } from "@/components/ui/separator"
 import { api } from "../../../convex/_generated/api"
 import { type Doc } from "../../../convex/_generated/dataModel"
+import { useHydrated } from "@/hooks/use-hydrated"
 import { authClient } from "@/lib/auth-client"
 import { formatNumber, formatSeptims } from "@/lib/format"
 
@@ -55,6 +56,7 @@ export const Route = createFileRoute("/_app/recettes")({
 
 function RecipesPage() {
   const { data: session } = authClient.useSession()
+  const isHydrated = useHydrated()
   const { data: recipes } = useSuspenseQuery(convexQuery(api.recipes.list, {}))
   const { data: bundles } = useSuspenseQuery(
     convexQuery(api.recipes.listBundles, {})
@@ -62,7 +64,8 @@ function RecipesPage() {
   const { data: products } = useSuspenseQuery(
     convexQuery(api.products.selectable, {})
   )
-  const isAdmin = session?.user.role?.split(",").includes("admin") ?? false
+  const isAdmin =
+    isHydrated && (session?.user.role?.split(",").includes("admin") ?? false)
   const [search, setSearch] = useState("")
   const [family, setFamily] = useState("all")
   const families = [...new Set(recipes.map((recipe) => recipe.family))].sort(
@@ -163,7 +166,12 @@ function RecipesPage() {
             </h2>
           </div>
           <div className="flex items-center gap-2">
-            {isAdmin ? <BundleDialog products={products} /> : null}
+            {isAdmin ? (
+              <>
+                <BundleArchivesDialog />
+                <BundleDialog products={products} />
+              </>
+            ) : null}
             <PackageOpen aria-hidden="true" className="size-5 text-primary" />
           </div>
         </div>

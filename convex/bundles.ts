@@ -1,7 +1,7 @@
 import { ConvexError, v } from "convex/values"
 
 import { type Id } from "./_generated/dataModel"
-import { mutation } from "./_generated/server"
+import { mutation, query } from "./_generated/server"
 import { requireAdmin } from "./lib/auth"
 import { normalizeName } from "./lib/text"
 
@@ -9,6 +9,17 @@ const MAX_ITEMS = 50
 const MAX_NAME_LENGTH = 100
 const MAX_PRICE = 1_000_000_000
 const MAX_QUANTITY = 1_000_000
+
+export const listArchived = query({
+  args: {},
+  handler: async (ctx) => {
+    await requireAdmin(ctx)
+    const bundles = await ctx.db.query("bundles").collect()
+    return bundles
+      .filter((bundle) => !bundle.active)
+      .sort((left, right) => left.name.localeCompare(right.name, "fr"))
+  },
+})
 
 function assertFiniteRange(
   value: number,

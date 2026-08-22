@@ -7,7 +7,10 @@ import { useState } from "react"
 import { PageError } from "@/components/page-error"
 import { PageHeader } from "@/components/page-header"
 import { PageSkeleton } from "@/components/page-skeleton"
-import { ProductDialog } from "@/components/product-dialog"
+import {
+  ProductArchivesDialog,
+  ProductDialog,
+} from "@/components/product-dialog"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -30,6 +33,7 @@ import {
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { api } from "../../../convex/_generated/api"
 import { type Doc } from "../../../convex/_generated/dataModel"
+import { useHydrated } from "@/hooks/use-hydrated"
 import { categoryLabels, formatNumber, formatSeptims } from "@/lib/format"
 import { authClient } from "@/lib/auth-client"
 import { cn } from "@/lib/utils"
@@ -64,10 +68,12 @@ export const Route = createFileRoute("/_app/inventaire")({
 
 function InventoryPage() {
   const { data: session } = authClient.useSession()
+  const isHydrated = useHydrated()
   const { data: products } = useSuspenseQuery(
     convexQuery(api.products.list, {})
   )
-  const isAdmin = session?.user.role?.split(",").includes("admin") ?? false
+  const isAdmin =
+    isHydrated && (session?.user.role?.split(",").includes("admin") ?? false)
   const [category, setCategory] = useState<CategoryFilter>("all")
   const [search, setSearch] = useState("")
   const normalizedSearch = search.trim().toLocaleLowerCase("fr")
@@ -85,7 +91,14 @@ function InventoryPage() {
   return (
     <div className="animate-in duration-300 fade-in slide-in-from-bottom-1 motion-reduce:animate-none">
       <PageHeader
-        action={isAdmin ? <ProductDialog /> : undefined}
+        action={
+          isAdmin ? (
+            <div className="flex flex-wrap justify-end gap-2">
+              <ProductArchivesDialog />
+              <ProductDialog />
+            </div>
+          ) : undefined
+        }
         eyebrow="Gestion des stocks"
         title="Inventaire"
       >
