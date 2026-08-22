@@ -32,6 +32,13 @@ export const overview = query({
           right.currentStock / Math.max(right.minimumStock, 1)
       )
       .slice(0, 6)
+    const stockValue = activeStock.reduce(
+      (total, product) =>
+        total +
+        product.currentStock *
+          (product.purchasePrice ?? product.salePrice ?? 0),
+      0
+    )
     const weeklyTransactions = await ctx.db
       .query("transactions")
       .withIndex("by_occurred_at", (index) =>
@@ -47,6 +54,7 @@ export const overview = query({
       lowStock,
       openOrders: openOrders.length,
       recentTransactions,
+      stockValue,
       weeklyBalance,
       weeklyTransactionCount: weeklyTransactions.length,
     }

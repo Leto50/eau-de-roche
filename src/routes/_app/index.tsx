@@ -8,6 +8,7 @@ import {
   ArrowUpRight,
   CalendarDays,
   ChevronRight,
+  Coins,
   Hammer,
   ReceiptText,
   ScrollText,
@@ -233,31 +234,47 @@ function DashboardPage() {
         <Card className="border border-primary/20 bg-primary/[0.045] ring-0">
           <CardHeader>
             <CardTitle className="flex items-center gap-2 font-display text-lg font-[580] text-[#34291e]">
-              <CalendarDays
-                aria-hidden="true"
-                className="size-4 text-primary"
-              />
-              Cette semaine
+              <Coins aria-hidden="true" className="size-4 text-primary" />
+              Repères
             </CardTitle>
-            <CardDescription>Ventes, services et achats</CardDescription>
           </CardHeader>
           <CardContent>
-            <p
-              className={cn(
-                "font-display text-3xl leading-none font-[600] tabular-nums",
-                data.weeklyBalance >= 0 ? "text-[#456044]" : "text-[#8a3e2f]"
-              )}
-            >
-              {data.weeklyBalance >= 0 ? "+" : ""}
-              {formatSeptims(data.weeklyBalance)}
+            <p className="text-[0.68rem] font-semibold tracking-[0.12em] text-muted-foreground uppercase">
+              Valeur estimée du stock
             </p>
-            <Separator className="my-4 bg-primary/15" />
-            <p className="text-sm font-semibold text-foreground">
-              {formatNumber(data.weeklyTransactionCount)}{" "}
-              {data.weeklyTransactionCount === 1
-                ? "mouvement enregistré"
-                : "mouvements enregistrés"}
+            <p className="mt-1 font-display text-2xl leading-none font-[600] text-primary tabular-nums">
+              {formatSeptims(data.stockValue)}
             </p>
+            <p className="mt-1 text-xs text-muted-foreground">
+              Prix d’achat, ou de vente à défaut
+            </p>
+            <Separator className="my-3 bg-primary/15" />
+            <div className="flex items-end justify-between gap-4">
+              <div>
+                <p className="flex items-center gap-1.5 text-sm font-semibold text-foreground">
+                  <CalendarDays
+                    aria-hidden="true"
+                    className="size-3.5 text-primary"
+                  />
+                  Cette semaine
+                </p>
+                <p className="mt-0.5 text-xs text-muted-foreground">
+                  {formatNumber(data.weeklyTransactionCount)}{" "}
+                  {data.weeklyTransactionCount === 1
+                    ? "mouvement"
+                    : "mouvements"}
+                </p>
+              </div>
+              <p
+                className={cn(
+                  "font-display text-lg font-[600] tabular-nums",
+                  data.weeklyBalance >= 0 ? "text-[#456044]" : "text-[#8a3e2f]"
+                )}
+              >
+                {data.weeklyBalance >= 0 ? "+" : ""}
+                {formatSeptims(data.weeklyBalance)}
+              </p>
+            </div>
           </CardContent>
         </Card>
       </section>
