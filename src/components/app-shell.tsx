@@ -41,9 +41,9 @@ interface NavigationItem {
 }
 
 const navigation: readonly NavigationItem[] = [
-  { icon: LayoutDashboard, label: "Vue d'ensemble", to: "/" },
+  { icon: LayoutDashboard, label: "Aujourd’hui", to: "/" },
   { icon: Boxes, label: "Inventaire", to: "/inventaire" },
-  { icon: ScrollText, label: "Opérations", to: "/journal" },
+  { icon: ScrollText, label: "Activité", to: "/journal" },
   { icon: ClipboardList, label: "Commandes", to: "/commandes" },
   { icon: BookOpenText, label: "Recettes & lots", to: "/recettes" },
 ]

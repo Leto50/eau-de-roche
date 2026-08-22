@@ -30,6 +30,7 @@ import { type Doc } from "../../../convex/_generated/dataModel"
 import {
   formatDate,
   formatNumber,
+  formatQuantity,
   formatSeptims,
   operationLabels,
 } from "@/lib/format"
@@ -78,11 +79,10 @@ function JournalPage() {
     <div className="animate-in duration-300 fade-in slide-in-from-bottom-1 motion-reduce:animate-none">
       <PageHeader
         action={<OperationDialog characters={characters} products={products} />}
-        eyebrow="Historique"
-        title="Opérations"
+        eyebrow="Journal de boutique"
+        title="Activité"
       >
-        Tous les achats, ventes, services et productions, du plus récent au plus
-        ancien.
+        Retrouvez les ventes, achats, services et productions déjà enregistrés.
       </PageHeader>
 
       {transactions.length > 0 ? (
@@ -207,7 +207,7 @@ function JournalCard({
             {formatDate(transaction.occurredAt)}
           </time>
           <p className="mt-1 text-xs text-muted-foreground">
-            {formatNumber(transaction.quantity)} unité(s)
+            {formatQuantity(transaction.quantity)}
           </p>
         </div>
         <p

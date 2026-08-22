@@ -124,7 +124,9 @@ function InventoryPage() {
       </section>
 
       <p className="mt-4 text-xs text-muted-foreground">
-        {filteredProducts.length} référence(s) sur {products.length}
+        {filteredProducts.length}{" "}
+        {filteredProducts.length === 1 ? "référence" : "références"} sur{" "}
+        {products.length}
       </p>
 
       {filteredProducts.length > 0 ? (

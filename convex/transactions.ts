@@ -117,7 +117,7 @@ export const record = mutation({
     if (resultingStock < 0) {
       throw new ConvexError({
         code: "INSUFFICIENT_STOCK",
-        message: `Stock insuffisant : ${product.currentStock} disponible(s).`,
+        message: `Stock insuffisant : ${product.currentStock} ${Math.abs(product.currentStock) === 1 ? "disponible" : "disponibles"}.`,
       })
     }
 

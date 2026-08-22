@@ -12,6 +12,10 @@ export function formatNumber(value: number): string {
   return numberFormatter.format(value)
 }
 
+export function formatQuantity(value: number): string {
+  return `${formatNumber(value)} ${Math.abs(value) === 1 ? "unité" : "unités"}`
+}
+
 export function formatSeptims(value: number): string {
   return `${numberFormatter.format(value)} sept.`
 }

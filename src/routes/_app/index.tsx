@@ -3,14 +3,18 @@ import { useSuspenseQuery } from "@tanstack/react-query"
 import { createFileRoute, Link } from "@tanstack/react-router"
 import {
   AlertTriangle,
+  ArrowDownToLine,
   ArrowDownLeft,
   ArrowUpRight,
   Coins,
+  Hammer,
   PackageOpen,
-  Plus,
+  ReceiptText,
   ScrollText,
+  ShoppingBasket,
 } from "lucide-react"
 
+import { OperationDialog } from "@/components/operation-dialog"
 import { PageError } from "@/components/page-error"
 import { PageHeader } from "@/components/page-header"
 import { PageSkeleton } from "@/components/page-skeleton"
@@ -38,6 +42,7 @@ import { api } from "../../../convex/_generated/api"
 import {
   formatDate,
   formatNumber,
+  formatQuantity,
   formatSeptims,
   operationLabels,
 } from "@/lib/format"
@@ -47,61 +52,126 @@ export const Route = createFileRoute("/_app/")({
   component: DashboardPage,
   errorComponent: PageError,
   loader: async ({ context }) => {
-    await context.queryClient.ensureQueryData(
-      convexQuery(api.dashboard.overview, {})
-    )
+    await Promise.all([
+      context.queryClient.ensureQueryData(
+        convexQuery(api.dashboard.overview, {})
+      ),
+      context.queryClient.ensureQueryData(
+        convexQuery(api.products.selectable, {})
+      ),
+      context.queryClient.ensureQueryData(convexQuery(api.characters.list, {})),
+    ])
   },
   pendingComponent: PageSkeleton,
 })
 
 function DashboardPage() {
   const { data } = useSuspenseQuery(convexQuery(api.dashboard.overview, {}))
+  const { data: products } = useSuspenseQuery(
+    convexQuery(api.products.selectable, {})
+  )
+  const { data: characters } = useSuspenseQuery(
+    convexQuery(api.characters.list, {})
+  )
 
   return (
     <div className="animate-in duration-300 fade-in slide-in-from-bottom-1 motion-reduce:animate-none">
       <PageHeader
         action={
-          <Button asChild className="shadow-sm" size="lg">
-            <Link to="/journal">
-              <Plus aria-hidden="true" />
-              Nouvelle opération
-            </Link>
-          </Button>
+          <OperationDialog
+            characters={characters}
+            products={products}
+            trigger={
+              <Button className="shadow-sm" size="lg">
+                <ShoppingBasket aria-hidden="true" />
+                Encaisser une vente
+              </Button>
+            }
+          />
         }
-        eyebrow="Synthèse de l’activité"
-        title="Vue d'ensemble"
+        eyebrow="La boutique aujourd’hui"
+        title="À faire aujourd’hui"
       >
-        Les stocks, commandes et opérations récentes de la boutique.
+        Les priorités du jour et les actions utiles, sans passer par le journal.
       </PageHeader>
+
+      <Card className="mt-6 rounded-none border-x-0 border-y border-[#5b462b]/40 bg-[#fff8e7]/25 py-0 ring-0">
+        <CardContent className="flex flex-col gap-3 px-0 py-3 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <p className="text-[0.66rem] font-bold tracking-[0.18em] text-primary uppercase">
+              Actions rapides
+            </p>
+            <p className="mt-0.5 text-sm text-muted-foreground">
+              Qu’est-ce qui vient de se passer ?
+            </p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <OperationDialog
+              characters={characters}
+              initialKind="purchase"
+              products={products}
+              trigger={
+                <Button variant="outline">
+                  <ArrowDownToLine aria-hidden="true" />
+                  Réceptionner un achat
+                </Button>
+              }
+            />
+            <OperationDialog
+              characters={characters}
+              initialKind="production"
+              products={products}
+              trigger={
+                <Button variant="outline">
+                  <Hammer aria-hidden="true" />
+                  Ajouter une production
+                </Button>
+              }
+            />
+            <OperationDialog
+              characters={characters}
+              initialKind="service"
+              products={products}
+              trigger={
+                <Button variant="outline">
+                  <ReceiptText aria-hidden="true" />
+                  Facturer un service
+                </Button>
+              }
+            />
+          </div>
+        </CardContent>
+      </Card>
 
       <section
         aria-label="Indicateurs de la boutique"
         className="mt-6 grid grid-cols-4 border-y border-[#5b462b]/50 max-xl:grid-cols-2 max-md:grid-cols-1"
       >
         <Metric
-          detail="références suivies"
-          icon={PackageOpen}
-          label="Produits en stock"
-          value={formatNumber(data.activeProducts)}
-        />
-        <Metric
-          detail="au seuil ou en dessous"
+          detail="stocks au seuil ou épuisés"
           icon={AlertTriangle}
-          label="À surveiller"
+          label="À réapprovisionner"
           tone={data.lowStock.length > 0 ? "warning" : "normal"}
           value={formatNumber(data.lowStock.length)}
         />
         <Metric
-          detail="commandes encore ouvertes"
+          detail="commandes clients et fournisseurs"
           icon={ScrollText}
-          label="Commandes"
+          label="À préparer"
           value={formatNumber(data.openOrders)}
         />
         <Metric
-          detail="selon les prix renseignés"
+          detail="mouvements enregistrés"
+          icon={ReceiptText}
+          label="Cette semaine"
+          value={formatNumber(data.weeklyTransactionCount)}
+        />
+        <Metric
+          detail="ventes, services et achats"
           icon={Coins}
-          label="Valeur du stock"
-          value={formatSeptims(data.stockValue)}
+          label="Solde de la semaine"
+          tone={data.weeklyBalance < 0 ? "warning" : "normal"}
+          value={formatSeptims(data.weeklyBalance)}
         />
       </section>
 
@@ -109,9 +179,9 @@ function DashboardPage() {
         <Card className="rounded-none border-[#644c2c]/35 bg-[#f9f0db]/45 py-0 shadow-[inset_0_0_24px_rgba(107,79,40,0.03)] ring-0">
           <CardHeader className="border-b border-border/60">
             <CardTitle className="font-display text-xl font-[580] text-[#3b2f22]">
-              Mouvements récents
+              Dernière activité
             </CardTitle>
-            <CardDescription>Dernières opérations enregistrées</CardDescription>
+            <CardDescription>Ce qui vient d’être enregistré</CardDescription>
             <CardAction>
               <Badge
                 className={cn(
@@ -163,7 +233,7 @@ function DashboardPage() {
                             </p>
                             <p className="text-xs text-muted-foreground">
                               {operationLabels[transaction.kind]} ·{" "}
-                              {formatNumber(transaction.quantity)} unité(s)
+                              {formatQuantity(transaction.quantity)}
                             </p>
                           </div>
                         </div>
