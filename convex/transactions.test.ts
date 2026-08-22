@@ -233,7 +233,108 @@ describe("transactions.record", () => {
   })
 })
 
-describe("transactions.recordSale", () => {
+describe("transactions.recordTrade", () => {
+  it("enregistre un achat multi-produits dans une seule transaction", async () => {
+    const backend = createTestBackend()
+    const member = await asAuthenticatedMember(backend)
+    const { characterId, productId } = await seedStock(backend)
+    const secondProductId = await backend.run(async (ctx) => {
+      await ctx.db.patch(productId, { purchasePrice: 1 / 4 })
+      return ctx.db.insert("products", {
+        active: true,
+        category: "ingredient",
+        currentStock: 5,
+        minimumStock: 1,
+        name: "Ail",
+        normalizedName: "ail",
+        purchasePrice: 3 / 4,
+        tracksStock: true,
+      })
+    })
+
+    const result = await member.mutation(api.transactions.recordTrade, {
+      characterId,
+      kind: "purchase",
+      lines: [
+        { kind: "product", productId, quantity: 1 },
+        { kind: "product", productId: secondProductId, quantity: 1 },
+      ],
+      occurredAt: Date.now(),
+    })
+
+    const state = await backend.run(async (ctx) => ({
+      audits: await ctx.db.query("auditLogs").collect(),
+      firstProduct: await ctx.db.get(productId),
+      lines: await ctx.db.query("transactionLines").collect(),
+      movements: await ctx.db.query("stockMovements").collect(),
+      secondProduct: await ctx.db.get(secondProductId),
+      transactions: await ctx.db.query("transactions").collect(),
+    }))
+    expect(result.total).toBe(-1)
+    expect(state.firstProduct?.currentStock).toBe(11)
+    expect(state.secondProduct?.currentStock).toBe(6)
+    expect(state.transactions[0]).toMatchObject({
+      kind: "purchase",
+      lineCount: 2,
+      productName: "2 références",
+      total: -1,
+    })
+    expect(state.lines).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ quantity: 1, total: 1 / 4 }),
+        expect.objectContaining({ quantity: 1, total: 3 / 4 }),
+      ])
+    )
+    expect(state.movements).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ delta: 1, resultingStock: 11 }),
+        expect.objectContaining({ delta: 1, resultingStock: 6 }),
+      ])
+    )
+    expect(state.audits[0]).toMatchObject({ action: "purchase.recorded" })
+  })
+
+  it("annule tout l’achat si une référence est indisponible", async () => {
+    const backend = createTestBackend()
+    const member = await asAuthenticatedMember(backend)
+    const { characterId, productId } = await seedStock(backend)
+    const archivedProductId = await backend.run((ctx) =>
+      ctx.db.insert("products", {
+        active: false,
+        category: "ingredient",
+        currentStock: 4,
+        minimumStock: 1,
+        name: "Sel",
+        normalizedName: "sel",
+        purchasePrice: 1,
+        tracksStock: true,
+      })
+    )
+
+    await expect(
+      member.mutation(api.transactions.recordTrade, {
+        characterId,
+        kind: "purchase",
+        lines: [
+          { kind: "product", productId, quantity: 2 },
+          { kind: "product", productId: archivedProductId, quantity: 1 },
+        ],
+        occurredAt: Date.now(),
+      })
+    ).rejects.toThrowError("indisponible")
+
+    const state = await backend.run(async (ctx) => ({
+      lines: await ctx.db.query("transactionLines").collect(),
+      movements: await ctx.db.query("stockMovements").collect(),
+      product: await ctx.db.get(productId),
+      transactions: await ctx.db.query("transactions").collect(),
+    }))
+    expect(state.product?.currentStock).toBe(10)
+    expect(state.transactions).toHaveLength(0)
+    expect(state.lines).toHaveLength(0)
+    expect(state.movements).toHaveLength(0)
+  })
+
   it("enregistre une vente multi-références et déstocke les composants des lots", async () => {
     const backend = createTestBackend()
     const member = await asAuthenticatedMember(backend)
@@ -269,9 +370,10 @@ describe("transactions.recordSale", () => {
       return { bundleId, secondProductId }
     })
 
-    const result = await member.mutation(api.transactions.recordSale, {
+    const result = await member.mutation(api.transactions.recordTrade, {
       characterId,
       discount: 2,
+      kind: "sale",
       lines: [
         { kind: "product", productId, quantity: 1 },
         { bundleId, kind: "bundle", quantity: 2 },
@@ -342,8 +444,9 @@ describe("transactions.recordSale", () => {
     })
 
     await expect(
-      member.mutation(api.transactions.recordSale, {
+      member.mutation(api.transactions.recordTrade, {
         characterId,
+        kind: "sale",
         lines: [{ bundleId, kind: "bundle", quantity: 2 }],
         occurredAt: Date.now(),
       })
@@ -369,8 +472,9 @@ describe("transactions.recordSale", () => {
     const { characterId, productId } = await seedStock(backend)
 
     await expect(
-      member.mutation(api.transactions.recordSale, {
+      member.mutation(api.transactions.recordTrade, {
         characterId,
+        kind: "sale",
         lines: [{ kind: "product", productId, quantity: 1.01 }],
         occurredAt: Date.now(),
       })
@@ -404,8 +508,9 @@ describe("transactions.recordSale", () => {
       })
     })
 
-    const result = await member.mutation(api.transactions.recordSale, {
+    const result = await member.mutation(api.transactions.recordTrade, {
       characterId,
+      kind: "sale",
       lines: [
         { kind: "product", productId, quantity: 1 },
         { kind: "product", productId: secondProductId, quantity: 1 },

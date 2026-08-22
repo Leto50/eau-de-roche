@@ -54,7 +54,7 @@ export const list = query({
   },
 })
 
-interface PreparedSaleLine {
+interface PreparedTradeLine {
   bundleId?: Id<"bundles">
   kind: "bundle" | "product"
   productId?: Id<"products">
@@ -69,12 +69,13 @@ interface StockRequirement {
   quantity: number
 }
 
-export const recordSale = mutation({
+export const recordTrade = mutation({
   args: {
     characterId: v.id("characters"),
     comment: v.optional(v.string()),
     counterparty: v.optional(v.string()),
     discount: v.optional(v.number()),
+    kind: v.union(v.literal("purchase"), v.literal("sale")),
     lines: v.array(
       v.union(
         v.object({
@@ -105,7 +106,7 @@ export const recordSale = mutation({
     if (args.lines.length === 0 || args.lines.length > 50) {
       throw new ConvexError({
         code: "INVALID_INPUT",
-        message: "Une vente doit contenir entre 1 et 50 lignes.",
+        message: "Une opération doit contenir entre 1 et 50 lignes.",
       })
     }
     assertFiniteRange(args.occurredAt, 0, Date.now() + 86_400_000, "La date")
@@ -115,7 +116,7 @@ export const recordSale = mutation({
     const comment = cleanOptionalText(args.comment)
 
     const references = new Set<string>()
-    const preparedLines: PreparedSaleLine[] = []
+    const preparedLines: PreparedTradeLine[] = []
     const stockRequirements = new Map<string, StockRequirement>()
 
     function addStockRequirement(product: Doc<"products">, quantity: number) {
@@ -136,7 +137,7 @@ export const recordSale = mutation({
         throw new ConvexError({
           code: "INVALID_INPUT",
           message:
-            "Une référence ne peut apparaître qu’une fois dans la vente.",
+            "Une référence ne peut apparaître qu’une fois dans l’opération.",
         })
       }
       references.add(referenceKey)
@@ -146,10 +147,13 @@ export const recordSale = mutation({
         if (!product?.active || !product.tracksStock) {
           throw new ConvexError({
             code: "NOT_FOUND",
-            message: "Un produit de la vente est introuvable ou indisponible.",
+            message:
+              "Un produit de l’opération est introuvable ou indisponible.",
           })
         }
-        const unitPrice = line.unitPrice ?? product.salePrice ?? 0
+        const fallbackPrice =
+          args.kind === "purchase" ? product.purchasePrice : product.salePrice
+        const unitPrice = line.unitPrice ?? fallbackPrice ?? 0
         assertFiniteRange(unitPrice, 0, MAX_PRICE, "Le prix")
         preparedLines.push({
           kind: "product",
@@ -161,6 +165,13 @@ export const recordSale = mutation({
         })
         addStockRequirement(product, line.quantity)
         continue
+      }
+
+      if (args.kind === "purchase") {
+        throw new ConvexError({
+          code: "INVALID_INPUT",
+          message: "Un achat ne peut contenir que des produits.",
+        })
       }
 
       const bundle = await ctx.db.get(line.bundleId)
@@ -222,7 +233,10 @@ export const recordSale = mutation({
       })
     }
     for (const requirement of stockRequirements.values()) {
-      if (requirement.quantity > requirement.product.currentStock) {
+      if (
+        args.kind === "sale" &&
+        requirement.quantity > requirement.product.currentStock
+      ) {
         throw new ConvexError({
           code: "INSUFFICIENT_STOCK",
           message: `Stock insuffisant pour « ${requirement.product.name} » : ${requirement.product.currentStock} disponibles.`,
@@ -230,7 +244,11 @@ export const recordSale = mutation({
       }
     }
 
-    const total = roundSeptimsDown(gross - discount)
+    const roundedTotal = roundSeptimsDown(gross - discount)
+    const total =
+      args.kind === "purchase" && roundedTotal !== 0
+        ? -roundedTotal
+        : roundedTotal
     const firstLine = preparedLines[0]
     const occurredAt = args.occurredAt
     const transactionId = await ctx.db.insert("transactions", {
@@ -240,7 +258,7 @@ export const recordSale = mutation({
       ...(comment ? { comment } : {}),
       ...(counterparty ? { counterparty } : {}),
       ...(discount > 0 ? { discount } : {}),
-      kind: "sale",
+      kind: args.kind,
       lineCount: preparedLines.length,
       occurredAt,
       productName:
@@ -268,23 +286,24 @@ export const recordSale = mutation({
       })
     }
     for (const requirement of stockRequirements.values()) {
-      const resultingStock =
-        requirement.product.currentStock - requirement.quantity
+      const delta =
+        args.kind === "purchase" ? requirement.quantity : -requirement.quantity
+      const resultingStock = requirement.product.currentStock + delta
       await ctx.db.patch(requirement.product._id, {
         currentStock: resultingStock,
       })
       await ctx.db.insert("stockMovements", {
-        delta: -requirement.quantity,
+        delta,
         occurredAt,
         previousStock: requirement.product.currentStock,
         productId: requirement.product._id,
-        reason: "sale",
+        reason: args.kind,
         resultingStock,
         transactionId,
       })
     }
     await ctx.db.insert("auditLogs", {
-      action: "sale.recorded",
+      action: `${args.kind}.recorded`,
       actorUserId: String(user._id),
       createdAt: Date.now(),
       detail: `${preparedLines.length}:${total}`,

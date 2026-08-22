@@ -80,7 +80,7 @@ import { cn } from "@/lib/utils"
 export type OperationKind = "production" | "purchase" | "sale" | "service"
 type Bundle = FunctionReturnType<typeof api.recipes.listBundles>[number]
 
-interface SaleLine {
+interface TradeLine {
   id: string
   kind: "bundle" | "product"
   name: string
@@ -88,7 +88,7 @@ interface SaleLine {
   unitPrice: PriceDraft
 }
 
-type SaleMutationLine =
+type TradeMutationLine =
   | {
       kind: "product"
       productId: Id<"products">
@@ -288,15 +288,17 @@ function ProductPicker({
   )
 }
 
-function SaleReferencePicker({
+function TradeReferencePicker({
   bundles,
   onSelect,
   products,
+  tradeKind,
   usedReferences,
 }: Readonly<{
   bundles: readonly Bundle[]
-  onSelect: (line: SaleLine) => void
+  onSelect: (line: TradeLine) => void
   products: readonly Doc<"products">[]
+  tradeKind: "purchase" | "sale"
   usedReferences: ReadonlySet<string>
 }>) {
   const [open, setOpen] = useState(false)
@@ -305,13 +307,16 @@ function SaleReferencePicker({
     (product) =>
       product.tracksStock && !usedReferences.has(`product:${product._id}`)
   )
-  const availableBundles = bundles.filter(
-    (bundle) => !usedReferences.has(`bundle:${bundle._id}`)
-  )
+  const availableBundles =
+    tradeKind === "sale"
+      ? bundles.filter((bundle) => !usedReferences.has(`bundle:${bundle._id}`))
+      : []
 
   return (
     <div className="grid gap-2">
-      <Label htmlFor={triggerId}>Produits et lots</Label>
+      <Label htmlFor={triggerId}>
+        {tradeKind === "sale" ? "Produits et lots" : "Produits"}
+      </Label>
       <Popover onOpenChange={setOpen} open={open}>
         <PopoverTrigger asChild>
           <Button
@@ -322,7 +327,11 @@ function SaleReferencePicker({
             type="button"
             variant="outline"
           >
-            <span>Ajouter une référence au panier…</span>
+            <span>
+              {tradeKind === "sale"
+                ? "Ajouter une référence au panier…"
+                : "Ajouter un produit à l’achat…"}
+            </span>
             <ChevronsUpDown aria-hidden="true" className="size-3.5" />
           </Button>
         </PopoverTrigger>
@@ -331,7 +340,13 @@ function SaleReferencePicker({
           className="w-[var(--radix-popover-trigger-width)] rounded-[0.2rem] border-[#6a5436] bg-[#f4e8cf] p-0"
         >
           <Command className="rounded-[0.2rem] bg-transparent">
-            <CommandInput placeholder="Nom du produit ou du lot…" />
+            <CommandInput
+              placeholder={
+                tradeKind === "sale"
+                  ? "Nom du produit ou du lot…"
+                  : "Nom du produit…"
+              }
+            />
             <CommandList>
               <CommandEmpty>Aucune autre référence disponible.</CommandEmpty>
               {availableProducts.length > 0 ? (
@@ -349,7 +364,11 @@ function SaleReferencePicker({
                           kind: "product",
                           name: product.name,
                           quantity: "1",
-                          unitPrice: priceDraftFromValue(product.salePrice),
+                          unitPrice: priceDraftFromValue(
+                            tradeKind === "purchase"
+                              ? product.purchasePrice
+                              : product.salePrice
+                          ),
                         })
                         setOpen(false)
                       }}
@@ -402,33 +421,36 @@ function SaleReferencePicker({
   )
 }
 
-function SaleCart({
+function TradeCart({
   bundles,
   lines,
   onAdd,
   onRemove,
   onUpdate,
   products,
+  tradeKind,
 }: Readonly<{
   bundles: readonly Bundle[]
-  lines: readonly SaleLine[]
-  onAdd: (line: SaleLine) => void
-  onRemove: (kind: SaleLine["kind"], id: string) => void
+  lines: readonly TradeLine[]
+  onAdd: (line: TradeLine) => void
+  onRemove: (kind: TradeLine["kind"], id: string) => void
   onUpdate: (
-    kind: SaleLine["kind"],
+    kind: TradeLine["kind"],
     id: string,
-    patch: Partial<SaleLine>
+    patch: Partial<TradeLine>
   ) => void
   products: readonly Doc<"products">[]
+  tradeKind: "purchase" | "sale"
 }>) {
   const usedReferences = new Set(lines.map((line) => `${line.kind}:${line.id}`))
 
   return (
     <div className="grid gap-3">
-      <SaleReferencePicker
+      <TradeReferencePicker
         bundles={bundles}
         onSelect={onAdd}
         products={products}
+        tradeKind={tradeKind}
         usedReferences={usedReferences}
       />
       {lines.length > 0 ? (
@@ -495,7 +517,9 @@ function SaleCart({
           <ShoppingBasket aria-hidden="true" />
           <AlertTitle>Panier vide</AlertTitle>
           <AlertDescription>
-            Ajoutez un ou plusieurs produits ou lots à cette vente.
+            {tradeKind === "sale"
+              ? "Ajoutez un ou plusieurs produits ou lots à cette vente."
+              : "Ajoutez un ou plusieurs produits à cet achat."}
           </AlertDescription>
         </Alert>
       )}
@@ -517,7 +541,7 @@ export function OperationDialog({
   trigger?: ReactElement
 }>) {
   const record = useMutation(api.transactions.record)
-  const recordSale = useMutation(api.transactions.recordSale)
+  const recordTrade = useMutation(api.transactions.recordTrade)
   const [open, setOpen] = useState(false)
   const [kind, setKind] = useState<OperationKind>(initialKind)
   const [productId, setProductId] = useState("")
@@ -526,7 +550,7 @@ export function OperationDialog({
   const [unitPrice, setUnitPrice] = useState<PriceDraft>(() =>
     priceDraftFromValue(undefined)
   )
-  const [saleLines, setSaleLines] = useState<SaleLine[]>([])
+  const [tradeLines, setTradeLines] = useState<TradeLine[]>([])
   const [discount, setDiscount] = useState("")
   const [counterparty, setCounterparty] = useState("")
   const [comment, setComment] = useState("")
@@ -535,6 +559,7 @@ export function OperationDialog({
   const [isSubmitting, setIsSubmitting] = useState(false)
 
   const config = operationConfigs[kind]
+  const usesTradeCart = kind === "purchase" || kind === "sale"
   const availableProducts = products.filter((product) =>
     kind === "service" ? !product.tracksStock : product.tracksStock
   )
@@ -551,11 +576,13 @@ export function OperationDialog({
   const previewPrice = Number.isFinite(parsedPrice) ? parsedPrice : 0
   const parsedDiscount = discount.trim() ? Number(discount) : 0
   const previewDiscount = Number.isFinite(parsedDiscount) ? parsedDiscount : 0
-  const saleGross = saleLines.reduce((total, line) => {
+  const tradeGross = tradeLines.reduce((total, line) => {
     const lineQuantity = Number(line.quantity)
     const fallbackLinePrice =
       line.kind === "product"
-        ? products.find((product) => product._id === line.id)?.salePrice
+        ? kind === "purchase"
+          ? products.find((product) => product._id === line.id)?.purchasePrice
+          : products.find((product) => product._id === line.id)?.salePrice
         : bundles.find((bundle) => bundle._id === line.id)?.price
     const enteredLinePrice = priceDraftToValue(line.unitPrice)
     const linePrice = enteredLinePrice ?? fallbackLinePrice ?? 0
@@ -568,7 +595,7 @@ export function OperationDialog({
   }, 0)
   const previewUnroundedTotal = Math.max(
     0,
-    (kind === "sale" ? saleGross : previewQuantity * previewPrice) -
+    (usesTradeCart ? tradeGross : previewQuantity * previewPrice) -
       previewDiscount
   )
   const previewTotal = roundSeptimsDown(previewUnroundedTotal)
@@ -588,7 +615,7 @@ export function OperationDialog({
   const hasInsufficientSingleStock =
     resultingStock !== undefined && resultingStock < 0
   const saleStockRequirements = new Map<string, number>()
-  for (const line of saleLines) {
+  for (const line of tradeLines) {
     const lineQuantity = Number(line.quantity)
     if (!Number.isFinite(lineQuantity) || lineQuantity <= 0) continue
     if (line.kind === "product") {
@@ -621,7 +648,7 @@ export function OperationDialog({
     setProductId("")
     setQuantity("1")
     setUnitPrice(priceDraftFromValue(undefined))
-    setSaleLines([])
+    setTradeLines([])
     setDiscount("")
     setCounterparty("")
     setComment("")
@@ -634,23 +661,24 @@ export function OperationDialog({
     setKind(value)
     setProductId("")
     setUnitPrice(priceDraftFromValue(undefined))
+    setTradeLines([])
     setDiscount("")
   }
 
-  function updateSaleLine(
-    lineKind: SaleLine["kind"],
+  function updateTradeLine(
+    lineKind: TradeLine["kind"],
     id: string,
-    patch: Partial<SaleLine>
+    patch: Partial<TradeLine>
   ) {
-    setSaleLines((current) =>
+    setTradeLines((current) =>
       current.map((line) =>
         line.kind === lineKind && line.id === id ? { ...line, ...patch } : line
       )
     )
   }
 
-  function removeSaleLine(lineKind: SaleLine["kind"], id: string) {
-    setSaleLines((current) =>
+  function removeTradeLine(lineKind: TradeLine["kind"], id: string) {
+    setTradeLines((current) =>
       current.filter((line) => line.kind !== lineKind || line.id !== id)
     )
   }
@@ -677,12 +705,12 @@ export function OperationDialog({
       toast.error("Choisissez un personnage et une date valide.")
       return
     }
-    if (kind !== "sale" && !product) {
+    if (!usesTradeCart && !product) {
       toast.error("Choisissez une référence.")
       return
     }
     if (
-      kind !== "sale" &&
+      !usesTradeCart &&
       (!Number.isFinite(submittedQuantity) ||
         !Number.isInteger(submittedQuantity) ||
         submittedQuantity <= 0)
@@ -691,7 +719,7 @@ export function OperationDialog({
       return
     }
     if (
-      kind !== "sale" &&
+      !usesTradeCart &&
       submittedPrice !== undefined &&
       !Number.isFinite(submittedPrice)
     ) {
@@ -700,15 +728,19 @@ export function OperationDialog({
       )
       return
     }
-    if (kind === "sale" && saleLines.length === 0) {
-      toast.error("Ajoutez au moins une référence au panier.")
+    if (usesTradeCart && tradeLines.length === 0) {
+      toast.error(
+        kind === "sale"
+          ? "Ajoutez au moins une référence au panier."
+          : "Ajoutez au moins un produit à l’achat."
+      )
       return
     }
 
     setIsSubmitting(true)
     try {
-      if (kind === "sale") {
-        const preparedLines = saleLines.flatMap<SaleMutationLine>((line) => {
+      if (kind === "purchase" || kind === "sale") {
+        const preparedLines = tradeLines.flatMap<TradeMutationLine>((line) => {
           const lineQuantity = Number(line.quantity)
           const parsedLinePrice = priceDraftToValue(line.unitPrice)
           const linePrice = parsedLinePrice ?? undefined
@@ -736,6 +768,7 @@ export function OperationDialog({
                 ]
               : []
           }
+          if (kind === "purchase") return []
           const lineBundle = bundles.find((entry) => entry._id === line.id)
           return lineBundle
             ? [
@@ -748,17 +781,18 @@ export function OperationDialog({
               ]
             : []
         })
-        if (preparedLines.length !== saleLines.length) {
+        if (preparedLines.length !== tradeLines.length) {
           toast.error("Vérifiez les quantités et les prix du panier.")
           return
         }
-        await recordSale({
+        await recordTrade({
           characterId: character._id,
           ...(comment.trim() ? { comment } : {}),
           ...(counterparty.trim() ? { counterparty } : {}),
           ...(submittedDiscount === undefined
             ? {}
             : { discount: submittedDiscount }),
+          kind,
           lines: preparedLines,
           occurredAt,
         })
@@ -837,14 +871,15 @@ export function OperationDialog({
             </TabsList>
           </Tabs>
 
-          {kind === "sale" ? (
-            <SaleCart
+          {kind === "purchase" || kind === "sale" ? (
+            <TradeCart
               bundles={bundles}
-              lines={saleLines}
-              onAdd={(line) => setSaleLines((current) => [...current, line])}
-              onRemove={removeSaleLine}
-              onUpdate={updateSaleLine}
+              lines={tradeLines}
+              onAdd={(line) => setTradeLines((current) => [...current, line])}
+              onRemove={removeTradeLine}
+              onUpdate={updateTradeLine}
               products={availableProducts}
+              tradeKind={kind}
             />
           ) : (
             <ProductPicker
@@ -858,7 +893,7 @@ export function OperationDialog({
           <div
             className={cn(
               "grid gap-4",
-              kind !== "sale" && "sm:grid-cols-[minmax(0,1fr)_9rem]"
+              !usesTradeCart && "sm:grid-cols-[minmax(0,1fr)_9rem]"
             )}
           >
             <div className="grid gap-2">
@@ -879,7 +914,7 @@ export function OperationDialog({
                 </SelectContent>
               </Select>
             </div>
-            {kind === "sale" ? null : (
+            {usesTradeCart ? null : (
               <div className="grid gap-2">
                 <Label htmlFor="operation-quantity">Quantité</Label>
                 <Input
@@ -896,7 +931,7 @@ export function OperationDialog({
             )}
           </div>
 
-          {kind !== "sale" && selectedProduct ? (
+          {!usesTradeCart && selectedProduct ? (
             <Alert
               className={cn(
                 hasInsufficientStock
@@ -935,7 +970,7 @@ export function OperationDialog({
                 ) : null}
               </AlertDescription>
             </Alert>
-          ) : kind === "sale" && saleLines.length > 0 ? (
+          ) : usesTradeCart && tradeLines.length > 0 ? (
             <Alert
               className={cn(
                 hasInsufficientStock
@@ -948,7 +983,7 @@ export function OperationDialog({
               <AlertTitle>
                 {hasInsufficientStock
                   ? "Stock insuffisant"
-                  : `${saleLines.length} ${saleLines.length === 1 ? "référence" : "références"} dans le panier`}
+                  : `${tradeLines.length} ${tradeLines.length === 1 ? "référence" : "références"} ${kind === "sale" ? "dans le panier" : "dans l’achat"}`}
               </AlertTitle>
               <AlertDescription className="flex flex-wrap gap-x-5 gap-y-1">
                 <span>
@@ -974,7 +1009,7 @@ export function OperationDialog({
               >
                 {kind === "production"
                   ? "Date et détails facultatifs"
-                  : kind === "sale"
+                  : usesTradeCart
                     ? "Date, remise et détails facultatifs"
                     : "Date, prix et détails facultatifs"}
                 <ChevronDown
@@ -992,12 +1027,12 @@ export function OperationDialog({
                   "grid gap-4",
                   kind === "production"
                     ? "sm:grid-cols-1"
-                    : kind === "sale"
+                    : usesTradeCart
                       ? "sm:grid-cols-2"
                       : "sm:grid-cols-3"
                 )}
               >
-                {kind === "production" || kind === "sale" ? null : (
+                {kind === "production" || usesTradeCart ? null : (
                   <div className="grid gap-2">
                     <Label htmlFor="operation-unit-price">Prix unitaire</Label>
                     <PriceInput
@@ -1080,7 +1115,7 @@ export function OperationDialog({
               disabled={
                 isSubmitting ||
                 hasInsufficientStock ||
-                (kind === "sale" && saleLines.length === 0)
+                (usesTradeCart && tradeLines.length === 0)
               }
               type="submit"
             >
