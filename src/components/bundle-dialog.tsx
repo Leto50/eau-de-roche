@@ -207,10 +207,13 @@ export function BundleDialog({
         (item) =>
           !item.productId ||
           !Number.isFinite(item.quantity) ||
+          !Number.isInteger(item.quantity) ||
           item.quantity <= 0
       )
     ) {
-      toast.error("Chaque ligne doit contenir un produit et une quantité.")
+      toast.error(
+        "Chaque ligne doit contenir un produit et une quantité entière."
+      )
       return
     }
     const productIds = preparedItems.flatMap((item) =>
@@ -313,7 +316,7 @@ export function BundleDialog({
                 min="0"
                 onChange={(event) => setPrice(event.target.value)}
                 placeholder="Non renseigné"
-                step="0.01"
+                step="any"
                 type="number"
                 value={price}
               />
@@ -365,12 +368,12 @@ export function BundleDialog({
                     </Label>
                     <Input
                       id={`${fieldId}-quantity-${item.key}`}
-                      min="0.01"
+                      min="1"
                       onChange={(event) =>
                         updateItem(item.key, { quantity: event.target.value })
                       }
                       required
-                      step="0.01"
+                      step="1"
                       type="number"
                       value={item.quantity}
                     />

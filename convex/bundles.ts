@@ -3,6 +3,7 @@ import { ConvexError, v } from "convex/values"
 import { type Id } from "./_generated/dataModel"
 import { mutation, query } from "./_generated/server"
 import { requireAdmin } from "./lib/auth"
+import { assertFiniteRange, assertWholeNumberRange } from "./lib/numbers"
 import { normalizeName } from "./lib/text"
 
 const MAX_ITEMS = 50
@@ -20,20 +21,6 @@ export const listArchived = query({
       .sort((left, right) => left.name.localeCompare(right.name, "fr"))
   },
 })
-
-function assertFiniteRange(
-  value: number,
-  minimum: number,
-  maximum: number,
-  label: string
-): void {
-  if (!Number.isFinite(value) || value < minimum || value > maximum) {
-    throw new ConvexError({
-      code: "INVALID_INPUT",
-      message: `${label} doit être compris entre ${minimum} et ${maximum}.`,
-    })
-  }
-}
 
 export const save = mutation({
   args: {
@@ -69,12 +56,7 @@ export const save = mutation({
     const productIds = new Set<string>()
     const preparedItems = await Promise.all(
       args.items.map(async (item) => {
-        assertFiniteRange(
-          item.quantity,
-          Number.EPSILON,
-          MAX_QUANTITY,
-          "La quantité"
-        )
+        assertWholeNumberRange(item.quantity, 1, MAX_QUANTITY, "La quantité")
         if (productIds.has(item.productId)) {
           throw new ConvexError({
             code: "INVALID_INPUT",

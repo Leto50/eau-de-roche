@@ -4,6 +4,51 @@ import { api } from "./_generated/api"
 import { asAuthenticatedUser, createTestBackend } from "./test.helpers"
 
 describe("products.save", () => {
+  it("accepte les prix fractionnaires avec des stocks entiers", async () => {
+    const backend = createTestBackend()
+    const admin = await asAuthenticatedUser(backend, "admin")
+
+    const productId = await admin.mutation(api.products.save, {
+      active: true,
+      category: "potion",
+      minimumStock: 2,
+      name: "Potion de soin diluée",
+      purchasePrice: 1 / 8,
+      salePrice: 1 / 4,
+      targetStock: 12,
+    })
+
+    const product = await backend.run((ctx) => ctx.db.get(productId))
+    expect(product).toMatchObject({
+      currentStock: 12,
+      minimumStock: 2,
+      purchasePrice: 1 / 8,
+      salePrice: 1 / 4,
+    })
+  })
+
+  it("refuse un stock fractionnaire sans écriture partielle", async () => {
+    const backend = createTestBackend()
+    const admin = await asAuthenticatedUser(backend, "admin")
+
+    await expect(
+      admin.mutation(api.products.save, {
+        active: true,
+        category: "potion",
+        minimumStock: 1,
+        name: "Potion de vigueur",
+        purchasePrice: 1 / 4,
+        salePrice: 1 / 2,
+        targetStock: 1.5,
+      })
+    ).rejects.toThrowError("nombre entier")
+
+    const products = await backend.run((ctx) =>
+      ctx.db.query("products").collect()
+    )
+    expect(products).toHaveLength(0)
+  })
+
   it("permet à un administrateur de modifier les prix et trace un ajustement de stock", async () => {
     const backend = createTestBackend()
     const admin = await asAuthenticatedUser(backend, "admin")

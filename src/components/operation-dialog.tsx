@@ -443,14 +443,14 @@ function SaleCart({
                   </Label>
                   <Input
                     id={`sale-quantity-${line.kind}-${line.id}`}
-                    min="0.01"
+                    min="1"
                     onChange={(event) =>
                       onUpdate(line.kind, line.id, {
                         quantity: event.target.value,
                       })
                     }
                     required
-                    step="0.01"
+                    step="1"
                     type="number"
                     value={line.quantity}
                   />
@@ -468,7 +468,7 @@ function SaleCart({
                       })
                     }
                     placeholder="0"
-                    step="0.01"
+                    step="any"
                     type="number"
                     value={line.unitPrice}
                   />
@@ -673,9 +673,11 @@ export function OperationDialog({
     }
     if (
       kind !== "sale" &&
-      (!Number.isFinite(submittedQuantity) || submittedQuantity <= 0)
+      (!Number.isFinite(submittedQuantity) ||
+        !Number.isInteger(submittedQuantity) ||
+        submittedQuantity <= 0)
     ) {
-      toast.error("La quantité doit être supérieure à zéro.")
+      toast.error("La quantité doit être un nombre entier supérieur à zéro.")
       return
     }
     if (kind === "sale" && saleLines.length === 0) {
@@ -693,6 +695,7 @@ export function OperationDialog({
             : undefined
           if (
             !Number.isFinite(lineQuantity) ||
+            !Number.isInteger(lineQuantity) ||
             lineQuantity <= 0 ||
             (linePrice !== undefined &&
               (!Number.isFinite(linePrice) || linePrice < 0))
@@ -863,10 +866,10 @@ export function OperationDialog({
                 <Input
                   className="h-10 bg-background/50 text-base"
                   id="operation-quantity"
-                  min="0.01"
+                  min="1"
                   onChange={(event) => setQuantity(event.target.value)}
                   required
-                  step="0.01"
+                  step="1"
                   type="number"
                   value={quantity}
                 />
@@ -977,7 +980,7 @@ export function OperationDialog({
                           ? "Non renseigné"
                           : formatNumber(suggestedPrice)
                       }
-                      step="0.01"
+                      step="any"
                       type="number"
                       value={unitPrice}
                     />
@@ -991,7 +994,7 @@ export function OperationDialog({
                       min="0"
                       onChange={(event) => setDiscount(event.target.value)}
                       placeholder="0"
-                      step="0.01"
+                      step="any"
                       type="number"
                       value={discount}
                     />

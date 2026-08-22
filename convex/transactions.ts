@@ -3,6 +3,7 @@ import { ConvexError, v } from "convex/values"
 import { type Doc, type Id } from "./_generated/dataModel"
 import { mutation, query } from "./_generated/server"
 import { requireUser } from "./lib/auth"
+import { assertFiniteRange, assertWholeNumberRange } from "./lib/numbers"
 import { stockOperationKind } from "./lib/validators"
 
 const MAX_TEXT_LENGTH = 500
@@ -19,20 +20,6 @@ function cleanOptionalText(value: string | undefined): string | undefined {
     })
   }
   return cleaned
-}
-
-function assertFiniteRange(
-  value: number,
-  minimum: number,
-  maximum: number,
-  label: string
-): void {
-  if (!Number.isFinite(value) || value < minimum || value > maximum) {
-    throw new ConvexError({
-      code: "INVALID_INPUT",
-      message: `${label} doit être compris entre ${minimum} et ${maximum}.`,
-    })
-  }
 }
 
 export const list = query({
@@ -136,12 +123,7 @@ export const recordSale = mutation({
     }
 
     for (const line of args.lines) {
-      assertFiniteRange(
-        line.quantity,
-        Number.EPSILON,
-        MAX_QUANTITY,
-        "La quantité"
-      )
+      assertWholeNumberRange(line.quantity, 1, MAX_QUANTITY, "La quantité")
       const referenceKey =
         line.kind === "product"
           ? `product:${line.productId}`
@@ -208,9 +190,9 @@ export const recordSale = mutation({
             message: `Le composant « ${item.productName} » est indisponible.`,
           })
         }
-        assertFiniteRange(
+        assertWholeNumberRange(
           item.quantity,
-          Number.EPSILON,
+          1,
           MAX_QUANTITY,
           "La quantité du lot"
         )
@@ -341,12 +323,7 @@ export const record = mutation({
       })
     }
 
-    assertFiniteRange(
-      args.quantity,
-      Number.EPSILON,
-      MAX_QUANTITY,
-      "La quantité"
-    )
+    assertWholeNumberRange(args.quantity, 1, MAX_QUANTITY, "La quantité")
     assertFiniteRange(args.occurredAt, 0, Date.now() + 86_400_000, "La date")
     const fallbackPrice =
       args.kind === "purchase" ? product.purchasePrice : product.salePrice

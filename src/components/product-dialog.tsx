@@ -116,6 +116,8 @@ export function ProductDialog({
     if (
       !Number.isFinite(submittedMinimum) ||
       !Number.isFinite(submittedStock) ||
+      !Number.isInteger(submittedMinimum) ||
+      !Number.isInteger(submittedStock) ||
       submittedMinimum < 0 ||
       submittedStock < 0 ||
       (submittedPurchasePrice !== null &&
@@ -125,7 +127,7 @@ export function ProductDialog({
         (!Number.isFinite(submittedSalePrice) || submittedSalePrice < 0))
     ) {
       toast.error(
-        "Les prix et les quantités doivent être des nombres positifs."
+        "Les stocks doivent être des nombres entiers positifs. Les prix peuvent être fractionnaires."
       )
       return false
     }
@@ -258,7 +260,7 @@ export function ProductDialog({
                 min="0"
                 onChange={(event) => setPurchasePrice(event.target.value)}
                 placeholder="Non renseigné"
-                step="0.01"
+                step="any"
                 type="number"
                 value={purchasePrice}
               />
@@ -272,7 +274,7 @@ export function ProductDialog({
                 min="0"
                 onChange={(event) => setSalePrice(event.target.value)}
                 placeholder="Non renseigné"
-                step="0.01"
+                step="any"
                 type="number"
                 value={salePrice}
               />
@@ -290,7 +292,7 @@ export function ProductDialog({
                       min="0"
                       onChange={(event) => setTargetStock(event.target.value)}
                       required
-                      step="0.01"
+                      step="1"
                       type="number"
                       value={targetStock}
                     />
@@ -304,7 +306,7 @@ export function ProductDialog({
                       min="0"
                       onChange={(event) => setMinimumStock(event.target.value)}
                       required
-                      step="0.01"
+                      step="1"
                       type="number"
                       value={minimumStock}
                     />

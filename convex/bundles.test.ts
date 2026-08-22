@@ -120,6 +120,35 @@ describe("bundles.save", () => {
     expect(bundles).toHaveLength(0)
   })
 
+  it("refuse une quantité fractionnaire dans un lot", async () => {
+    const backend = createTestBackend()
+    const admin = await asAuthenticatedUser(backend, "admin")
+    const productId = await backend.run((ctx) =>
+      ctx.db.insert("products", {
+        active: true,
+        category: "potion",
+        currentStock: 20,
+        minimumStock: 2,
+        name: "Potion de guérison",
+        normalizedName: "potion de guerison",
+        tracksStock: true,
+      })
+    )
+
+    await expect(
+      admin.mutation(api.bundles.save, {
+        items: [{ productId, quantity: 1.5 }],
+        name: "Lot de soins",
+        price: 1 / 4,
+      })
+    ).rejects.toThrowError("nombre entier")
+
+    const bundles = await backend.run((ctx) =>
+      ctx.db.query("bundles").collect()
+    )
+    expect(bundles).toHaveLength(0)
+  })
+
   it("refuse la création d’un lot à un employé", async () => {
     const backend = createTestBackend()
     const employee = await asAuthenticatedUser(backend)

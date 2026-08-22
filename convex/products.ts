@@ -3,26 +3,13 @@ import { ConvexError, v } from "convex/values"
 import { type Id } from "./_generated/dataModel"
 import { mutation, query } from "./_generated/server"
 import { requireAdmin, requireUser } from "./lib/auth"
+import { assertFiniteRange, assertWholeNumberRange } from "./lib/numbers"
 import { normalizeName } from "./lib/text"
 import { productCategory } from "./lib/validators"
 
 const MAX_NAME_LENGTH = 100
 const MAX_PRICE = 1_000_000_000
 const MAX_STOCK = 1_000_000
-
-function assertFiniteRange(
-  value: number,
-  minimum: number,
-  maximum: number,
-  label: string
-): void {
-  if (!Number.isFinite(value) || value < minimum || value > maximum) {
-    throw new ConvexError({
-      code: "INVALID_INPUT",
-      message: `${label} doit être compris entre ${minimum} et ${maximum}.`,
-    })
-  }
-}
 
 function optionalPrice(value: number | null): number | undefined {
   if (value === null) return undefined
@@ -145,8 +132,8 @@ export const save = mutation({
     const tracksStock = args.category !== "service"
     const minimumStock = tracksStock ? args.minimumStock : 0
     const targetStock = tracksStock ? args.targetStock : 0
-    assertFiniteRange(minimumStock, 0, MAX_STOCK, "Le seuil minimum")
-    assertFiniteRange(targetStock, 0, MAX_STOCK, "Le stock")
+    assertWholeNumberRange(minimumStock, 0, MAX_STOCK, "Le seuil minimum")
+    assertWholeNumberRange(targetStock, 0, MAX_STOCK, "Le stock")
 
     const existing = args.productId
       ? await ctx.db.get(args.productId)

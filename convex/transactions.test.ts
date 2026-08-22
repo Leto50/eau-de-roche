@@ -159,6 +159,29 @@ describe("transactions.record", () => {
     expect(state.audits).toHaveLength(0)
   })
 
+  it("refuse une quantité fractionnaire sans modifier le stock", async () => {
+    const backend = createTestBackend()
+    const member = await asAuthenticatedMember(backend)
+    const { characterId, productId } = await seedStock(backend)
+
+    await expect(
+      member.mutation(api.transactions.record, {
+        characterId,
+        kind: "sale",
+        occurredAt: Date.now(),
+        productId,
+        quantity: 1.5,
+      })
+    ).rejects.toThrowError("nombre entier")
+
+    const state = await backend.run(async (ctx) => ({
+      product: await ctx.db.get(productId),
+      transactions: await ctx.db.query("transactions").collect(),
+    }))
+    expect(state.product?.currentStock).toBe(10)
+    expect(state.transactions).toHaveLength(0)
+  })
+
   it("refuse l'opération en l'absence d'une session Better Auth valide", async () => {
     const backend = createTestBackend()
     const { characterId, productId } = await seedStock(backend)
@@ -303,5 +326,28 @@ describe("transactions.recordSale", () => {
     expect(state.lines).toHaveLength(0)
     expect(state.movements).toHaveLength(0)
     expect(state.audits).toHaveLength(0)
+  })
+
+  it("refuse une ligne fractionnaire sans enregistrer le panier", async () => {
+    const backend = createTestBackend()
+    const member = await asAuthenticatedMember(backend)
+    const { characterId, productId } = await seedStock(backend)
+
+    await expect(
+      member.mutation(api.transactions.recordSale, {
+        characterId,
+        lines: [{ kind: "product", productId, quantity: 1.01 }],
+        occurredAt: Date.now(),
+      })
+    ).rejects.toThrowError("nombre entier")
+
+    const state = await backend.run(async (ctx) => ({
+      lines: await ctx.db.query("transactionLines").collect(),
+      product: await ctx.db.get(productId),
+      transactions: await ctx.db.query("transactions").collect(),
+    }))
+    expect(state.product?.currentStock).toBe(10)
+    expect(state.transactions).toHaveLength(0)
+    expect(state.lines).toHaveLength(0)
   })
 })
