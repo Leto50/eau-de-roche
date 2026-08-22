@@ -64,6 +64,9 @@ export const Route = createFileRoute("/_app/")({
         convexQuery(api.products.selectable, {})
       ),
       context.queryClient.ensureQueryData(convexQuery(api.characters.list, {})),
+      context.queryClient.ensureQueryData(
+        convexQuery(api.recipes.listBundles, {})
+      ),
     ])
   },
   pendingComponent: PageSkeleton,
@@ -76,6 +79,9 @@ function DashboardPage() {
   )
   const { data: characters } = useSuspenseQuery(
     convexQuery(api.characters.list, {})
+  )
+  const { data: bundles } = useSuspenseQuery(
+    convexQuery(api.recipes.listBundles, {})
   )
 
   return (
@@ -94,6 +100,7 @@ function DashboardPage() {
         </CardHeader>
         <CardContent className="grid grid-cols-2 gap-2 lg:grid-cols-4">
           <OperationDialog
+            bundles={bundles}
             characters={characters}
             products={products}
             trigger={
@@ -107,6 +114,7 @@ function DashboardPage() {
             }
           />
           <OperationDialog
+            bundles={bundles}
             characters={characters}
             initialKind="purchase"
             products={products}
@@ -122,6 +130,7 @@ function DashboardPage() {
             }
           />
           <OperationDialog
+            bundles={bundles}
             characters={characters}
             initialKind="production"
             products={products}
@@ -137,6 +146,7 @@ function DashboardPage() {
             }
           />
           <OperationDialog
+            bundles={bundles}
             characters={characters}
             initialKind="service"
             products={products}

@@ -1,7 +1,9 @@
 import { convexQuery } from "@convex-dev/react-query"
 import { useSuspenseQuery } from "@tanstack/react-query"
 import { createFileRoute } from "@tanstack/react-router"
-import { ScrollText } from "lucide-react"
+import { type FunctionReturnType } from "convex/server"
+import { ChevronDown, ScrollText } from "lucide-react"
+import { useState } from "react"
 
 import { OperationDialog } from "@/components/operation-dialog"
 import { PageError } from "@/components/page-error"
@@ -9,6 +11,7 @@ import { PageHeader } from "@/components/page-header"
 import { PageSkeleton } from "@/components/page-skeleton"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
+import { Button } from "@/components/ui/button"
 import {
   Card,
   CardAction,
@@ -17,6 +20,11 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card"
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible"
 import {
   Table,
   TableBody,
@@ -36,6 +44,8 @@ import {
 } from "@/lib/format"
 import { cn } from "@/lib/utils"
 
+type Transaction = FunctionReturnType<typeof api.transactions.list>[number]
+
 export const Route = createFileRoute("/_app/journal")({
   component: JournalPage,
   errorComponent: PageError,
@@ -48,6 +58,9 @@ export const Route = createFileRoute("/_app/journal")({
         convexQuery(api.products.selectable, {})
       ),
       context.queryClient.ensureQueryData(convexQuery(api.characters.list, {})),
+      context.queryClient.ensureQueryData(
+        convexQuery(api.recipes.listBundles, {})
+      ),
     ])
   },
   pendingComponent: PageSkeleton,
@@ -75,11 +88,20 @@ function JournalPage() {
   const { data: characters } = useSuspenseQuery(
     convexQuery(api.characters.list, {})
   )
+  const { data: bundles } = useSuspenseQuery(
+    convexQuery(api.recipes.listBundles, {})
+  )
 
   return (
     <div className="animate-in duration-300 fade-in slide-in-from-bottom-1 motion-reduce:animate-none">
       <PageHeader
-        action={<OperationDialog characters={characters} products={products} />}
+        action={
+          <OperationDialog
+            bundles={bundles}
+            characters={characters}
+            products={products}
+          />
+        }
         eyebrow="Journal de boutique"
         title="Activité"
       >
@@ -145,9 +167,7 @@ function OperationPill({
   )
 }
 
-function JournalRow({
-  transaction,
-}: Readonly<{ transaction: Doc<"transactions"> }>) {
+function JournalRow({ transaction }: Readonly<{ transaction: Transaction }>) {
   return (
     <TableRow className="border-[#5b462b]/20 hover:bg-[#fffdeb]/40">
       <TableCell className="pl-4 text-muted-foreground">
@@ -165,6 +185,7 @@ function JournalRow({
             {transaction.counterparty}
           </span>
         ) : null}
+        <TransactionLines lines={transaction.lines} />
       </TableCell>
       <TableCell className="max-w-40 truncate text-muted-foreground">
         {transaction.actorName}
@@ -185,9 +206,7 @@ function JournalRow({
   )
 }
 
-function JournalCard({
-  transaction,
-}: Readonly<{ transaction: Doc<"transactions"> }>) {
+function JournalCard({ transaction }: Readonly<{ transaction: Transaction }>) {
   return (
     <Card className="rounded-none border-[#5b462b]/35 bg-[#fff8e7]/30 shadow-[2px_3px_0_rgba(84,63,37,0.05)] ring-0">
       <CardHeader>
@@ -202,25 +221,67 @@ function JournalCard({
           <OperationPill kind={transaction.kind} />
         </CardAction>
       </CardHeader>
-      <CardContent className="flex items-end justify-between gap-3 border-t border-border/60 pt-4">
-        <div>
-          <time className="text-xs text-muted-foreground">
-            {formatDate(transaction.occurredAt)}
-          </time>
-          <p className="mt-1 text-xs text-muted-foreground">
-            {formatQuantity(transaction.quantity)}
+      <CardContent className="grid gap-3 border-t border-border/60 pt-4">
+        <div className="flex items-end justify-between gap-3">
+          <div>
+            <time className="text-xs text-muted-foreground">
+              {formatDate(transaction.occurredAt)}
+            </time>
+            <p className="mt-1 text-xs text-muted-foreground">
+              {formatQuantity(transaction.quantity)}
+            </p>
+          </div>
+          <p
+            className={cn(
+              "font-display text-lg",
+              transaction.total >= 0 ? "text-[#456044]" : "text-[#8a3e2f]"
+            )}
+          >
+            {transaction.total >= 0 ? "+" : ""}
+            {formatSeptims(transaction.total)}
           </p>
         </div>
-        <p
-          className={cn(
-            "font-display text-lg",
-            transaction.total >= 0 ? "text-[#456044]" : "text-[#8a3e2f]"
-          )}
-        >
-          {transaction.total >= 0 ? "+" : ""}
-          {formatSeptims(transaction.total)}
-        </p>
+        <TransactionLines lines={transaction.lines} />
       </CardContent>
     </Card>
+  )
+}
+
+function TransactionLines({
+  lines,
+}: Readonly<{ lines: Transaction["lines"] }>) {
+  const [open, setOpen] = useState(false)
+  if (lines.length === 0) return null
+
+  return (
+    <Collapsible onOpenChange={setOpen} open={open}>
+      <CollapsibleTrigger asChild>
+        <Button
+          className="mt-1 h-auto px-0 text-[0.68rem]"
+          type="button"
+          variant="link"
+        >
+          {lines.length} {lines.length === 1 ? "ligne" : "lignes"}
+          <ChevronDown
+            aria-hidden="true"
+            className={cn("transition-transform", open && "rotate-180")}
+          />
+        </Button>
+      </CollapsibleTrigger>
+      <CollapsibleContent className="pt-1">
+        <ul className="grid gap-1 border-l border-primary/30 pl-2 text-xs text-muted-foreground">
+          {lines.map((line) => (
+            <li className="flex flex-wrap justify-between gap-2" key={line._id}>
+              <span>
+                {line.productName} · {formatQuantity(line.quantity)}
+              </span>
+              <span className="font-semibold text-foreground tabular-nums">
+                {formatSeptims(line.total)}
+              </span>
+            </li>
+          ))}
+        </ul>
+      </CollapsibleContent>
+    </Collapsible>
   )
 }

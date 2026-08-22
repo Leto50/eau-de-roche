@@ -1,4 +1,5 @@
 import { useMutation } from "convex/react"
+import { type FunctionReturnType } from "convex/server"
 import {
   ArrowDownToLine,
   ChevronDown,
@@ -6,9 +7,11 @@ import {
   Coins,
   Hammer,
   LoaderCircle,
+  PackageOpen,
   Plus,
   ReceiptText,
   ShoppingBasket,
+  Trash2,
   type LucideIcon,
 } from "lucide-react"
 import { useId, useState, type FormEvent, type ReactElement } from "react"
@@ -16,6 +19,7 @@ import { toast } from "sonner"
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
+import { Card, CardContent } from "@/components/ui/card"
 import {
   Collapsible,
   CollapsibleContent,
@@ -56,7 +60,7 @@ import { Separator } from "@/components/ui/separator"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Textarea } from "@/components/ui/textarea"
 import { api } from "../../convex/_generated/api"
-import { type Doc } from "../../convex/_generated/dataModel"
+import { type Doc, type Id } from "../../convex/_generated/dataModel"
 import {
   categoryLabels,
   formatNumber,
@@ -66,6 +70,29 @@ import {
 import { cn } from "@/lib/utils"
 
 export type OperationKind = "production" | "purchase" | "sale" | "service"
+type Bundle = FunctionReturnType<typeof api.recipes.listBundles>[number]
+
+interface SaleLine {
+  id: string
+  kind: "bundle" | "product"
+  name: string
+  quantity: string
+  unitPrice: string
+}
+
+type SaleMutationLine =
+  | {
+      kind: "product"
+      productId: Id<"products">
+      quantity: number
+      unitPrice?: number
+    }
+  | {
+      bundleId: Id<"bundles">
+      kind: "bundle"
+      quantity: number
+      unitPrice?: number
+    }
 
 interface OperationConfig {
   counterpartyLabel: string
@@ -253,24 +280,247 @@ function ProductPicker({
   )
 }
 
+function SaleReferencePicker({
+  bundles,
+  onSelect,
+  products,
+  usedReferences,
+}: Readonly<{
+  bundles: readonly Bundle[]
+  onSelect: (line: SaleLine) => void
+  products: readonly Doc<"products">[]
+  usedReferences: ReadonlySet<string>
+}>) {
+  const [open, setOpen] = useState(false)
+  const triggerId = useId()
+  const availableProducts = products.filter(
+    (product) =>
+      product.tracksStock && !usedReferences.has(`product:${product._id}`)
+  )
+  const availableBundles = bundles.filter(
+    (bundle) => !usedReferences.has(`bundle:${bundle._id}`)
+  )
+
+  return (
+    <div className="grid gap-2">
+      <Label htmlFor={triggerId}>Produits et lots</Label>
+      <Popover onOpenChange={setOpen} open={open}>
+        <PopoverTrigger asChild>
+          <Button
+            aria-expanded={open}
+            className="h-10 w-full justify-between bg-background/50 px-3 text-left text-sm font-normal"
+            id={triggerId}
+            role="combobox"
+            type="button"
+            variant="outline"
+          >
+            <span>Ajouter une référence au panier…</span>
+            <ChevronsUpDown aria-hidden="true" className="size-3.5" />
+          </Button>
+        </PopoverTrigger>
+        <PopoverContent
+          align="start"
+          className="w-[var(--radix-popover-trigger-width)] rounded-[0.2rem] border-[#6a5436] bg-[#f4e8cf] p-0"
+        >
+          <Command className="rounded-[0.2rem] bg-transparent">
+            <CommandInput placeholder="Nom du produit ou du lot…" />
+            <CommandList>
+              <CommandEmpty>Aucune autre référence disponible.</CommandEmpty>
+              {availableProducts.length > 0 ? (
+                <CommandGroup heading="Produits">
+                  {availableProducts.map((product) => (
+                    <CommandItem
+                      key={product._id}
+                      keywords={[
+                        product.name,
+                        categoryLabels[product.category],
+                      ]}
+                      onSelect={() => {
+                        onSelect({
+                          id: product._id,
+                          kind: "product",
+                          name: product.name,
+                          quantity: "1",
+                          unitPrice: product.salePrice?.toString() ?? "",
+                        })
+                        setOpen(false)
+                      }}
+                      value={product.name}
+                    >
+                      <ShoppingBasket aria-hidden="true" />
+                      <span className="min-w-0 flex-1 truncate">
+                        {product.name}
+                      </span>
+                      <span className="text-[0.68rem] text-muted-foreground tabular-nums">
+                        {formatNumber(product.currentStock)} en stock
+                      </span>
+                    </CommandItem>
+                  ))}
+                </CommandGroup>
+              ) : null}
+              {availableBundles.length > 0 ? (
+                <CommandGroup heading="Lots préparés">
+                  {availableBundles.map((bundle) => (
+                    <CommandItem
+                      key={bundle._id}
+                      onSelect={() => {
+                        onSelect({
+                          id: bundle._id,
+                          kind: "bundle",
+                          name: bundle.name,
+                          quantity: "1",
+                          unitPrice: bundle.price?.toString() ?? "",
+                        })
+                        setOpen(false)
+                      }}
+                      value={bundle.name}
+                    >
+                      <PackageOpen aria-hidden="true" />
+                      <span className="min-w-0 flex-1 truncate">
+                        {bundle.name}
+                      </span>
+                      <span className="text-[0.68rem] text-muted-foreground">
+                        Lot
+                      </span>
+                    </CommandItem>
+                  ))}
+                </CommandGroup>
+              ) : null}
+            </CommandList>
+          </Command>
+        </PopoverContent>
+      </Popover>
+    </div>
+  )
+}
+
+function SaleCart({
+  bundles,
+  lines,
+  onAdd,
+  onRemove,
+  onUpdate,
+  products,
+}: Readonly<{
+  bundles: readonly Bundle[]
+  lines: readonly SaleLine[]
+  onAdd: (line: SaleLine) => void
+  onRemove: (kind: SaleLine["kind"], id: string) => void
+  onUpdate: (
+    kind: SaleLine["kind"],
+    id: string,
+    patch: Partial<SaleLine>
+  ) => void
+  products: readonly Doc<"products">[]
+}>) {
+  const usedReferences = new Set(lines.map((line) => `${line.kind}:${line.id}`))
+
+  return (
+    <div className="grid gap-3">
+      <SaleReferencePicker
+        bundles={bundles}
+        onSelect={onAdd}
+        products={products}
+        usedReferences={usedReferences}
+      />
+      {lines.length > 0 ? (
+        <Card className="gap-0 rounded-none border-[#5b462b]/30 bg-background/25 py-0 ring-0">
+          <CardContent className="divide-y divide-border/70 px-0">
+            {lines.map((line) => (
+              <div
+                className="grid gap-3 p-3 sm:grid-cols-[minmax(0,1fr)_6rem_8rem_2rem] sm:items-end"
+                key={`${line.kind}:${line.id}`}
+              >
+                <div className="min-w-0 self-center">
+                  <p className="truncate text-sm font-semibold">{line.name}</p>
+                  <p className="text-xs text-muted-foreground">
+                    {line.kind === "bundle" ? "Lot préparé" : "Produit"}
+                  </p>
+                </div>
+                <div className="grid gap-1.5">
+                  <Label htmlFor={`sale-quantity-${line.kind}-${line.id}`}>
+                    Quantité
+                  </Label>
+                  <Input
+                    id={`sale-quantity-${line.kind}-${line.id}`}
+                    min="0.01"
+                    onChange={(event) =>
+                      onUpdate(line.kind, line.id, {
+                        quantity: event.target.value,
+                      })
+                    }
+                    required
+                    step="0.01"
+                    type="number"
+                    value={line.quantity}
+                  />
+                </div>
+                <div className="grid gap-1.5">
+                  <Label htmlFor={`sale-price-${line.kind}-${line.id}`}>
+                    Prix unitaire
+                  </Label>
+                  <Input
+                    id={`sale-price-${line.kind}-${line.id}`}
+                    min="0"
+                    onChange={(event) =>
+                      onUpdate(line.kind, line.id, {
+                        unitPrice: event.target.value,
+                      })
+                    }
+                    placeholder="0"
+                    step="0.01"
+                    type="number"
+                    value={line.unitPrice}
+                  />
+                </div>
+                <Button
+                  aria-label={`Retirer ${line.name}`}
+                  onClick={() => onRemove(line.kind, line.id)}
+                  size="icon-lg"
+                  type="button"
+                  variant="ghost"
+                >
+                  <Trash2 aria-hidden="true" />
+                </Button>
+              </div>
+            ))}
+          </CardContent>
+        </Card>
+      ) : (
+        <Alert className="border-[#6a5436]/25 bg-background/25">
+          <ShoppingBasket aria-hidden="true" />
+          <AlertTitle>Panier vide</AlertTitle>
+          <AlertDescription>
+            Ajoutez un ou plusieurs produits ou lots à cette vente.
+          </AlertDescription>
+        </Alert>
+      )}
+    </div>
+  )
+}
+
 export function OperationDialog({
+  bundles = [],
   characters,
   initialKind = "sale",
   products,
   trigger,
 }: Readonly<{
+  bundles?: readonly Bundle[]
   characters: readonly Doc<"characters">[]
   initialKind?: OperationKind
   products: readonly Doc<"products">[]
   trigger?: ReactElement
 }>) {
   const record = useMutation(api.transactions.record)
+  const recordSale = useMutation(api.transactions.recordSale)
   const [open, setOpen] = useState(false)
   const [kind, setKind] = useState<OperationKind>(initialKind)
   const [productId, setProductId] = useState("")
   const [characterId, setCharacterId] = useState("")
   const [quantity, setQuantity] = useState("1")
   const [unitPrice, setUnitPrice] = useState("")
+  const [saleLines, setSaleLines] = useState<SaleLine[]>([])
   const [discount, setDiscount] = useState("")
   const [counterparty, setCounterparty] = useState("")
   const [comment, setComment] = useState("")
@@ -296,9 +546,20 @@ export function OperationDialog({
   const previewPrice = Number.isFinite(parsedPrice) ? parsedPrice : 0
   const parsedDiscount = discount.trim() ? Number(discount) : 0
   const previewDiscount = Number.isFinite(parsedDiscount) ? parsedDiscount : 0
+  const saleGross = saleLines.reduce((total, line) => {
+    const lineQuantity = Number(line.quantity)
+    const linePrice = Number(line.unitPrice)
+    return (
+      total +
+      (Number.isFinite(lineQuantity) && Number.isFinite(linePrice)
+        ? lineQuantity * linePrice
+        : 0)
+    )
+  }, 0)
   const previewTotal = Math.max(
     0,
-    previewQuantity * previewPrice - previewDiscount
+    (kind === "sale" ? saleGross : previewQuantity * previewPrice) -
+      previewDiscount
   )
   const stockDelta =
     kind === "sale"
@@ -309,13 +570,43 @@ export function OperationDialog({
   const resultingStock = selectedProduct?.tracksStock
     ? selectedProduct.currentStock + stockDelta
     : undefined
-  const hasInsufficientStock =
+  const hasInsufficientSingleStock =
     resultingStock !== undefined && resultingStock < 0
+  const saleStockRequirements = new Map<string, number>()
+  for (const line of saleLines) {
+    const lineQuantity = Number(line.quantity)
+    if (!Number.isFinite(lineQuantity) || lineQuantity <= 0) continue
+    if (line.kind === "product") {
+      saleStockRequirements.set(
+        line.id,
+        (saleStockRequirements.get(line.id) ?? 0) + lineQuantity
+      )
+      continue
+    }
+    const bundle = bundles.find((entry) => entry._id === line.id)
+    for (const item of bundle?.items ?? []) {
+      if (!item.productId) continue
+      saleStockRequirements.set(
+        item.productId,
+        (saleStockRequirements.get(item.productId) ?? 0) +
+          item.quantity * lineQuantity
+      )
+    }
+  }
+  const insufficientSaleProducts = products.filter(
+    (product) =>
+      (saleStockRequirements.get(product._id) ?? 0) > product.currentStock
+  )
+  const hasInsufficientStock =
+    kind === "sale"
+      ? insufficientSaleProducts.length > 0
+      : hasInsufficientSingleStock
 
   function resetForm() {
     setProductId("")
     setQuantity("1")
     setUnitPrice("")
+    setSaleLines([])
     setDiscount("")
     setCounterparty("")
     setComment("")
@@ -329,6 +620,24 @@ export function OperationDialog({
     setProductId("")
     setUnitPrice("")
     setDiscount("")
+  }
+
+  function updateSaleLine(
+    lineKind: SaleLine["kind"],
+    id: string,
+    patch: Partial<SaleLine>
+  ) {
+    setSaleLines((current) =>
+      current.map((line) =>
+        line.kind === lineKind && line.id === id ? { ...line, ...patch } : line
+      )
+    )
+  }
+
+  function removeSaleLine(lineKind: SaleLine["kind"], id: string) {
+    setSaleLines((current) =>
+      current.filter((line) => line.kind !== lineKind || line.id !== id)
+    )
   }
 
   function handleOpenChange(nextOpen: boolean) {
@@ -348,30 +657,100 @@ export function OperationDialog({
     const submittedDiscount = discount.trim() ? Number(discount) : undefined
     const occurredAt = dateInputToTimestamp(occurredOn)
 
-    if (!product || !character || !occurredAt) {
-      toast.error("Choisissez une référence et un personnage.")
+    if (!character || !occurredAt) {
+      toast.error("Choisissez un personnage et une date valide.")
       return
     }
-    if (!Number.isFinite(submittedQuantity) || submittedQuantity <= 0) {
+    if (kind !== "sale" && !product) {
+      toast.error("Choisissez une référence.")
+      return
+    }
+    if (
+      kind !== "sale" &&
+      (!Number.isFinite(submittedQuantity) || submittedQuantity <= 0)
+    ) {
       toast.error("La quantité doit être supérieure à zéro.")
+      return
+    }
+    if (kind === "sale" && saleLines.length === 0) {
+      toast.error("Ajoutez au moins une référence au panier.")
       return
     }
 
     setIsSubmitting(true)
     try {
-      await record({
-        characterId: character._id,
-        ...(comment.trim() ? { comment } : {}),
-        ...(counterparty.trim() ? { counterparty } : {}),
-        ...(submittedDiscount === undefined
-          ? {}
-          : { discount: submittedDiscount }),
-        kind,
-        occurredAt,
-        productId: product._id,
-        quantity: submittedQuantity,
-        ...(submittedPrice === undefined ? {} : { unitPrice: submittedPrice }),
-      })
+      if (kind === "sale") {
+        const preparedLines = saleLines.flatMap<SaleMutationLine>((line) => {
+          const lineQuantity = Number(line.quantity)
+          const linePrice = line.unitPrice.trim()
+            ? Number(line.unitPrice)
+            : undefined
+          if (
+            !Number.isFinite(lineQuantity) ||
+            lineQuantity <= 0 ||
+            (linePrice !== undefined &&
+              (!Number.isFinite(linePrice) || linePrice < 0))
+          ) {
+            return []
+          }
+          if (line.kind === "product") {
+            const lineProduct = products.find((entry) => entry._id === line.id)
+            return lineProduct
+              ? [
+                  {
+                    kind: "product" as const,
+                    productId: lineProduct._id,
+                    quantity: lineQuantity,
+                    ...(linePrice === undefined
+                      ? {}
+                      : { unitPrice: linePrice }),
+                  },
+                ]
+              : []
+          }
+          const lineBundle = bundles.find((entry) => entry._id === line.id)
+          return lineBundle
+            ? [
+                {
+                  bundleId: lineBundle._id,
+                  kind: "bundle" as const,
+                  quantity: lineQuantity,
+                  ...(linePrice === undefined ? {} : { unitPrice: linePrice }),
+                },
+              ]
+            : []
+        })
+        if (preparedLines.length !== saleLines.length) {
+          toast.error("Vérifiez les quantités et les prix du panier.")
+          return
+        }
+        await recordSale({
+          characterId: character._id,
+          ...(comment.trim() ? { comment } : {}),
+          ...(counterparty.trim() ? { counterparty } : {}),
+          ...(submittedDiscount === undefined
+            ? {}
+            : { discount: submittedDiscount }),
+          lines: preparedLines,
+          occurredAt,
+        })
+      } else if (product) {
+        await record({
+          characterId: character._id,
+          ...(comment.trim() ? { comment } : {}),
+          ...(counterparty.trim() ? { counterparty } : {}),
+          ...(submittedDiscount === undefined
+            ? {}
+            : { discount: submittedDiscount }),
+          kind,
+          occurredAt,
+          productId: product._id,
+          quantity: submittedQuantity,
+          ...(submittedPrice === undefined
+            ? {}
+            : { unitPrice: submittedPrice }),
+        })
+      }
       toast.success(config.successMessage)
       resetForm()
       setOpen(false)
@@ -430,14 +809,30 @@ export function OperationDialog({
             </TabsList>
           </Tabs>
 
-          <ProductPicker
-            label={config.productLabel}
-            onProductChange={setProductId}
-            products={availableProducts}
-            selectedProduct={selectedProduct}
-          />
+          {kind === "sale" ? (
+            <SaleCart
+              bundles={bundles}
+              lines={saleLines}
+              onAdd={(line) => setSaleLines((current) => [...current, line])}
+              onRemove={removeSaleLine}
+              onUpdate={updateSaleLine}
+              products={availableProducts}
+            />
+          ) : (
+            <ProductPicker
+              label={config.productLabel}
+              onProductChange={setProductId}
+              products={availableProducts}
+              selectedProduct={selectedProduct}
+            />
+          )}
 
-          <div className="grid gap-4 sm:grid-cols-[minmax(0,1fr)_9rem]">
+          <div
+            className={cn(
+              "grid gap-4",
+              kind !== "sale" && "sm:grid-cols-[minmax(0,1fr)_9rem]"
+            )}
+          >
             <div className="grid gap-2">
               <Label htmlFor="operation-character">Personnage</Label>
               <Select onValueChange={setCharacterId} value={characterId}>
@@ -456,22 +851,24 @@ export function OperationDialog({
                 </SelectContent>
               </Select>
             </div>
-            <div className="grid gap-2">
-              <Label htmlFor="operation-quantity">Quantité</Label>
-              <Input
-                className="h-10 bg-background/50 text-base"
-                id="operation-quantity"
-                min="0.01"
-                onChange={(event) => setQuantity(event.target.value)}
-                required
-                step="0.01"
-                type="number"
-                value={quantity}
-              />
-            </div>
+            {kind === "sale" ? null : (
+              <div className="grid gap-2">
+                <Label htmlFor="operation-quantity">Quantité</Label>
+                <Input
+                  className="h-10 bg-background/50 text-base"
+                  id="operation-quantity"
+                  min="0.01"
+                  onChange={(event) => setQuantity(event.target.value)}
+                  required
+                  step="0.01"
+                  type="number"
+                  value={quantity}
+                />
+              </div>
+            )}
           </div>
 
-          {selectedProduct ? (
+          {kind !== "sale" && selectedProduct ? (
             <Alert
               className={cn(
                 hasInsufficientStock
@@ -505,6 +902,27 @@ export function OperationDialog({
                 )}
               </AlertDescription>
             </Alert>
+          ) : kind === "sale" && saleLines.length > 0 ? (
+            <Alert
+              className={cn(
+                hasInsufficientStock
+                  ? "border-destructive/35 bg-destructive/[0.045]"
+                  : "border-primary/25 bg-primary/[0.045]"
+              )}
+              variant={hasInsufficientStock ? "destructive" : "default"}
+            >
+              <Coins aria-hidden="true" />
+              <AlertTitle>
+                {hasInsufficientStock
+                  ? "Stock insuffisant"
+                  : `${saleLines.length} ${saleLines.length === 1 ? "référence" : "références"} dans le panier`}
+              </AlertTitle>
+              <AlertDescription>
+                {hasInsufficientStock
+                  ? `Stock à corriger : ${insufficientSaleProducts.map((product) => product.name).join(", ")}.`
+                  : `${config.totalLabel} : ${formatSeptims(previewTotal)}`}
+              </AlertDescription>
+            </Alert>
           ) : null}
 
           <Collapsible onOpenChange={setDetailsOpen} open={detailsOpen}>
@@ -516,7 +934,9 @@ export function OperationDialog({
               >
                 {kind === "production"
                   ? "Date et détails facultatifs"
-                  : "Date, prix et détails facultatifs"}
+                  : kind === "sale"
+                    ? "Date, remise et détails facultatifs"
+                    : "Date, prix et détails facultatifs"}
                 <ChevronDown
                   aria-hidden="true"
                   className={cn(
@@ -530,42 +950,46 @@ export function OperationDialog({
               <div
                 className={cn(
                   "grid gap-4",
-                  kind === "production" ? "sm:grid-cols-1" : "sm:grid-cols-3"
+                  kind === "production"
+                    ? "sm:grid-cols-1"
+                    : kind === "sale"
+                      ? "sm:grid-cols-2"
+                      : "sm:grid-cols-3"
                 )}
               >
+                {kind === "production" || kind === "sale" ? null : (
+                  <div className="grid gap-2">
+                    <Label htmlFor="operation-unit-price">
+                      Prix unitaire, septims
+                    </Label>
+                    <Input
+                      id="operation-unit-price"
+                      min="0"
+                      onChange={(event) => setUnitPrice(event.target.value)}
+                      placeholder={
+                        suggestedPrice === undefined
+                          ? "Non renseigné"
+                          : formatNumber(suggestedPrice)
+                      }
+                      step="0.01"
+                      type="number"
+                      value={unitPrice}
+                    />
+                  </div>
+                )}
                 {kind === "production" ? null : (
-                  <>
-                    <div className="grid gap-2">
-                      <Label htmlFor="operation-unit-price">
-                        Prix unitaire, septims
-                      </Label>
-                      <Input
-                        id="operation-unit-price"
-                        min="0"
-                        onChange={(event) => setUnitPrice(event.target.value)}
-                        placeholder={
-                          suggestedPrice === undefined
-                            ? "Non renseigné"
-                            : formatNumber(suggestedPrice)
-                        }
-                        step="0.01"
-                        type="number"
-                        value={unitPrice}
-                      />
-                    </div>
-                    <div className="grid gap-2">
-                      <Label htmlFor="operation-discount">Remise totale</Label>
-                      <Input
-                        id="operation-discount"
-                        min="0"
-                        onChange={(event) => setDiscount(event.target.value)}
-                        placeholder="0"
-                        step="0.01"
-                        type="number"
-                        value={discount}
-                      />
-                    </div>
-                  </>
+                  <div className="grid gap-2">
+                    <Label htmlFor="operation-discount">Remise totale</Label>
+                    <Input
+                      id="operation-discount"
+                      min="0"
+                      onChange={(event) => setDiscount(event.target.value)}
+                      placeholder="0"
+                      step="0.01"
+                      type="number"
+                      value={discount}
+                    />
+                  </div>
                 )}
                 <div className="grid gap-2">
                   <Label htmlFor="operation-date">Date</Label>
@@ -617,7 +1041,11 @@ export function OperationDialog({
               Annuler
             </Button>
             <Button
-              disabled={isSubmitting || hasInsufficientStock}
+              disabled={
+                isSubmitting ||
+                hasInsufficientStock ||
+                (kind === "sale" && saleLines.length === 0)
+              }
               type="submit"
             >
               {isSubmitting ? (
