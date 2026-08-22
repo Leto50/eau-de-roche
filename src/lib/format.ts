@@ -32,6 +32,7 @@ export const categoryLabels = {
 } as const
 
 export const operationLabels = {
+  adjustment: "Ajustement",
   bundle: "Lot",
   order: "Commande",
   production: "Production",

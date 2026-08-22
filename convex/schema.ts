@@ -6,6 +6,7 @@ import {
   orderStatus,
   productCategory,
   transactionKind,
+  transactionLineKind,
 } from "./lib/validators"
 
 export default defineSchema({
@@ -54,6 +55,7 @@ export default defineSchema({
     discount: v.optional(v.number()),
     kind: transactionKind,
     legacyKey: v.optional(v.string()),
+    lineCount: v.optional(v.number()),
     occurredAt: v.number(),
     productId: v.optional(v.id("products")),
     productName: v.string(),
@@ -66,6 +68,17 @@ export default defineSchema({
     .index("by_legacy_key", ["legacyKey"])
     .index("by_occurred_at", ["occurredAt"])
     .index("by_product_and_date", ["productId", "occurredAt"]),
+
+  transactionLines: defineTable({
+    bundleId: v.optional(v.id("bundles")),
+    kind: transactionLineKind,
+    productId: v.optional(v.id("products")),
+    productName: v.string(),
+    quantity: v.number(),
+    total: v.number(),
+    transactionId: v.id("transactions"),
+    unitPrice: v.number(),
+  }).index("by_transaction", ["transactionId"]),
 
   stockMovements: defineTable({
     delta: v.number(),

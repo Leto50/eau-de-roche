@@ -56,6 +56,7 @@ export const Route = createFileRoute("/_app/journal")({
 const operationToneClasses: Readonly<
   Record<Doc<"transactions">["kind"], string>
 > = {
+  adjustment: "border-[#1E374F]/25 bg-[#1E374F]/[0.08] text-[#1E374F]",
   bundle: "border-[#6c5738]/25 bg-[#6c5738]/[0.08] text-[#6c5738]",
   order: "border-[#6c5738]/25 bg-[#6c5738]/[0.08] text-[#6c5738]",
   production: "border-[#5d5276]/25 bg-[#5d5276]/[0.07] text-[#5d5276]",

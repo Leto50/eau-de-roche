@@ -174,3 +174,134 @@ describe("transactions.record", () => {
     ).rejects.toThrowError("Vous devez être connecté")
   })
 })
+
+describe("transactions.recordSale", () => {
+  it("enregistre une vente multi-références et déstocke les composants des lots", async () => {
+    const backend = createTestBackend()
+    const member = await asAuthenticatedMember(backend)
+    const { characterId, productId } = await seedStock(backend)
+    const { bundleId, secondProductId } = await backend.run(async (ctx) => {
+      const secondProductId = await ctx.db.insert("products", {
+        active: true,
+        category: "annexe",
+        currentStock: 5,
+        minimumStock: 1,
+        name: "Sacoche d’apothicaire",
+        normalizedName: "sacoche d apothicaire",
+        salePrice: 5,
+        tracksStock: true,
+      })
+      const bundleId = await ctx.db.insert("bundles", {
+        active: true,
+        name: "Trousse du voyageur",
+        price: 20,
+      })
+      await ctx.db.insert("bundleItems", {
+        bundleId,
+        productId,
+        productName: "Potion de soin",
+        quantity: 2,
+      })
+      await ctx.db.insert("bundleItems", {
+        bundleId,
+        productId: secondProductId,
+        productName: "Sacoche d’apothicaire",
+        quantity: 1,
+      })
+      return { bundleId, secondProductId }
+    })
+
+    const result = await member.mutation(api.transactions.recordSale, {
+      characterId,
+      discount: 2,
+      lines: [
+        { kind: "product", productId, quantity: 1 },
+        { bundleId, kind: "bundle", quantity: 2 },
+      ],
+      occurredAt: Date.now(),
+    })
+
+    expect(result.total).toBe(50)
+    const state = await backend.run(async (ctx) => ({
+      audits: await ctx.db.query("auditLogs").collect(),
+      firstProduct: await ctx.db.get(productId),
+      lines: await ctx.db.query("transactionLines").collect(),
+      movements: await ctx.db.query("stockMovements").collect(),
+      secondProduct: await ctx.db.get(secondProductId),
+      transactions: await ctx.db.query("transactions").collect(),
+    }))
+    expect(state.firstProduct?.currentStock).toBe(5)
+    expect(state.secondProduct?.currentStock).toBe(3)
+    expect(state.transactions[0]).toMatchObject({
+      kind: "sale",
+      lineCount: 2,
+      productName: "2 références",
+      total: 50,
+    })
+    expect(state.lines).toHaveLength(2)
+    expect(state.lines).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "product",
+          productName: "Potion de soin",
+          quantity: 1,
+          total: 12,
+        }),
+        expect.objectContaining({
+          kind: "bundle",
+          productName: "Trousse du voyageur",
+          quantity: 2,
+          total: 40,
+        }),
+      ])
+    )
+    expect(state.movements).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ delta: -5, resultingStock: 5 }),
+        expect.objectContaining({ delta: -2, resultingStock: 3 }),
+      ])
+    )
+    expect(state.audits[0]).toMatchObject({ action: "sale.recorded" })
+  })
+
+  it("refuse tout le panier si un composant de lot manque en stock", async () => {
+    const backend = createTestBackend()
+    const member = await asAuthenticatedMember(backend)
+    const { characterId, productId } = await seedStock(backend)
+    const bundleId = await backend.run(async (ctx) => {
+      const bundleId = await ctx.db.insert("bundles", {
+        active: true,
+        name: "Caisse de potions",
+        price: 50,
+      })
+      await ctx.db.insert("bundleItems", {
+        bundleId,
+        productId,
+        productName: "Potion de soin",
+        quantity: 6,
+      })
+      return bundleId
+    })
+
+    await expect(
+      member.mutation(api.transactions.recordSale, {
+        characterId,
+        lines: [{ bundleId, kind: "bundle", quantity: 2 }],
+        occurredAt: Date.now(),
+      })
+    ).rejects.toThrowError("Stock insuffisant")
+
+    const state = await backend.run(async (ctx) => ({
+      audits: await ctx.db.query("auditLogs").collect(),
+      lines: await ctx.db.query("transactionLines").collect(),
+      movements: await ctx.db.query("stockMovements").collect(),
+      product: await ctx.db.get(productId),
+      transactions: await ctx.db.query("transactions").collect(),
+    }))
+    expect(state.product?.currentStock).toBe(10)
+    expect(state.transactions).toHaveLength(0)
+    expect(state.lines).toHaveLength(0)
+    expect(state.movements).toHaveLength(0)
+    expect(state.audits).toHaveLength(0)
+  })
+})
