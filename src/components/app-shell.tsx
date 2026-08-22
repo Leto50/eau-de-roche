@@ -229,13 +229,10 @@ export function AppShell({ children }: Readonly<{ children: ReactNode }>) {
           <span className="font-display text-sm tracking-[0.12em]">
             L’eau de Roche
           </span>
-          <span className="ml-auto text-[0.62rem] tracking-[0.2em] text-[#a99a81] uppercase">
-            Gestion de boutique
-          </span>
         </header>
 
-        <main className="p-3 sm:p-5 lg:p-7 xl:p-9">
-          <div className="relative mx-auto min-h-[calc(100svh-7.5rem)] max-w-[92rem] overflow-hidden rounded-[0.2rem] border border-[#88775d] bg-[#eee1c7] bg-[radial-gradient(circle_at_12%_18%,rgba(139,102,55,0.08),transparent_23rem),radial-gradient(circle_at_86%_82%,rgba(100,84,49,0.08),transparent_27rem)] p-[clamp(1.25rem,3.4vw,3.5rem)] shadow-[0_24px_70px_rgba(0,0,0,0.34),inset_0_0_70px_rgba(104,76,42,0.08)] before:pointer-events-none before:absolute before:inset-2 before:z-[1] before:border before:border-[#5b462b]/20 max-md:p-5 max-md:before:inset-[5px] md:min-h-[calc(100svh-4rem)]">
+        <main className="p-2 sm:p-5 lg:p-7 xl:p-9">
+          <div className="relative mx-auto min-h-[calc(100svh-7rem)] max-w-[92rem] overflow-hidden rounded-[0.2rem] border border-[#88775d] bg-[#eee1c7] bg-[radial-gradient(circle_at_12%_18%,rgba(139,102,55,0.08),transparent_23rem),radial-gradient(circle_at_86%_82%,rgba(100,84,49,0.08),transparent_27rem)] p-[clamp(1.25rem,3.4vw,3.5rem)] shadow-[0_24px_70px_rgba(0,0,0,0.34),inset_0_0_70px_rgba(104,76,42,0.08)] before:pointer-events-none before:absolute before:inset-2 before:z-[1] before:border before:border-[#5b462b]/20 max-md:p-4 max-md:before:inset-1 md:min-h-[calc(100svh-4rem)]">
             <div
               aria-hidden="true"
               className="absolute -right-4 -bottom-28 rotate-[-8deg] font-serif text-[clamp(18rem,38vw,36rem)] leading-none text-[#574629]/[0.038] select-none"

@@ -6,9 +6,9 @@ import {
   ArrowDownToLine,
   ArrowDownLeft,
   ArrowUpRight,
-  Coins,
+  CalendarDays,
+  ChevronRight,
   Hammer,
-  PackageOpen,
   ReceiptText,
   ScrollText,
   ShoppingBasket,
@@ -18,18 +18,21 @@ import { OperationDialog } from "@/components/operation-dialog"
 import { PageError } from "@/components/page-error"
 import { PageHeader } from "@/components/page-header"
 import { PageSkeleton } from "@/components/page-skeleton"
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
-import { Badge } from "@/components/ui/badge"
+import {
+  Alert,
+  AlertAction,
+  AlertDescription,
+  AlertTitle,
+} from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import {
   Card,
-  CardAction,
   CardContent,
   CardDescription,
-  CardFooter,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card"
+import { Separator } from "@/components/ui/separator"
 import {
   Table,
   TableBody,
@@ -76,132 +79,205 @@ function DashboardPage() {
 
   return (
     <div className="animate-in duration-300 fade-in slide-in-from-bottom-1 motion-reduce:animate-none">
-      <PageHeader
-        action={
+      <PageHeader eyebrow="Registre du jour" title="La boutique aujourd’hui">
+        Enregistrez une activité, puis voyez immédiatement ce qui demande votre
+        attention.
+      </PageHeader>
+
+      <Card className="mt-6 border border-[#5b462b]/35 bg-[#f8edd5]/55 shadow-[0_10px_28px_rgba(70,48,25,0.06)] ring-0">
+        <CardHeader className="border-b border-border/65">
+          <CardTitle className="font-display text-lg font-[580] text-[#34291e]">
+            Nouvelle activité
+          </CardTitle>
+          <CardDescription>Que venez-vous de faire ?</CardDescription>
+        </CardHeader>
+        <CardContent className="grid grid-cols-2 gap-2 lg:grid-cols-4">
           <OperationDialog
             characters={characters}
             products={products}
             trigger={
-              <Button className="shadow-sm" size="lg">
-                <ShoppingBasket aria-hidden="true" />
+              <Button
+                className="h-20 w-full flex-col gap-1.5 px-3 text-center text-sm whitespace-normal shadow-sm"
+                size="lg"
+              >
+                <ShoppingBasket aria-hidden="true" className="size-5" />
                 Encaisser une vente
               </Button>
             }
           />
-        }
-        eyebrow="La boutique aujourd’hui"
-        title="À faire aujourd’hui"
-      >
-        Les priorités du jour et les actions utiles, sans passer par le journal.
-      </PageHeader>
-
-      <Card className="mt-6 rounded-none border-x-0 border-y border-[#5b462b]/40 bg-[#fff8e7]/25 py-0 ring-0">
-        <CardContent className="flex flex-col gap-3 px-0 py-3 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <p className="text-[0.66rem] font-bold tracking-[0.18em] text-primary uppercase">
-              Actions rapides
-            </p>
-            <p className="mt-0.5 text-sm text-muted-foreground">
-              Qu’est-ce qui vient de se passer ?
-            </p>
-          </div>
-          <div className="flex flex-wrap gap-2">
-            <OperationDialog
-              characters={characters}
-              initialKind="purchase"
-              products={products}
-              trigger={
-                <Button variant="outline">
-                  <ArrowDownToLine aria-hidden="true" />
-                  Réceptionner un achat
-                </Button>
-              }
-            />
-            <OperationDialog
-              characters={characters}
-              initialKind="production"
-              products={products}
-              trigger={
-                <Button variant="outline">
-                  <Hammer aria-hidden="true" />
-                  Ajouter une production
-                </Button>
-              }
-            />
-            <OperationDialog
-              characters={characters}
-              initialKind="service"
-              products={products}
-              trigger={
-                <Button variant="outline">
-                  <ReceiptText aria-hidden="true" />
-                  Facturer un service
-                </Button>
-              }
-            />
-          </div>
+          <OperationDialog
+            characters={characters}
+            initialKind="purchase"
+            products={products}
+            trigger={
+              <Button
+                className="h-20 w-full flex-col gap-1.5 border-[#6a5436]/40 bg-background/35 px-3 text-center text-sm whitespace-normal"
+                size="lg"
+                variant="outline"
+              >
+                <ArrowDownToLine aria-hidden="true" className="size-5" />
+                Recevoir un achat
+              </Button>
+            }
+          />
+          <OperationDialog
+            characters={characters}
+            initialKind="production"
+            products={products}
+            trigger={
+              <Button
+                className="h-20 w-full flex-col gap-1.5 border-[#6a5436]/40 bg-background/35 px-3 text-center text-sm whitespace-normal"
+                size="lg"
+                variant="outline"
+              >
+                <Hammer aria-hidden="true" className="size-5" />
+                Ajouter une production
+              </Button>
+            }
+          />
+          <OperationDialog
+            characters={characters}
+            initialKind="service"
+            products={products}
+            trigger={
+              <Button
+                className="h-20 w-full flex-col gap-1.5 border-[#6a5436]/40 bg-background/35 px-3 text-center text-sm whitespace-normal"
+                size="lg"
+                variant="outline"
+              >
+                <ReceiptText aria-hidden="true" className="size-5" />
+                Facturer un service
+              </Button>
+            }
+          />
         </CardContent>
       </Card>
 
       <section
-        aria-label="Indicateurs de la boutique"
-        className="mt-6 grid grid-cols-4 border-y border-[#5b462b]/50 max-xl:grid-cols-2 max-md:grid-cols-1"
+        aria-label="Priorités de la boutique"
+        className="mt-6 grid gap-4 lg:grid-cols-[minmax(0,1.4fr)_minmax(16rem,0.6fr)]"
       >
-        <Metric
-          detail="stocks au seuil ou épuisés"
-          icon={AlertTriangle}
-          label="À réapprovisionner"
-          tone={data.lowStock.length > 0 ? "warning" : "normal"}
-          value={formatNumber(data.lowStock.length)}
-        />
-        <Metric
-          detail="commandes clients et fournisseurs"
-          icon={ScrollText}
-          label="À préparer"
-          value={formatNumber(data.openOrders)}
-        />
-        <Metric
-          detail="mouvements enregistrés"
-          icon={ReceiptText}
-          label="Cette semaine"
-          value={formatNumber(data.weeklyTransactionCount)}
-        />
-        <Metric
-          detail="ventes, services et achats"
-          icon={Coins}
-          label="Solde de la semaine"
-          tone={data.weeklyBalance < 0 ? "warning" : "normal"}
-          value={formatSeptims(data.weeklyBalance)}
-        />
+        <Card className="border border-[#644c2c]/35 bg-[#f9f0db]/45 ring-0">
+          <CardHeader>
+            <CardTitle className="font-display text-lg font-[580] text-[#34291e]">
+              À traiter
+            </CardTitle>
+            <CardDescription>
+              Les points qui peuvent ralentir la boutique
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="grid gap-3 md:grid-cols-2 lg:grid-cols-1 xl:grid-cols-2">
+            <Alert
+              className={cn(
+                "min-h-24 border-[#6a5436]/30 bg-background/35 p-4 pr-14",
+                data.lowStock.length > 0 &&
+                  "border-[#9a4b32]/30 bg-[#9a4b32]/[0.04]"
+              )}
+            >
+              <AlertTriangle
+                aria-hidden="true"
+                className={cn(
+                  "size-5 text-primary",
+                  data.lowStock.length > 0 && "text-[#9a4b32]"
+                )}
+              />
+              <AlertTitle className="text-sm font-semibold text-foreground">
+                {data.lowStock.length > 0
+                  ? `${formatNumber(data.lowStock.length)} stocks faibles`
+                  : "Stocks à jour"}
+              </AlertTitle>
+              <AlertDescription>
+                {data.lowStock.length > 0
+                  ? "Réapprovisionnement nécessaire"
+                  : "Aucune référence sous son seuil"}
+              </AlertDescription>
+              <AlertAction className="top-3 right-3">
+                <Button
+                  aria-label="Voir l’inventaire"
+                  asChild
+                  size="icon-lg"
+                  variant="ghost"
+                >
+                  <Link to="/inventaire">
+                    <ChevronRight aria-hidden="true" />
+                  </Link>
+                </Button>
+              </AlertAction>
+            </Alert>
+
+            <Alert className="min-h-24 border-primary/20 bg-primary/[0.035] p-4 pr-14">
+              <ScrollText aria-hidden="true" className="size-5 text-primary" />
+              <AlertTitle className="text-sm font-semibold text-foreground">
+                {formatNumber(data.openOrders)}{" "}
+                {data.openOrders === 1
+                  ? "commande ouverte"
+                  : "commandes ouvertes"}
+              </AlertTitle>
+              <AlertDescription>Clients et fournisseurs</AlertDescription>
+              <AlertAction className="top-3 right-3">
+                <Button
+                  aria-label="Voir les commandes"
+                  asChild
+                  size="icon-lg"
+                  variant="ghost"
+                >
+                  <Link to="/commandes">
+                    <ChevronRight aria-hidden="true" />
+                  </Link>
+                </Button>
+              </AlertAction>
+            </Alert>
+          </CardContent>
+        </Card>
+
+        <Card className="border border-primary/20 bg-primary/[0.045] ring-0">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 font-display text-lg font-[580] text-[#34291e]">
+              <CalendarDays
+                aria-hidden="true"
+                className="size-4 text-primary"
+              />
+              Cette semaine
+            </CardTitle>
+            <CardDescription>Ventes, services et achats</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <p
+              className={cn(
+                "font-display text-3xl leading-none font-[600] tabular-nums",
+                data.weeklyBalance >= 0 ? "text-[#456044]" : "text-[#8a3e2f]"
+              )}
+            >
+              {data.weeklyBalance >= 0 ? "+" : ""}
+              {formatSeptims(data.weeklyBalance)}
+            </p>
+            <Separator className="my-4 bg-primary/15" />
+            <p className="text-sm font-semibold text-foreground">
+              {formatNumber(data.weeklyTransactionCount)}{" "}
+              {data.weeklyTransactionCount === 1
+                ? "mouvement enregistré"
+                : "mouvements enregistrés"}
+            </p>
+          </CardContent>
+        </Card>
       </section>
 
-      <div className="mt-8 grid gap-8 xl:grid-cols-[1.45fr_0.75fr]">
-        <Card className="rounded-none border-[#644c2c]/35 bg-[#f9f0db]/45 py-0 shadow-[inset_0_0_24px_rgba(107,79,40,0.03)] ring-0">
+      <section aria-labelledby="recent-activity-title" className="mt-6">
+        <Card className="border border-[#644c2c]/35 bg-[#f9f0db]/45 py-0 shadow-[inset_0_0_24px_rgba(107,79,40,0.03)] ring-0">
           <CardHeader className="border-b border-border/60">
-            <CardTitle className="font-display text-xl font-[580] text-[#3b2f22]">
-              Dernière activité
+            <CardTitle
+              className="font-display text-xl font-[580] text-[#3b2f22]"
+              id="recent-activity-title"
+            >
+              Derniers mouvements
             </CardTitle>
-            <CardDescription>Ce qui vient d’être enregistré</CardDescription>
-            <CardAction>
-              <Badge
-                className={cn(
-                  "font-semibold",
-                  data.weeklyBalance >= 0
-                    ? "border-[#456044]/30 text-[#456044]"
-                    : "border-[#8a3e2f]/30 text-[#8a3e2f]"
-                )}
-                variant="outline"
-              >
-                {data.weeklyBalance >= 0 ? "+" : ""}
-                {formatSeptims(data.weeklyBalance)} cette semaine
-              </Badge>
-            </CardAction>
+            <CardDescription>Les dernières entrées du registre</CardDescription>
           </CardHeader>
           <CardContent className="px-0">
             <Table>
               <TableHeader>
                 <TableRow className="bg-[#684f2d]/8 hover:bg-[#684f2d]/8">
-                  <TableHead>Référence</TableHead>
+                  <TableHead>Activité</TableHead>
                   <TableHead className="hidden sm:table-cell">
                     Personnage
                   </TableHead>
@@ -260,101 +336,7 @@ function DashboardPage() {
             </Table>
           </CardContent>
         </Card>
-
-        <Card className="rounded-none border-[#644c2c]/35 bg-[#f0d8bd]/35 py-0 shadow-[inset_0_0_24px_rgba(107,79,40,0.03)] ring-0">
-          <CardHeader className="border-b border-border/60">
-            <CardTitle className="font-display text-xl font-[580] text-[#3b2f22]">
-              Stocks faibles
-            </CardTitle>
-            <CardDescription>Seuil minimum atteint</CardDescription>
-            <CardAction>
-              <AlertTriangle
-                aria-hidden="true"
-                className="size-5 text-[#9c5739]"
-              />
-            </CardAction>
-          </CardHeader>
-          <CardContent className="px-0">
-            {data.lowStock.length > 0 ? (
-              <Table>
-                <TableBody>
-                  {data.lowStock.map((product) => (
-                    <TableRow
-                      className="border-b border-dotted border-[#6b4c2b]/40 hover:bg-[#fffdeb]/30"
-                      key={product._id}
-                    >
-                      <TableCell className="pl-4">
-                        <p className="font-semibold">{product.name}</p>
-                        <p className="text-xs text-muted-foreground">
-                          Seuil {formatNumber(product.minimumStock)}
-                        </p>
-                      </TableCell>
-                      <TableCell className="pr-4 text-right font-display text-lg text-[#8a432e]">
-                        {formatNumber(product.currentStock)}
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            ) : (
-              <Alert className="mx-4 w-auto border-[#456044]/25 bg-[#456044]/[0.04]">
-                <PackageOpen aria-hidden="true" />
-                <AlertTitle>Aucun stock faible</AlertTitle>
-                <AlertDescription>
-                  Tous les produits suivis sont au-dessus de leur seuil minimum.
-                </AlertDescription>
-              </Alert>
-            )}
-          </CardContent>
-          <CardFooter className="border-t border-border/60">
-            <Button asChild className="w-full" variant="outline">
-              <Link to="/inventaire">Voir tout l’inventaire</Link>
-            </Button>
-          </CardFooter>
-        </Card>
-      </div>
+      </section>
     </div>
-  )
-}
-
-function Metric({
-  detail,
-  icon: Icon,
-  label,
-  tone = "normal",
-  value,
-}: Readonly<{
-  detail: string
-  icon: typeof Coins
-  label: string
-  tone?: "normal" | "warning"
-  value: string
-}>) {
-  return (
-    <Card
-      className={cn(
-        "min-w-0 gap-0 rounded-none border-0 border-r border-[#5b462b]/30 bg-transparent py-0 ring-0 last:border-r-0 max-md:border-r-0 max-md:border-b max-md:last:border-b-0 max-xl:[&:nth-child(-n+2)]:border-b max-xl:[&:nth-child(2)]:border-r-0",
-        tone === "warning" && "bg-[#9a4b32]/[0.025]"
-      )}
-      size="sm"
-    >
-      <CardContent className="flex items-start gap-3.5 p-4">
-        <Icon
-          aria-hidden="true"
-          className={cn(
-            "mt-0.5 size-5 shrink-0",
-            tone === "warning" ? "text-[#9a4b32]" : "text-primary"
-          )}
-          strokeWidth={1.5}
-        />
-        <div>
-          <p className="text-[0.68rem] font-semibold tracking-[0.16em] text-muted-foreground uppercase">
-            {label}
-          </p>
-          <p className="mt-1 font-display text-2xl text-foreground">{value}</p>
-          <p className="mt-0.5 text-xs text-muted-foreground">{detail}</p>
-        </div>
-      </CardContent>
-    </Card>
   )
 }

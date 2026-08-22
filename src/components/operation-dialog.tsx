@@ -411,14 +411,14 @@ export function OperationDialog({
           <Tabs onValueChange={handleKindChange} value={kind}>
             <TabsList
               aria-label="Type d’opération"
-              className="h-auto w-full flex-wrap gap-1 bg-[#6e5330]/8 p-1"
+              className="grid h-auto! w-full grid-cols-2 gap-1 bg-[#6e5330]/8 p-1 sm:grid-cols-4"
             >
               {operationKinds.map((value) => {
                 const entry = operationConfigs[value]
                 const Icon = entry.icon
                 return (
                   <TabsTrigger
-                    className="h-10 min-w-[calc(50%-0.25rem)] px-2 sm:min-w-0 data-active:bg-primary data-active:text-primary-foreground"
+                    className="h-10 min-w-0 px-2 data-active:bg-primary data-active:text-primary-foreground"
                     key={value}
                     value={value}
                   >
