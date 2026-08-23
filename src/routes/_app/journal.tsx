@@ -3,7 +3,13 @@ import { useSuspenseQuery } from "@tanstack/react-query"
 import { createFileRoute } from "@tanstack/react-router"
 import { type FunctionReturnType } from "convex/server"
 import { useMutation } from "convex/react"
-import { ChevronDown, LoaderCircle, ScrollText, Undo2 } from "lucide-react"
+import {
+  ChevronDown,
+  LoaderCircle,
+  Pencil,
+  ScrollText,
+  Undo2,
+} from "lucide-react"
 import { useState, type FormEvent } from "react"
 import { toast } from "sonner"
 
@@ -50,8 +56,6 @@ import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import { api } from "../../../convex/_generated/api"
 import { type Doc } from "../../../convex/_generated/dataModel"
-import { useHydrated } from "@/hooks/use-hydrated"
-import { authClient } from "@/lib/auth-client"
 import {
   formatDate,
   formatNumber,
@@ -62,6 +66,7 @@ import {
 import { cn } from "@/lib/utils"
 
 type Transaction = FunctionReturnType<typeof api.transactions.list>[number]
+type Bundle = FunctionReturnType<typeof api.recipes.listBundles>[number]
 
 export const Route = createFileRoute("/_app/journal")({
   component: JournalPage,
@@ -96,8 +101,6 @@ const operationToneClasses: Readonly<
 }
 
 function JournalPage() {
-  const { data: session } = authClient.useSession()
-  const isHydrated = useHydrated()
   const { data: transactions } = useSuspenseQuery(
     convexQuery(api.transactions.list, { limit: 150 })
   )
@@ -110,8 +113,7 @@ function JournalPage() {
   const { data: bundles } = useSuspenseQuery(
     convexQuery(api.recipes.listBundles, {})
   )
-  const isAdmin =
-    isHydrated && (session?.user.role?.split(",").includes("admin") ?? false)
+  const showActions = transactions.some((transaction) => transaction.canManage)
 
   return (
     <div className="animate-in duration-300 fade-in slide-in-from-bottom-1 motion-reduce:animate-none">
@@ -142,18 +144,19 @@ function JournalPage() {
                     <TableHead>Personnage</TableHead>
                     <TableHead className="text-right">Quantité</TableHead>
                     <TableHead className="pr-4 text-right">Montant</TableHead>
-                    {isAdmin ? (
-                      <TableHead className="w-12">
-                        <span className="sr-only">Actions</span>
-                      </TableHead>
+                    {showActions ? (
+                      <TableHead className="text-right">Actions</TableHead>
                     ) : null}
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {transactions.map((transaction) => (
                     <JournalRow
-                      isAdmin={isAdmin}
+                      bundles={bundles}
+                      characters={characters}
                       key={transaction._id}
+                      products={products}
+                      showActions={showActions}
                       transaction={transaction}
                     />
                   ))}
@@ -165,8 +168,10 @@ function JournalPage() {
           <div className="mt-6 grid gap-3 md:hidden">
             {transactions.map((transaction) => (
               <JournalCard
-                isAdmin={isAdmin}
+                bundles={bundles}
+                characters={characters}
                 key={transaction._id}
+                products={products}
                 transaction={transaction}
               />
             ))}
@@ -185,6 +190,15 @@ function JournalPage() {
   )
 }
 
+function isEditableTransaction(transaction: Transaction): boolean {
+  return (
+    transaction.kind === "production" ||
+    transaction.kind === "purchase" ||
+    transaction.kind === "sale" ||
+    transaction.kind === "service"
+  )
+}
+
 function OperationPill({
   kind,
 }: Readonly<{ kind: Doc<"transactions">["kind"] }>) {
@@ -199,9 +213,18 @@ function OperationPill({
 }
 
 function JournalRow({
-  isAdmin,
+  bundles,
+  characters,
+  products,
+  showActions,
   transaction,
-}: Readonly<{ isAdmin: boolean; transaction: Transaction }>) {
+}: Readonly<{
+  bundles: readonly Bundle[]
+  characters: readonly Doc<"characters">[]
+  products: readonly Doc<"products">[]
+  showActions: boolean
+  transaction: Transaction
+}>) {
   const isCancelled = transaction.cancelledAt !== undefined
   return (
     <TableRow
@@ -251,11 +274,16 @@ function JournalRow({
         {transaction.total >= 0 ? "+" : ""}
         {formatSeptims(transaction.total)}
       </TableCell>
-      {isAdmin ? (
-        <TableCell className="pr-2">
-          {isCancelled ? null : (
-            <TransactionCancellation transaction={transaction} />
-          )}
+      {showActions ? (
+        <TableCell className="pr-2 text-right">
+          {transaction.canManage ? (
+            <TransactionActions
+              bundles={bundles}
+              characters={characters}
+              products={products}
+              transaction={transaction}
+            />
+          ) : null}
         </TableCell>
       ) : null}
     </TableRow>
@@ -263,9 +291,16 @@ function JournalRow({
 }
 
 function JournalCard({
-  isAdmin,
+  bundles,
+  characters,
+  products,
   transaction,
-}: Readonly<{ isAdmin: boolean; transaction: Transaction }>) {
+}: Readonly<{
+  bundles: readonly Bundle[]
+  characters: readonly Doc<"characters">[]
+  products: readonly Doc<"products">[]
+  transaction: Transaction
+}>) {
   const isCancelled = transaction.cancelledAt !== undefined
   return (
     <Card
@@ -288,9 +323,6 @@ function JournalCard({
           ) : (
             <OperationPill kind={transaction.kind} />
           )}
-          {isAdmin && !isCancelled ? (
-            <TransactionCancellation transaction={transaction} />
-          ) : null}
         </CardAction>
       </CardHeader>
       <CardContent className="grid gap-3 border-t border-border/60 pt-4">
@@ -320,8 +352,48 @@ function JournalCard({
             {transaction.cancellationReason}
           </p>
         ) : null}
+        {transaction.canManage ? (
+          <TransactionActions
+            bundles={bundles}
+            characters={characters}
+            products={products}
+            transaction={transaction}
+          />
+        ) : null}
       </CardContent>
     </Card>
+  )
+}
+
+function TransactionActions({
+  bundles,
+  characters,
+  products,
+  transaction,
+}: Readonly<{
+  bundles: readonly Bundle[]
+  characters: readonly Doc<"characters">[]
+  products: readonly Doc<"products">[]
+  transaction: Transaction
+}>) {
+  return (
+    <div className="flex flex-wrap justify-end gap-1">
+      {isEditableTransaction(transaction) ? (
+        <OperationDialog
+          bundles={bundles}
+          characters={characters}
+          products={products}
+          transaction={transaction}
+          trigger={
+            <Button size="sm" type="button" variant="ghost">
+              <Pencil aria-hidden="true" />
+              Modifier
+            </Button>
+          }
+        />
+      ) : null}
+      <TransactionCancellation transaction={transaction} />
+    </div>
   )
 }
 
@@ -368,11 +440,12 @@ function TransactionCancellation({
       <AlertDialogTrigger asChild>
         <Button
           aria-label={`Annuler ${operationLabels[transaction.kind]} — ${transaction.productName}`}
-          size="icon"
+          size="sm"
           type="button"
           variant="ghost"
         >
           <Undo2 aria-hidden="true" />
+          Annuler
         </Button>
       </AlertDialogTrigger>
       <AlertDialogContent className="rounded-[0.2rem] border-[#6a5436] bg-[#eee1c7]">

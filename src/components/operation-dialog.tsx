@@ -8,6 +8,7 @@ import {
   Hammer,
   LoaderCircle,
   PackageOpen,
+  Pencil,
   Plus,
   ReceiptText,
   ShoppingBasket,
@@ -79,6 +80,7 @@ import { cn } from "@/lib/utils"
 
 export type OperationKind = "production" | "purchase" | "sale" | "service"
 type Bundle = FunctionReturnType<typeof api.recipes.listBundles>[number]
+type Transaction = FunctionReturnType<typeof api.transactions.list>[number]
 
 interface TradeLine {
   id: string
@@ -191,6 +193,14 @@ function dateInputToTimestamp(value: string): number | undefined {
   const day = Number(match[3])
   const timestamp = new Date(year, month - 1, day, 12).getTime()
   return Number.isFinite(timestamp) ? timestamp : undefined
+}
+
+function timestampToDateInput(timestamp: number): string {
+  const date = new Date(timestamp)
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, "0")
+  const day = String(date.getDate()).padStart(2, "0")
+  return `${year}-${month}-${day}`
 }
 
 function isOperationKind(value: string): value is OperationKind {
@@ -532,16 +542,19 @@ export function OperationDialog({
   characters,
   initialKind = "sale",
   products,
+  transaction,
   trigger,
 }: Readonly<{
   bundles?: readonly Bundle[]
   characters: readonly Doc<"characters">[]
   initialKind?: OperationKind
   products: readonly Doc<"products">[]
+  transaction?: Transaction
   trigger?: ReactElement
 }>) {
   const record = useMutation(api.transactions.record)
   const recordTrade = useMutation(api.transactions.recordTrade)
+  const updateTransaction = useMutation(api.transactions.update)
   const [open, setOpen] = useState(false)
   const [kind, setKind] = useState<OperationKind>(initialKind)
   const [productId, setProductId] = useState("")
@@ -560,10 +573,22 @@ export function OperationDialog({
 
   const config = operationConfigs[kind]
   const usesTradeCart = kind === "purchase" || kind === "sale"
-  const availableProducts = products.filter((product) =>
+  const previousDeltas = new Map(
+    transaction?.stockDeltas.map((entry) => [entry.productId, entry.delta]) ??
+      []
+  )
+  const correctedProducts = products.map((product) => {
+    const previousDelta = previousDeltas.get(product._id) ?? 0
+    return previousDelta === 0
+      ? product
+      : { ...product, currentStock: product.currentStock - previousDelta }
+  })
+  const availableProducts = correctedProducts.filter((product) =>
     kind === "service" ? !product.tracksStock : product.tracksStock
   )
-  const selectedProduct = products.find((product) => product._id === productId)
+  const selectedProduct = correctedProducts.find(
+    (product) => product._id === productId
+  )
   const suggestedPrice =
     kind === "purchase"
       ? selectedProduct?.purchasePrice
@@ -581,8 +606,10 @@ export function OperationDialog({
     const fallbackLinePrice =
       line.kind === "product"
         ? kind === "purchase"
-          ? products.find((product) => product._id === line.id)?.purchasePrice
-          : products.find((product) => product._id === line.id)?.salePrice
+          ? correctedProducts.find((product) => product._id === line.id)
+              ?.purchasePrice
+          : correctedProducts.find((product) => product._id === line.id)
+              ?.salePrice
         : bundles.find((bundle) => bundle._id === line.id)?.price
     const enteredLinePrice = priceDraftToValue(line.unitPrice)
     const linePrice = enteredLinePrice ?? fallbackLinePrice ?? 0
@@ -635,7 +662,7 @@ export function OperationDialog({
       )
     }
   }
-  const insufficientSaleProducts = products.filter(
+  const insufficientSaleProducts = correctedProducts.filter(
     (product) =>
       (saleStockRequirements.get(product._id) ?? 0) > product.currentStock
   )
@@ -645,15 +672,54 @@ export function OperationDialog({
       : hasInsufficientSingleStock
 
   function resetForm() {
-    setProductId("")
-    setQuantity("1")
-    setUnitPrice(priceDraftFromValue(undefined))
-    setTradeLines([])
-    setDiscount("")
-    setCounterparty("")
-    setComment("")
-    setOccurredOn(todayInputValue())
-    setDetailsOpen(false)
+    const editableKind =
+      transaction && isOperationKind(transaction.kind)
+        ? transaction.kind
+        : initialKind
+    setKind(editableKind)
+    setProductId(transaction?.productId ?? "")
+    setCharacterId(transaction?.actorCharacterId ?? "")
+    setQuantity(transaction?.quantity.toString() ?? "1")
+    setUnitPrice(priceDraftFromValue(transaction?.unitPrice))
+    const existingLines = transaction?.lines.flatMap<TradeLine>((line) => {
+      const id = line.kind === "bundle" ? line.bundleId : line.productId
+      return id
+        ? [
+            {
+              id,
+              kind: line.kind,
+              name: line.productName,
+              quantity: line.quantity.toString(),
+              unitPrice: priceDraftFromValue(line.unitPrice),
+            },
+          ]
+        : []
+    })
+    const legacySingleLine =
+      transaction &&
+      (editableKind === "purchase" || editableKind === "sale") &&
+      transaction.productId &&
+      existingLines?.length === 0
+        ? [
+            {
+              id: transaction.productId,
+              kind: "product" as const,
+              name: transaction.productName,
+              quantity: transaction.quantity.toString(),
+              unitPrice: priceDraftFromValue(transaction.unitPrice),
+            },
+          ]
+        : []
+    setTradeLines(existingLines?.length ? existingLines : legacySingleLine)
+    setDiscount(transaction?.discount?.toString() ?? "")
+    setCounterparty(transaction?.counterparty ?? "")
+    setComment(transaction?.comment ?? "")
+    setOccurredOn(
+      transaction
+        ? timestampToDateInput(transaction.occurredAt)
+        : todayInputValue()
+    )
+    setDetailsOpen(Boolean(transaction))
   }
 
   function handleKindChange(value: string) {
@@ -685,7 +751,6 @@ export function OperationDialog({
 
   function handleOpenChange(nextOpen: boolean) {
     if (nextOpen && !open) {
-      setKind(initialKind)
       resetForm()
     }
     setOpen(nextOpen)
@@ -754,7 +819,9 @@ export function OperationDialog({
             return []
           }
           if (line.kind === "product") {
-            const lineProduct = products.find((entry) => entry._id === line.id)
+            const lineProduct = correctedProducts.find(
+              (entry) => entry._id === line.id
+            )
             return lineProduct
               ? [
                   {
@@ -785,7 +852,7 @@ export function OperationDialog({
           toast.error("Vérifiez les quantités et les prix du panier.")
           return
         }
-        await recordTrade({
+        const tradeArgs = {
           characterId: character._id,
           ...(comment.trim() ? { comment } : {}),
           ...(counterparty.trim() ? { counterparty } : {}),
@@ -795,9 +862,17 @@ export function OperationDialog({
           kind,
           lines: preparedLines,
           occurredAt,
-        })
+        }
+        if (transaction) {
+          await updateTransaction({
+            ...tradeArgs,
+            transactionId: transaction._id,
+          })
+        } else {
+          await recordTrade(tradeArgs)
+        }
       } else if (product) {
-        await record({
+        const singleArgs = {
           characterId: character._id,
           ...(comment.trim() ? { comment } : {}),
           ...(counterparty.trim() ? { counterparty } : {}),
@@ -811,9 +886,19 @@ export function OperationDialog({
           ...(submittedPrice === undefined
             ? {}
             : { unitPrice: submittedPrice }),
-        })
+        }
+        if (transaction) {
+          await updateTransaction({
+            ...singleArgs,
+            transactionId: transaction._id,
+          })
+        } else {
+          await record(singleArgs)
+        }
       }
-      toast.success(config.successMessage)
+      toast.success(
+        transaction ? "Opération mise à jour." : config.successMessage
+      )
       resetForm()
       setOpen(false)
     } catch (error) {
@@ -843,9 +928,13 @@ export function OperationDialog({
             Activité de la boutique
           </p>
           <DialogTitle className="font-display text-2xl">
-            {config.title}
+            {transaction ? `Modifier : ${config.label}` : config.title}
           </DialogTitle>
-          <DialogDescription>{config.description}</DialogDescription>
+          <DialogDescription>
+            {transaction
+              ? "Le stock et le montant seront recalculés à partir de cette correction."
+              : config.description}
+          </DialogDescription>
         </DialogHeader>
 
         <form className="mt-1 grid gap-5" onSubmit={handleSubmit}>
@@ -1124,8 +1213,14 @@ export function OperationDialog({
                   aria-hidden="true"
                   className="animate-spin motion-reduce:animate-none"
                 />
-              ) : null}
-              {config.submitLabel}
+              ) : transaction ? (
+                <>
+                  <Pencil aria-hidden="true" />
+                  Enregistrer les modifications
+                </>
+              ) : (
+                config.submitLabel
+              )}
             </Button>
           </DialogFooter>
         </form>

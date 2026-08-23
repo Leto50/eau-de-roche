@@ -462,7 +462,6 @@ describe("transactions.cancel", () => {
   it("annule une vente en rétablissant le stock et conserve sa trace", async () => {
     const backend = createTestBackend()
     const member = await asAuthenticatedUser(backend)
-    const admin = await asAuthenticatedUser(backend, "admin")
     const { characterId, productId } = await seedStock(backend)
     const result = await member.mutation(api.transactions.record, {
       characterId,
@@ -472,7 +471,7 @@ describe("transactions.cancel", () => {
       quantity: 3,
     })
 
-    await admin.mutation(api.transactions.cancel, {
+    await member.mutation(api.transactions.cancel, {
       reason: "Vente saisie deux fois",
       transactionId: result.transactionId,
     })
@@ -488,12 +487,14 @@ describe("transactions.cancel", () => {
       product: await ctx.db.get(productId),
       transaction: await ctx.db.get(result.transactionId),
     }))
+    const visibleTransactions = await member.query(api.transactions.list, {})
     expect(state.product?.currentStock).toBe(10)
     expect(state.transaction).toMatchObject({
       cancellationReason: "Vente saisie deux fois",
     })
     expect(state.movements.map((movement) => movement.delta)).toEqual([-3, 3])
     expect(state.audits.at(-1)?.action).toBe("transaction.cancelled")
+    expect(visibleTransactions[0]?.canManage).toBe(false)
   })
 
   it("refuse d’annuler un achat lorsque les unités ont déjà été utilisées", async () => {
@@ -523,12 +524,13 @@ describe("transactions.cancel", () => {
     expect(transaction?.cancelledAt).toBeUndefined()
   })
 
-  it("réserve l’annulation aux administrateurs", async () => {
+  it("refuse à un employé d’annuler la saisie d’un autre compte", async () => {
     const backend = createTestBackend()
     const employee = await asAuthenticatedUser(backend)
     const transactionId = await backend.run((ctx) =>
       ctx.db.insert("transactions", {
         actorName: "Intendant",
+        actorUserId: "autre-compte",
         kind: "service",
         occurredAt: Date.now(),
         productName: "Conseil alchimique",
@@ -537,12 +539,181 @@ describe("transactions.cancel", () => {
         total: 5,
       })
     )
+    const visibleTransactions = await employee.query(api.transactions.list, {})
+    expect(visibleTransactions[0]?.canManage).toBe(false)
 
     await expect(
       employee.mutation(api.transactions.cancel, {
         reason: "Erreur de saisie",
         transactionId,
       })
-    ).rejects.toThrowError("réservée aux administrateurs")
+    ).rejects.toThrowError("uniquement les opérations que vous avez saisies")
+  })
+})
+
+describe("transactions.update", () => {
+  it("permet à un employé de corriger sa vente et recalcule le stock", async () => {
+    const backend = createTestBackend()
+    const member = await asAuthenticatedUser(backend)
+    const { characterId, productId } = await seedStock(backend)
+    const recorded = await member.mutation(api.transactions.record, {
+      characterId,
+      kind: "sale",
+      occurredAt: Date.now(),
+      productId,
+      quantity: 3,
+    })
+
+    await member.mutation(api.transactions.update, {
+      characterId,
+      kind: "sale",
+      lines: [
+        {
+          kind: "product",
+          productId,
+          quantity: 5,
+          unitPrice: 10,
+        },
+      ],
+      occurredAt: Date.now(),
+      transactionId: recorded.transactionId,
+    })
+    const visibleTransactions = await member.query(api.transactions.list, {})
+
+    const state = await backend.run(async (ctx) => ({
+      audits: await ctx.db.query("auditLogs").collect(),
+      lines: await ctx.db.query("transactionLines").collect(),
+      movements: await ctx.db.query("stockMovements").collect(),
+      product: await ctx.db.get(productId),
+      transaction: await ctx.db.get(recorded.transactionId),
+    }))
+    expect(state.product?.currentStock).toBe(5)
+    expect(state.transaction).toMatchObject({
+      kind: "sale",
+      quantity: 5,
+      total: 50,
+    })
+    expect(state.lines).toHaveLength(1)
+    expect(state.movements).toHaveLength(1)
+    expect(state.movements[0]).toMatchObject({
+      delta: -5,
+      previousStock: 10,
+      resultingStock: 5,
+    })
+    expect(state.audits.at(-1)?.action).toBe("transaction.updated")
+    expect(visibleTransactions[0]?.canManage).toBe(true)
+  })
+
+  it("remplace atomiquement les lignes et mouvements d’un achat", async () => {
+    const backend = createTestBackend()
+    const member = await asAuthenticatedUser(backend)
+    const { characterId, productId } = await seedStock(backend)
+    const secondProductId = await backend.run((ctx) =>
+      ctx.db.insert("products", {
+        active: true,
+        category: "ingredient",
+        currentStock: 5,
+        minimumStock: 1,
+        name: "Sel des anciens",
+        normalizedName: "sel des anciens",
+        purchasePrice: 2,
+        tracksStock: true,
+      })
+    )
+    const recorded = await member.mutation(api.transactions.recordTrade, {
+      characterId,
+      kind: "purchase",
+      lines: [
+        { kind: "product", productId, quantity: 1 },
+        { kind: "product", productId: secondProductId, quantity: 1 },
+      ],
+      occurredAt: Date.now(),
+    })
+
+    await member.mutation(api.transactions.update, {
+      characterId,
+      kind: "purchase",
+      lines: [{ kind: "product", productId, quantity: 2, unitPrice: 5 }],
+      occurredAt: Date.now(),
+      transactionId: recorded.transactionId,
+    })
+
+    const state = await backend.run(async (ctx) => ({
+      first: await ctx.db.get(productId),
+      lines: await ctx.db.query("transactionLines").collect(),
+      movements: await ctx.db.query("stockMovements").collect(),
+      second: await ctx.db.get(secondProductId),
+      transaction: await ctx.db.get(recorded.transactionId),
+    }))
+    expect(state.first?.currentStock).toBe(12)
+    expect(state.second?.currentStock).toBe(5)
+    expect(state.transaction?.total).toBe(-10)
+    expect(state.lines).toHaveLength(1)
+    expect(state.movements).toHaveLength(1)
+    expect(state.movements[0]).toMatchObject({ delta: 2 })
+  })
+
+  it("refuse une correction qui rendrait un stock négatif sans écriture partielle", async () => {
+    const backend = createTestBackend()
+    const member = await asAuthenticatedUser(backend)
+    const { characterId, productId } = await seedStock(backend)
+    const recorded = await member.mutation(api.transactions.record, {
+      characterId,
+      kind: "purchase",
+      occurredAt: Date.now(),
+      productId,
+      quantity: 3,
+    })
+    await backend.run((ctx) => ctx.db.patch(productId, { currentStock: 2 }))
+
+    await expect(
+      member.mutation(api.transactions.update, {
+        characterId,
+        kind: "sale",
+        lines: [{ kind: "product", productId, quantity: 1 }],
+        occurredAt: Date.now(),
+        transactionId: recorded.transactionId,
+      })
+    ).rejects.toThrowError("Stock insuffisant")
+
+    const state = await backend.run(async (ctx) => ({
+      movements: await ctx.db.query("stockMovements").collect(),
+      product: await ctx.db.get(productId),
+      transaction: await ctx.db.get(recorded.transactionId),
+    }))
+    expect(state.product?.currentStock).toBe(2)
+    expect(state.transaction?.kind).toBe("purchase")
+    expect(state.movements).toHaveLength(1)
+    expect(state.movements[0]?.delta).toBe(3)
+  })
+
+  it("refuse à un employé de modifier la saisie d’un autre compte", async () => {
+    const backend = createTestBackend()
+    const employee = await asAuthenticatedUser(backend)
+    const { characterId, productId } = await seedStock(backend)
+    const transactionId = await backend.run((ctx) =>
+      ctx.db.insert("transactions", {
+        actorName: "Autre employé",
+        actorUserId: "autre-compte",
+        kind: "production",
+        occurredAt: Date.now(),
+        productId,
+        productName: "Potion de soin",
+        quantity: 1,
+        source: "web",
+        total: 0,
+      })
+    )
+
+    await expect(
+      employee.mutation(api.transactions.update, {
+        characterId,
+        kind: "production",
+        occurredAt: Date.now(),
+        productId,
+        quantity: 2,
+        transactionId,
+      })
+    ).rejects.toThrowError("uniquement les opérations que vous avez saisies")
   })
 })
