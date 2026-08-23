@@ -15,3 +15,15 @@ export async function requireUser(ctx: AuthenticatedContext) {
   }
   return user
 }
+
+export async function requireAdmin(ctx: AuthenticatedContext) {
+  const user = await requireUser(ctx)
+  const roles = typeof user.role === "string" ? user.role.split(",") : []
+  if (!roles.includes("admin")) {
+    throw new ConvexError({
+      code: "FORBIDDEN",
+      message: "Cette action est réservée aux administrateurs.",
+    })
+  }
+  return user
+}

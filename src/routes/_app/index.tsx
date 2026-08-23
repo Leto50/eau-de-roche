@@ -3,29 +3,37 @@ import { useSuspenseQuery } from "@tanstack/react-query"
 import { createFileRoute, Link } from "@tanstack/react-router"
 import {
   AlertTriangle,
+  ArrowDownToLine,
   ArrowDownLeft,
   ArrowUpRight,
+  CalendarDays,
+  ChevronRight,
   Coins,
-  PackageOpen,
-  Plus,
+  Hammer,
+  ReceiptText,
   ScrollText,
+  ShoppingBasket,
 } from "lucide-react"
 
+import { OperationDialog } from "@/components/operation-dialog"
 import { PageError } from "@/components/page-error"
 import { PageHeader } from "@/components/page-header"
 import { PageSkeleton } from "@/components/page-skeleton"
-import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
-import { Badge } from "@/components/ui/badge"
+import {
+  Alert,
+  AlertAction,
+  AlertDescription,
+  AlertTitle,
+} from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import {
   Card,
-  CardAction,
   CardContent,
   CardDescription,
-  CardFooter,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card"
+import { Separator } from "@/components/ui/separator"
 import {
   Table,
   TableBody,
@@ -38,6 +46,7 @@ import { api } from "../../../convex/_generated/api"
 import {
   formatDate,
   formatNumber,
+  formatQuantity,
   formatSeptims,
   operationLabels,
 } from "@/lib/format"
@@ -47,91 +56,255 @@ export const Route = createFileRoute("/_app/")({
   component: DashboardPage,
   errorComponent: PageError,
   loader: async ({ context }) => {
-    await context.queryClient.ensureQueryData(
-      convexQuery(api.dashboard.overview, {})
-    )
+    await Promise.all([
+      context.queryClient.ensureQueryData(
+        convexQuery(api.dashboard.overview, {})
+      ),
+      context.queryClient.ensureQueryData(
+        convexQuery(api.products.selectable, {})
+      ),
+      context.queryClient.ensureQueryData(convexQuery(api.characters.list, {})),
+      context.queryClient.ensureQueryData(
+        convexQuery(api.recipes.listBundles, {})
+      ),
+    ])
   },
   pendingComponent: PageSkeleton,
 })
 
 function DashboardPage() {
   const { data } = useSuspenseQuery(convexQuery(api.dashboard.overview, {}))
+  const { data: products } = useSuspenseQuery(
+    convexQuery(api.products.selectable, {})
+  )
+  const { data: characters } = useSuspenseQuery(
+    convexQuery(api.characters.list, {})
+  )
+  const { data: bundles } = useSuspenseQuery(
+    convexQuery(api.recipes.listBundles, {})
+  )
 
   return (
     <div className="animate-in duration-300 fade-in slide-in-from-bottom-1 motion-reduce:animate-none">
-      <PageHeader
-        action={
-          <Button asChild className="shadow-sm" size="lg">
-            <Link to="/journal">
-              <Plus aria-hidden="true" />
-              Nouvelle opération
-            </Link>
-          </Button>
-        }
-        eyebrow="Synthèse de l’activité"
-        title="Vue d'ensemble"
-      >
-        Les stocks, commandes et opérations récentes de la boutique.
+      <PageHeader eyebrow="Registre du jour" title="La boutique aujourd’hui">
+        Enregistrez une activité, puis voyez immédiatement ce qui demande votre
+        attention.
       </PageHeader>
 
-      <section
-        aria-label="Indicateurs de la boutique"
-        className="mt-6 grid grid-cols-4 border-y border-[#5b462b]/50 max-xl:grid-cols-2 max-md:grid-cols-1"
-      >
-        <Metric
-          detail="références suivies"
-          icon={PackageOpen}
-          label="Produits en stock"
-          value={formatNumber(data.activeProducts)}
-        />
-        <Metric
-          detail="au seuil ou en dessous"
-          icon={AlertTriangle}
-          label="À surveiller"
-          tone={data.lowStock.length > 0 ? "warning" : "normal"}
-          value={formatNumber(data.lowStock.length)}
-        />
-        <Metric
-          detail="commandes encore ouvertes"
-          icon={ScrollText}
-          label="Commandes"
-          value={formatNumber(data.openOrders)}
-        />
-        <Metric
-          detail="selon les prix renseignés"
-          icon={Coins}
-          label="Valeur du stock"
-          value={formatSeptims(data.stockValue)}
-        />
-      </section>
-
-      <div className="mt-8 grid gap-8 xl:grid-cols-[1.45fr_0.75fr]">
-        <Card className="rounded-none border-[#644c2c]/35 bg-[#f9f0db]/45 py-0 shadow-[inset_0_0_24px_rgba(107,79,40,0.03)] ring-0">
-          <CardHeader className="border-b border-border/60">
-            <CardTitle className="font-display text-xl font-[580] text-[#3b2f22]">
-              Mouvements récents
-            </CardTitle>
-            <CardDescription>Dernières opérations enregistrées</CardDescription>
-            <CardAction>
-              <Badge
-                className={cn(
-                  "font-semibold",
-                  data.weeklyBalance >= 0
-                    ? "border-[#456044]/30 text-[#456044]"
-                    : "border-[#8a3e2f]/30 text-[#8a3e2f]"
-                )}
+      <Card className="mt-6 border border-[#5b462b]/35 bg-[#f8edd5]/55 shadow-[0_10px_28px_rgba(70,48,25,0.06)] ring-0">
+        <CardHeader className="border-b border-border/65">
+          <CardTitle className="font-display text-lg font-[580] text-[#34291e]">
+            Nouvelle activité
+          </CardTitle>
+          <CardDescription>Que venez-vous de faire ?</CardDescription>
+        </CardHeader>
+        <CardContent className="grid grid-cols-2 gap-2 lg:grid-cols-4">
+          <OperationDialog
+            bundles={bundles}
+            characters={characters}
+            products={products}
+            trigger={
+              <Button
+                className="h-20 w-full flex-col gap-1.5 px-3 text-center text-sm whitespace-normal shadow-sm"
+                size="lg"
+              >
+                <ShoppingBasket aria-hidden="true" className="size-5" />
+                Encaisser une vente
+              </Button>
+            }
+          />
+          <OperationDialog
+            bundles={bundles}
+            characters={characters}
+            initialKind="purchase"
+            products={products}
+            trigger={
+              <Button
+                className="h-20 w-full flex-col gap-1.5 border-[#6a5436]/40 bg-background/35 px-3 text-center text-sm whitespace-normal"
+                size="lg"
                 variant="outline"
               >
+                <ArrowDownToLine aria-hidden="true" className="size-5" />
+                Recevoir un achat
+              </Button>
+            }
+          />
+          <OperationDialog
+            bundles={bundles}
+            characters={characters}
+            initialKind="production"
+            products={products}
+            trigger={
+              <Button
+                className="h-20 w-full flex-col gap-1.5 border-[#6a5436]/40 bg-background/35 px-3 text-center text-sm whitespace-normal"
+                size="lg"
+                variant="outline"
+              >
+                <Hammer aria-hidden="true" className="size-5" />
+                Ajouter une production
+              </Button>
+            }
+          />
+          <OperationDialog
+            bundles={bundles}
+            characters={characters}
+            initialKind="service"
+            products={products}
+            trigger={
+              <Button
+                className="h-20 w-full flex-col gap-1.5 border-[#6a5436]/40 bg-background/35 px-3 text-center text-sm whitespace-normal"
+                size="lg"
+                variant="outline"
+              >
+                <ReceiptText aria-hidden="true" className="size-5" />
+                Facturer un service
+              </Button>
+            }
+          />
+        </CardContent>
+      </Card>
+
+      <section
+        aria-label="Priorités de la boutique"
+        className="mt-6 grid gap-4 lg:grid-cols-[minmax(0,1.4fr)_minmax(16rem,0.6fr)]"
+      >
+        <Card className="border border-[#644c2c]/35 bg-[#f9f0db]/45 ring-0">
+          <CardHeader>
+            <CardTitle className="font-display text-lg font-[580] text-[#34291e]">
+              À traiter
+            </CardTitle>
+            <CardDescription>
+              Les points qui peuvent ralentir la boutique
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="grid gap-3 md:grid-cols-2 lg:grid-cols-1 xl:grid-cols-2">
+            <Alert
+              className={cn(
+                "min-h-24 border-[#6a5436]/30 bg-background/35 p-4 pr-14",
+                data.lowStock.length > 0 &&
+                  "border-[#9a4b32]/30 bg-[#9a4b32]/[0.04]"
+              )}
+            >
+              <AlertTriangle
+                aria-hidden="true"
+                className={cn(
+                  "size-5 text-primary",
+                  data.lowStock.length > 0 && "text-[#9a4b32]"
+                )}
+              />
+              <AlertTitle className="text-sm font-semibold text-foreground">
+                {data.lowStock.length > 0
+                  ? `${formatNumber(data.lowStock.length)} stocks faibles`
+                  : "Stocks à jour"}
+              </AlertTitle>
+              <AlertDescription>
+                {data.lowStock.length > 0
+                  ? "Réapprovisionnement nécessaire"
+                  : "Aucune référence sous son seuil"}
+              </AlertDescription>
+              <AlertAction className="top-3 right-3">
+                <Button
+                  aria-label="Voir l’inventaire"
+                  asChild
+                  size="icon-lg"
+                  variant="ghost"
+                >
+                  <Link to="/inventaire">
+                    <ChevronRight aria-hidden="true" />
+                  </Link>
+                </Button>
+              </AlertAction>
+            </Alert>
+
+            <Alert className="min-h-24 border-primary/20 bg-primary/[0.035] p-4 pr-14">
+              <ScrollText aria-hidden="true" className="size-5 text-primary" />
+              <AlertTitle className="text-sm font-semibold text-foreground">
+                {formatNumber(data.openOrders)}{" "}
+                {data.openOrders === 1
+                  ? "commande ouverte"
+                  : "commandes ouvertes"}
+              </AlertTitle>
+              <AlertDescription>Clients et fournisseurs</AlertDescription>
+              <AlertAction className="top-3 right-3">
+                <Button
+                  aria-label="Voir les commandes"
+                  asChild
+                  size="icon-lg"
+                  variant="ghost"
+                >
+                  <Link to="/commandes">
+                    <ChevronRight aria-hidden="true" />
+                  </Link>
+                </Button>
+              </AlertAction>
+            </Alert>
+          </CardContent>
+        </Card>
+
+        <Card className="border border-primary/20 bg-primary/[0.045] ring-0">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 font-display text-lg font-[580] text-[#34291e]">
+              <Coins aria-hidden="true" className="size-4 text-primary" />
+              Repères
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <p className="text-[0.68rem] font-semibold tracking-[0.12em] text-muted-foreground uppercase">
+              Valeur estimée du stock
+            </p>
+            <p className="mt-1 font-display text-2xl leading-none font-[600] text-primary tabular-nums">
+              {formatSeptims(data.stockValue)}
+            </p>
+            <p className="mt-1 text-xs text-muted-foreground">
+              Prix d’achat, ou de vente à défaut
+            </p>
+            <Separator className="my-3 bg-primary/15" />
+            <div className="flex items-end justify-between gap-4">
+              <div>
+                <p className="flex items-center gap-1.5 text-sm font-semibold text-foreground">
+                  <CalendarDays
+                    aria-hidden="true"
+                    className="size-3.5 text-primary"
+                  />
+                  Cette semaine
+                </p>
+                <p className="mt-0.5 text-xs text-muted-foreground">
+                  {formatNumber(data.weeklyTransactionCount)}{" "}
+                  {data.weeklyTransactionCount === 1
+                    ? "mouvement"
+                    : "mouvements"}
+                </p>
+              </div>
+              <p
+                className={cn(
+                  "font-display text-lg font-[600] tabular-nums",
+                  data.weeklyBalance >= 0 ? "text-[#456044]" : "text-[#8a3e2f]"
+                )}
+              >
                 {data.weeklyBalance >= 0 ? "+" : ""}
-                {formatSeptims(data.weeklyBalance)} cette semaine
-              </Badge>
-            </CardAction>
+                {formatSeptims(data.weeklyBalance)}
+              </p>
+            </div>
+          </CardContent>
+        </Card>
+      </section>
+
+      <section aria-labelledby="recent-activity-title" className="mt-6">
+        <Card className="border border-[#644c2c]/35 bg-[#f9f0db]/45 py-0 shadow-[inset_0_0_24px_rgba(107,79,40,0.03)] ring-0">
+          <CardHeader className="border-b border-border/60">
+            <CardTitle
+              className="font-display text-xl font-[580] text-[#3b2f22]"
+              id="recent-activity-title"
+            >
+              Derniers mouvements
+            </CardTitle>
+            <CardDescription>Les dernières entrées du registre</CardDescription>
           </CardHeader>
           <CardContent className="px-0">
             <Table>
               <TableHeader>
                 <TableRow className="bg-[#684f2d]/8 hover:bg-[#684f2d]/8">
-                  <TableHead>Référence</TableHead>
+                  <TableHead>Activité</TableHead>
                   <TableHead className="hidden sm:table-cell">
                     Personnage
                   </TableHead>
@@ -163,7 +336,7 @@ function DashboardPage() {
                             </p>
                             <p className="text-xs text-muted-foreground">
                               {operationLabels[transaction.kind]} ·{" "}
-                              {formatNumber(transaction.quantity)} unité(s)
+                              {formatQuantity(transaction.quantity)}
                             </p>
                           </div>
                         </div>
@@ -190,101 +363,7 @@ function DashboardPage() {
             </Table>
           </CardContent>
         </Card>
-
-        <Card className="rounded-none border-[#644c2c]/35 bg-[#f0d8bd]/35 py-0 shadow-[inset_0_0_24px_rgba(107,79,40,0.03)] ring-0">
-          <CardHeader className="border-b border-border/60">
-            <CardTitle className="font-display text-xl font-[580] text-[#3b2f22]">
-              Stocks faibles
-            </CardTitle>
-            <CardDescription>Seuil minimum atteint</CardDescription>
-            <CardAction>
-              <AlertTriangle
-                aria-hidden="true"
-                className="size-5 text-[#9c5739]"
-              />
-            </CardAction>
-          </CardHeader>
-          <CardContent className="px-0">
-            {data.lowStock.length > 0 ? (
-              <Table>
-                <TableBody>
-                  {data.lowStock.map((product) => (
-                    <TableRow
-                      className="border-b border-dotted border-[#6b4c2b]/40 hover:bg-[#fffdeb]/30"
-                      key={product._id}
-                    >
-                      <TableCell className="pl-4">
-                        <p className="font-semibold">{product.name}</p>
-                        <p className="text-xs text-muted-foreground">
-                          Seuil {formatNumber(product.minimumStock)}
-                        </p>
-                      </TableCell>
-                      <TableCell className="pr-4 text-right font-display text-lg text-[#8a432e]">
-                        {formatNumber(product.currentStock)}
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            ) : (
-              <Alert className="mx-4 w-auto border-[#456044]/25 bg-[#456044]/[0.04]">
-                <PackageOpen aria-hidden="true" />
-                <AlertTitle>Aucun stock faible</AlertTitle>
-                <AlertDescription>
-                  Tous les produits suivis sont au-dessus de leur seuil minimum.
-                </AlertDescription>
-              </Alert>
-            )}
-          </CardContent>
-          <CardFooter className="border-t border-border/60">
-            <Button asChild className="w-full" variant="outline">
-              <Link to="/inventaire">Voir tout l’inventaire</Link>
-            </Button>
-          </CardFooter>
-        </Card>
-      </div>
+      </section>
     </div>
-  )
-}
-
-function Metric({
-  detail,
-  icon: Icon,
-  label,
-  tone = "normal",
-  value,
-}: Readonly<{
-  detail: string
-  icon: typeof Coins
-  label: string
-  tone?: "normal" | "warning"
-  value: string
-}>) {
-  return (
-    <Card
-      className={cn(
-        "min-w-0 gap-0 rounded-none border-0 border-r border-[#5b462b]/30 bg-transparent py-0 ring-0 last:border-r-0 max-md:border-r-0 max-md:border-b max-md:last:border-b-0 max-xl:[&:nth-child(-n+2)]:border-b max-xl:[&:nth-child(2)]:border-r-0",
-        tone === "warning" && "bg-[#9a4b32]/[0.025]"
-      )}
-      size="sm"
-    >
-      <CardContent className="flex items-start gap-3.5 p-4">
-        <Icon
-          aria-hidden="true"
-          className={cn(
-            "mt-0.5 size-5 shrink-0",
-            tone === "warning" ? "text-[#9a4b32]" : "text-primary"
-          )}
-          strokeWidth={1.5}
-        />
-        <div>
-          <p className="text-[0.68rem] font-semibold tracking-[0.16em] text-muted-foreground uppercase">
-            {label}
-          </p>
-          <p className="mt-1 font-display text-2xl text-foreground">{value}</p>
-          <p className="mt-0.5 text-xs text-muted-foreground">{detail}</p>
-        </div>
-      </CardContent>
-    </Card>
   )
 }

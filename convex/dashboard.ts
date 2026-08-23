@@ -8,18 +8,20 @@ export const overview = query({
   handler: async (ctx) => {
     await requireUser(ctx)
     const now = Date.now()
-    const [products, recentTransactions, openOrders] = await Promise.all([
-      ctx.db.query("products").collect(),
-      ctx.db
-        .query("transactions")
-        .withIndex("by_occurred_at")
-        .order("desc")
-        .take(8),
-      ctx.db
-        .query("orders")
-        .withIndex("by_status", (index) => index.eq("status", "open"))
-        .collect(),
-    ])
+    const [products, recentTransactionCandidates, openOrders] =
+      await Promise.all([
+        ctx.db.query("products").collect(),
+        ctx.db
+          .query("transactions")
+          .withIndex("by_occurred_at")
+          .order("desc")
+          .take(24),
+        ctx.db
+          .query("orders")
+          .withIndex("by_status", (index) => index.eq("status", "open"))
+          .collect(),
+      ])
+    const recentTransactions = recentTransactionCandidates.slice(0, 8)
 
     const activeStock = products.filter(
       (product) => product.active && product.tracksStock
@@ -51,12 +53,12 @@ export const overview = query({
     )
 
     return {
-      activeProducts: activeStock.length,
       lowStock,
       openOrders: openOrders.length,
       recentTransactions,
       stockValue,
       weeklyBalance,
+      weeklyTransactionCount: weeklyTransactions.length,
     }
   },
 })

@@ -2,14 +2,17 @@ import { convexQuery } from "@convex-dev/react-query"
 import { useSuspenseQuery } from "@tanstack/react-query"
 import { createFileRoute } from "@tanstack/react-router"
 import { type FunctionReturnType } from "convex/server"
-import { BookMarked, PackageOpen, Search, Sparkles } from "lucide-react"
+import { BookMarked, PackageOpen, Pencil, Search, Sparkles } from "lucide-react"
 import { useState } from "react"
 
+import { BundleArchivesDialog, BundleDialog } from "@/components/bundle-dialog"
 import { PageError } from "@/components/page-error"
 import { PageHeader } from "@/components/page-header"
 import { PageSkeleton } from "@/components/page-skeleton"
+import { RecipeArchivesDialog, RecipeDialog } from "@/components/recipe-dialog"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
+import { Button } from "@/components/ui/button"
 import {
   Card,
   CardAction,
@@ -27,6 +30,9 @@ import {
 } from "@/components/ui/select"
 import { Separator } from "@/components/ui/separator"
 import { api } from "../../../convex/_generated/api"
+import { type Doc } from "../../../convex/_generated/dataModel"
+import { useHydrated } from "@/hooks/use-hydrated"
+import { authClient } from "@/lib/auth-client"
 import { formatNumber, formatSeptims } from "@/lib/format"
 
 type Recipe = FunctionReturnType<typeof api.recipes.list>[number]
@@ -41,16 +47,26 @@ export const Route = createFileRoute("/_app/recettes")({
       context.queryClient.ensureQueryData(
         convexQuery(api.recipes.listBundles, {})
       ),
+      context.queryClient.ensureQueryData(
+        convexQuery(api.products.selectable, {})
+      ),
     ])
   },
   pendingComponent: PageSkeleton,
 })
 
 function RecipesPage() {
+  const { data: session } = authClient.useSession()
+  const isHydrated = useHydrated()
   const { data: recipes } = useSuspenseQuery(convexQuery(api.recipes.list, {}))
   const { data: bundles } = useSuspenseQuery(
     convexQuery(api.recipes.listBundles, {})
   )
+  const { data: products } = useSuspenseQuery(
+    convexQuery(api.products.selectable, {})
+  )
+  const isAdmin =
+    isHydrated && (session?.user.role?.split(",").includes("admin") ?? false)
   const [search, setSearch] = useState("")
   const [family, setFamily] = useState("all")
   const families = [...new Set(recipes.map((recipe) => recipe.family))].sort(
@@ -117,12 +133,25 @@ function RecipesPage() {
               Recettes
             </h2>
           </div>
-          <BookMarked aria-hidden="true" className="size-5 text-primary" />
+          <div className="flex items-center gap-2">
+            {isAdmin ? (
+              <>
+                <RecipeArchivesDialog />
+                <RecipeDialog products={products} />
+              </>
+            ) : null}
+            <BookMarked aria-hidden="true" className="size-5 text-primary" />
+          </div>
         </div>
         {visibleRecipes.length > 0 ? (
           <div className="grid grid-cols-3 gap-3 max-xl:grid-cols-2 max-md:grid-cols-1">
             {visibleRecipes.map((recipe) => (
-              <RecipeEntry key={recipe._id} recipe={recipe} />
+              <RecipeEntry
+                isAdmin={isAdmin}
+                key={recipe._id}
+                products={products}
+                recipe={recipe}
+              />
             ))}
           </div>
         ) : (
@@ -150,11 +179,24 @@ function RecipesPage() {
               Lots préparés
             </h2>
           </div>
-          <PackageOpen aria-hidden="true" className="size-5 text-primary" />
+          <div className="flex items-center gap-2">
+            {isAdmin ? (
+              <>
+                <BundleArchivesDialog />
+                <BundleDialog products={products} />
+              </>
+            ) : null}
+            <PackageOpen aria-hidden="true" className="size-5 text-primary" />
+          </div>
         </div>
         <div className="grid grid-cols-4 gap-3 max-xl:grid-cols-2 max-md:grid-cols-1">
           {bundles.map((bundle) => (
-            <BundleEntry bundle={bundle} key={bundle._id} />
+            <BundleEntry
+              bundle={bundle}
+              isAdmin={isAdmin}
+              key={bundle._id}
+              products={products}
+            />
           ))}
         </div>
       </section>
@@ -162,7 +204,15 @@ function RecipesPage() {
   )
 }
 
-function RecipeEntry({ recipe }: Readonly<{ recipe: Recipe }>) {
+function RecipeEntry({
+  isAdmin,
+  products,
+  recipe,
+}: Readonly<{
+  isAdmin: boolean
+  products: readonly Doc<"products">[]
+  recipe: Recipe
+}>) {
   return (
     <Card className="min-h-48 gap-0 rounded-none border-[#5b462b]/30 border-t-[#684f2d]/60 bg-linear-to-br from-[#fffbed]/60 to-[#e3d3b3]/20 py-0 ring-0">
       <CardHeader className="p-4 pb-0">
@@ -172,11 +222,24 @@ function RecipeEntry({ recipe }: Readonly<{ recipe: Recipe }>) {
         <CardTitle className="font-display text-lg font-medium">
           {recipe.name}
         </CardTitle>
-        {recipe.cost !== undefined ? (
-          <CardAction className="text-sm font-semibold">
-            {formatSeptims(recipe.cost)}
-          </CardAction>
-        ) : null}
+        <CardAction className="flex items-center gap-1 text-sm font-semibold">
+          {recipe.cost !== undefined ? formatSeptims(recipe.cost) : null}
+          {isAdmin ? (
+            <RecipeDialog
+              products={products}
+              recipe={recipe}
+              trigger={
+                <Button
+                  aria-label={`Modifier ${recipe.name}`}
+                  size="icon"
+                  variant="ghost"
+                >
+                  <Pencil aria-hidden="true" />
+                </Button>
+              }
+            />
+          ) : null}
+        </CardAction>
       </CardHeader>
       <CardContent className="p-4 pt-3">
         {recipe.effect ? (
@@ -206,15 +269,40 @@ function RecipeEntry({ recipe }: Readonly<{ recipe: Recipe }>) {
   )
 }
 
-function BundleEntry({ bundle }: Readonly<{ bundle: Bundle }>) {
+function BundleEntry({
+  bundle,
+  isAdmin,
+  products,
+}: Readonly<{
+  bundle: Bundle
+  isAdmin: boolean
+  products: readonly Doc<"products">[]
+}>) {
   return (
     <Card className="gap-0 rounded-none border-0 border-l-2 border-l-[#755832]/55 bg-[#795f38]/5 py-0 ring-0">
       <CardHeader className="p-4 pb-0">
         <CardTitle className="font-display text-base font-medium">
           {bundle.name}
         </CardTitle>
-        <CardAction className="font-semibold text-primary">
-          {bundle.price === undefined ? "—" : formatSeptims(bundle.price)}
+        <CardAction className="flex items-center gap-1 font-semibold text-primary">
+          <span>
+            {bundle.price === undefined ? "—" : formatSeptims(bundle.price)}
+          </span>
+          {isAdmin ? (
+            <BundleDialog
+              bundle={bundle}
+              products={products}
+              trigger={
+                <Button
+                  aria-label={`Modifier ${bundle.name}`}
+                  size="icon"
+                  variant="ghost"
+                >
+                  <Pencil aria-hidden="true" />
+                </Button>
+              }
+            />
+          ) : null}
         </CardAction>
       </CardHeader>
       <CardContent className="p-4 pt-3">

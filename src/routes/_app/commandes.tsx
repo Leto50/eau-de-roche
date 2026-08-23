@@ -8,16 +8,19 @@ import {
   Check,
   MessageSquareText,
   PackageCheck,
+  Pencil,
   Store,
 } from "lucide-react"
 import { useState } from "react"
 import { toast } from "sonner"
 
+import { OrderDialog } from "@/components/order-dialog"
 import { PageError } from "@/components/page-error"
 import { PageHeader } from "@/components/page-header"
 import { PageSkeleton } from "@/components/page-skeleton"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
+import { Button } from "@/components/ui/button"
 import {
   Card,
   CardAction,
@@ -37,10 +40,14 @@ import {
 import { Table, TableBody, TableCell, TableRow } from "@/components/ui/table"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { api } from "../../../convex/_generated/api"
+import { type Doc } from "../../../convex/_generated/dataModel"
+import { useHydrated } from "@/hooks/use-hydrated"
+import { authClient } from "@/lib/auth-client"
 import {
   formatDate,
   formatNumber,
   formatSeptims,
+  formatUnitPrice,
   orderStatusLabels,
 } from "@/lib/format"
 import { cn } from "@/lib/utils"
@@ -82,19 +89,31 @@ export const Route = createFileRoute("/_app/commandes")({
   component: OrdersPage,
   errorComponent: PageError,
   loader: async ({ context }) => {
-    await context.queryClient.ensureQueryData(convexQuery(api.orders.list, {}))
+    await Promise.all([
+      context.queryClient.ensureQueryData(convexQuery(api.orders.list, {})),
+      context.queryClient.ensureQueryData(
+        convexQuery(api.products.selectable, {})
+      ),
+    ])
   },
   pendingComponent: PageSkeleton,
 })
 
 function OrdersPage() {
+  const { data: session } = authClient.useSession()
+  const isHydrated = useHydrated()
   const { data: orders } = useSuspenseQuery(convexQuery(api.orders.list, {}))
+  const { data: products } = useSuspenseQuery(
+    convexQuery(api.products.selectable, {})
+  )
   const updateStatus = useMutation(api.orders.updateStatus)
   const [kind, setKind] = useState<OrderKind>("client")
   const visibleOrders = orders.filter((order) => order.kind === kind)
   const openCount = visibleOrders.filter(
     (order) => order.status === "open"
   ).length
+  const isAdmin =
+    isHydrated && (session?.user.role?.split(",").includes("admin") ?? false)
 
   async function handleStatusChange(order: Order, value: string) {
     if (!isOrderStatus(value)) return
@@ -116,7 +135,17 @@ function OrdersPage() {
 
   return (
     <div className="animate-in duration-300 fade-in slide-in-from-bottom-1 motion-reduce:animate-none">
-      <PageHeader eyebrow="Suivi des commandes" title="Commandes">
+      <PageHeader
+        action={
+          <OrderDialog
+            initialKind={kind}
+            isAdmin={isAdmin}
+            products={products}
+          />
+        }
+        eyebrow="Suivi des commandes"
+        title="Commandes"
+      >
         Les commandes clients et les achats attendus des fournisseurs.
       </PageHeader>
 
@@ -147,9 +176,11 @@ function OrdersPage() {
         <div className="mt-6 grid gap-5 xl:grid-cols-2">
           {visibleOrders.map((order) => (
             <OrderEntry
+              isAdmin={isAdmin}
               key={order._id}
               onStatusChange={(value) => handleStatusChange(order, value)}
               order={order}
+              products={products}
             />
           ))}
         </div>
@@ -181,11 +212,15 @@ function orderTotal(order: Order): number | undefined {
 }
 
 function OrderEntry({
+  isAdmin,
   onStatusChange,
   order,
+  products,
 }: Readonly<{
+  isAdmin: boolean
   onStatusChange: (value: string) => void
   order: Order
+  products: readonly Doc<"products">[]
 }>) {
   const total = orderTotal(order)
 
@@ -213,7 +248,7 @@ function OrderEntry({
             </span>
           </CardDescription>
         ) : null}
-        <CardAction>
+        <CardAction className="flex items-center gap-1">
           <Select onValueChange={onStatusChange} value={order.status}>
             <SelectTrigger
               aria-label={`État de la commande ${order.contactName}`}
@@ -229,6 +264,20 @@ function OrderEntry({
               ))}
             </SelectContent>
           </Select>
+          <OrderDialog
+            isAdmin={isAdmin}
+            order={order}
+            products={products}
+            trigger={
+              <Button
+                aria-label={`Modifier la commande de ${order.contactName}`}
+                size="icon"
+                variant="ghost"
+              >
+                <Pencil aria-hidden="true" />
+              </Button>
+            }
+          />
         </CardAction>
       </CardHeader>
 
@@ -241,7 +290,7 @@ function OrderEntry({
                   <p className="truncate font-semibold">{line.productName}</p>
                   {line.unitPrice !== undefined ? (
                     <p className="text-xs text-muted-foreground">
-                      {formatSeptims(line.unitPrice)} l’unité
+                      {formatUnitPrice(line.unitPrice)}
                     </p>
                   ) : null}
                 </TableCell>

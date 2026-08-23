@@ -8,12 +8,18 @@ export const productCategory = v.union(
 )
 
 export const transactionKind = v.union(
+  v.literal("adjustment"),
   v.literal("bundle"),
   v.literal("order"),
   v.literal("production"),
   v.literal("purchase"),
   v.literal("sale"),
   v.literal("service")
+)
+
+export const transactionLineKind = v.union(
+  v.literal("bundle"),
+  v.literal("product")
 )
 
 export const stockOperationKind = v.union(

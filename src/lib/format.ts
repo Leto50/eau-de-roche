@@ -1,3 +1,5 @@
+import { priceRatioFromValue } from "./prices"
+
 const numberFormatter = new Intl.NumberFormat("fr-FR", {
   maximumFractionDigits: 2,
 })
@@ -12,8 +14,32 @@ export function formatNumber(value: number): string {
   return numberFormatter.format(value)
 }
 
+export function formatQuantity(value: number): string {
+  return `${formatNumber(value)} ${Math.abs(value) === 1 ? "unité" : "unités"}`
+}
+
 export function formatSeptims(value: number): string {
-  return `${numberFormatter.format(value)} sept.`
+  const sign = value < 0 ? "−" : ""
+  const ratio = priceRatioFromValue(Math.abs(value))
+  const whole = Math.floor(ratio.septims / ratio.units)
+  const remainder = ratio.septims % ratio.units
+  const amount =
+    remainder === 0
+      ? formatNumber(whole)
+      : whole === 0
+        ? `${formatNumber(remainder)}/${formatNumber(ratio.units)}`
+        : `${formatNumber(whole)} ${formatNumber(remainder)}/${formatNumber(ratio.units)}`
+
+  return `${sign}${amount} sept.`
+}
+
+export function formatUnitPrice(value: number): string {
+  const ratio = priceRatioFromValue(value)
+  const septimLabel = ratio.septims === 1 ? "septim" : "septims"
+
+  return ratio.units === 1
+    ? `${formatNumber(ratio.septims)} ${septimLabel} l’unité`
+    : `${formatNumber(ratio.septims)} ${septimLabel} pour ${formatNumber(ratio.units)}`
 }
 
 export function formatDate(value: number): string {
@@ -28,6 +54,7 @@ export const categoryLabels = {
 } as const
 
 export const operationLabels = {
+  adjustment: "Ajustement",
   bundle: "Lot",
   order: "Commande",
   production: "Production",

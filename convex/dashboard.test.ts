@@ -1,0 +1,127 @@
+import betterAuthTest from "@convex-dev/better-auth/test"
+import { convexTest } from "convex-test"
+import { describe, expect, it } from "vitest"
+
+import { api, components } from "./_generated/api"
+import schema from "./schema"
+import { modules } from "./test.setup"
+
+function documentId(value: unknown): string {
+  if (
+    typeof value !== "object" ||
+    value === null ||
+    !("_id" in value) ||
+    typeof value._id !== "string"
+  ) {
+    throw new Error(
+      "Le composant d'authentification n'a pas renvoyé d'identifiant."
+    )
+  }
+  return value._id
+}
+
+function createTestBackend() {
+  const backend = convexTest(schema, modules)
+  betterAuthTest.register(backend)
+  return backend
+}
+
+async function asAuthenticatedMember(
+  backend: ReturnType<typeof createTestBackend>
+) {
+  const now = Date.now()
+  const createdUser: unknown = await backend.mutation(
+    components.betterAuth.adapter.create,
+    {
+      input: {
+        data: {
+          createdAt: now,
+          email: "employe@example.test",
+          emailVerified: true,
+          name: "Employé test",
+          updatedAt: now,
+        },
+        model: "user",
+      },
+    }
+  )
+  const userId = documentId(createdUser)
+  const createdSession: unknown = await backend.mutation(
+    components.betterAuth.adapter.create,
+    {
+      input: {
+        data: {
+          createdAt: now,
+          expiresAt: now + 60_000,
+          token: "dashboard-test-session-token",
+          updatedAt: now,
+          userId,
+        },
+        model: "session",
+      },
+    }
+  )
+  const sessionId = documentId(createdSession)
+
+  return backend.withIdentity({
+    issuer: "https://auth.example.test",
+    sessionId,
+    subject: userId,
+    tokenIdentifier: `https://auth.example.test|${userId}`,
+  })
+}
+
+describe("dashboard.overview", () => {
+  it("valorise le stock actif au prix d’achat ou de vente à défaut", async () => {
+    const backend = createTestBackend()
+    const member = await asAuthenticatedMember(backend)
+
+    await backend.run(async (ctx) => {
+      await ctx.db.insert("products", {
+        active: true,
+        category: "potion",
+        currentStock: 10,
+        minimumStock: 2,
+        name: "Potion de soin",
+        normalizedName: "potion de soin",
+        purchasePrice: 4,
+        salePrice: 12,
+        tracksStock: true,
+      })
+      await ctx.db.insert("products", {
+        active: true,
+        category: "ingredient",
+        currentStock: 3,
+        minimumStock: 1,
+        name: "Ail",
+        normalizedName: "ail",
+        salePrice: 7,
+        tracksStock: true,
+      })
+      await ctx.db.insert("products", {
+        active: true,
+        category: "service",
+        currentStock: 1,
+        minimumStock: 0,
+        name: "Livraison",
+        normalizedName: "livraison",
+        salePrice: 100,
+        tracksStock: false,
+      })
+      await ctx.db.insert("products", {
+        active: false,
+        category: "annexe",
+        currentStock: 5,
+        minimumStock: 0,
+        name: "Ancienne référence",
+        normalizedName: "ancienne reference",
+        purchasePrice: 50,
+        tracksStock: true,
+      })
+    })
+
+    const overview = await member.query(api.dashboard.overview, {})
+
+    expect(overview.stockValue).toBe(61)
+  })
+})
