@@ -13,6 +13,7 @@ import {
   loadStockBeforeTransaction,
   prepareExchange,
 } from "./lib/exchange"
+import { orderTransactionLabel, withOrderTotal } from "./lib/order"
 import { stockOperationKind } from "./lib/validators"
 
 const MAX_TEXT_LENGTH = 500
@@ -609,6 +610,7 @@ export const record = mutation({
 
 export const updateExchange = mutation({
   args: {
+    agreedTotal: v.optional(v.number()),
     characterId: v.id("characters"),
     comment: v.optional(v.string()),
     counterparty: v.optional(v.string()),
@@ -648,11 +650,6 @@ export const updateExchange = mutation({
     const baseStocks = new Map(
       [...states].map(([productId, state]) => [productId, state.baseStock])
     )
-    const discount = args.discount ?? 0
-    const prepared = await prepareExchange(ctx, args.lines, {
-      baseStocks,
-      discount,
-    })
     const linkedOrder = transaction.orderId
       ? await ctx.db.get(transaction.orderId)
       : null
@@ -663,6 +660,40 @@ export const updateExchange = mutation({
           "La commande liée à cette transaction est introuvable. Aucune correction n’a été appliquée.",
       })
     }
+    const discount = args.discount ?? 0
+    if (linkedOrder && discount > 0) {
+      throw new ConvexError({
+        code: "INVALID_INPUT",
+        message:
+          "Modifiez le total convenu de la commande plutôt qu’une remise.",
+      })
+    }
+    if (linkedOrder && args.agreedTotal !== undefined) {
+      assertWholeNumberRange(args.agreedTotal, 0, MAX_PRICE, "Le total convenu")
+    }
+    const preparedFromLines = await prepareExchange(ctx, args.lines, {
+      baseStocks,
+      discount: linkedOrder ? 0 : discount,
+    })
+    const linkedOrderKind =
+      linkedOrder && preparedFromLines.lines[0]?.direction === "incoming"
+        ? "supplier"
+        : "client"
+    const linkedAgreedTotal = linkedOrder
+      ? (args.agreedTotal ?? linkedOrder.total ?? Math.abs(transaction.total))
+      : undefined
+    if (linkedAgreedTotal !== undefined) {
+      assertWholeNumberRange(
+        linkedAgreedTotal,
+        0,
+        MAX_PRICE,
+        "Le total convenu"
+      )
+    }
+    const prepared =
+      linkedOrder && linkedAgreedTotal !== undefined
+        ? withOrderTotal(preparedFromLines, linkedOrderKind, linkedAgreedTotal)
+        : preparedFromLines
     if (linkedOrder) {
       const directions = new Set(prepared.lines.map((line) => line.direction))
       if (
@@ -722,7 +753,7 @@ export const updateExchange = mutation({
       actorUserId: transaction.actorUserId ?? String(user._id),
       ...(comment ? { comment } : {}),
       ...(counterparty ? { counterparty } : {}),
-      ...(discount > 0 ? { discount } : {}),
+      ...(!linkedOrder && discount > 0 ? { discount } : {}),
       incomingTotal: prepared.incomingTotal,
       kind: prepared.kind,
       ...(transaction.legacyKey ? { legacyKey: transaction.legacyKey } : {}),
@@ -730,8 +761,12 @@ export const updateExchange = mutation({
       occurredAt: args.occurredAt,
       ...(transaction.orderId ? { orderId: transaction.orderId } : {}),
       outgoingTotal: prepared.outgoingTotal,
-      productName:
-        prepared.lines.length === 1 && firstLine
+      productName: linkedOrder
+        ? orderTransactionLabel(
+            linkedOrderKind,
+            counterparty ?? linkedOrder.contactName
+          )
+        : prepared.lines.length === 1 && firstLine
           ? firstLine.productName
           : `${prepared.lines.length} références`,
       quantity: prepared.lines.reduce((sum, line) => sum + line.quantity, 0),
@@ -773,14 +808,14 @@ export const updateExchange = mutation({
           })
         )
       )
-      const orderKind =
-        prepared.lines[0]?.direction === "incoming" ? "supplier" : "client"
       await ctx.db.patch(linkedOrder._id, {
         contactName: counterparty ?? linkedOrder.contactName,
-        discount: orderKind === "client" && discount > 0 ? discount : undefined,
-        kind: orderKind,
+        discount: undefined,
+        kind: linkedOrderKind,
         processedAt: args.occurredAt,
-        ...(orderKind === "supplier" ? { status: "delivered" as const } : {}),
+        ...(linkedOrderKind === "supplier"
+          ? { status: "delivered" as const }
+          : {}),
         total: Math.abs(prepared.total),
       })
     }

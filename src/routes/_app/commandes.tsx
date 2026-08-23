@@ -17,6 +17,7 @@ import { useState } from "react"
 import { toast } from "sonner"
 
 import { OrderDialog } from "@/components/order-dialog"
+import { OrderPreparationDetails } from "@/components/order-preparation-details"
 import { PageError } from "@/components/page-error"
 import { PageHeader } from "@/components/page-header"
 import { PageSkeleton } from "@/components/page-skeleton"
@@ -64,9 +65,11 @@ import {
   formatUnitPrice,
   orderStatusLabels,
 } from "@/lib/format"
+import { calculateOrderPreparation } from "@/lib/order-preparation"
 import { cn } from "@/lib/utils"
 
 type Order = FunctionReturnType<typeof api.orders.list>[number]
+type Recipe = FunctionReturnType<typeof api.recipes.list>[number]
 type OrderStatus = Order["status"]
 type OrderKind = Order["kind"]
 
@@ -109,6 +112,7 @@ export const Route = createFileRoute("/_app/commandes")({
         convexQuery(api.products.selectable, {})
       ),
       context.queryClient.ensureQueryData(convexQuery(api.characters.list, {})),
+      context.queryClient.ensureQueryData(convexQuery(api.recipes.list, {})),
     ])
   },
   pendingComponent: PageSkeleton,
@@ -124,6 +128,7 @@ function OrdersPage() {
   const { data: characters } = useSuspenseQuery(
     convexQuery(api.characters.list, {})
   )
+  const { data: recipes } = useSuspenseQuery(convexQuery(api.recipes.list, {}))
   const updateStatus = useMutation(api.orders.updateStatus)
   const [kind, setKind] = useState<OrderKind>("client")
   const visibleOrders = orders.filter((order) => order.kind === kind)
@@ -159,6 +164,7 @@ function OrdersPage() {
             initialKind={kind}
             isAdmin={isAdmin}
             products={products}
+            recipes={recipes}
           />
         }
         eyebrow="Suivi des commandes"
@@ -200,6 +206,7 @@ function OrdersPage() {
               onStatusChange={(value) => handleStatusChange(order, value)}
               order={order}
               products={products}
+              recipes={recipes}
             />
           ))}
         </div>
@@ -236,14 +243,17 @@ function OrderEntry({
   onStatusChange,
   order,
   products,
+  recipes,
 }: Readonly<{
   characters: readonly Doc<"characters">[]
   isAdmin: boolean
   onStatusChange: (value: string) => void
   order: Order
   products: readonly Doc<"products">[]
+  recipes: readonly Recipe[]
 }>) {
   const total = orderTotal(order)
+  const preparation = calculateOrderPreparation(order.lines, products, recipes)
 
   return (
     <Card
@@ -289,6 +299,7 @@ function OrderEntry({
             isAdmin={isAdmin}
             order={order}
             products={products}
+            recipes={recipes}
             trigger={
               <Button
                 aria-label={`Modifier la commande de ${order.contactName}`}
@@ -326,6 +337,10 @@ function OrderEntry({
           </TableBody>
         </Table>
 
+        {order.kind === "client" ? (
+          <OrderPreparationDetails preparation={preparation} />
+        ) : null}
+
         {order.notes ? (
           <Alert className="border-primary/25 bg-primary/[0.03]">
             <MessageSquareText aria-hidden="true" />
@@ -346,7 +361,7 @@ function OrderEntry({
         </div>
         <div className="text-right">
           <p className="text-[0.65rem] tracking-wider text-muted-foreground uppercase">
-            Total
+            Total convenu
           </p>
           <p className="font-display text-xl">
             {total === undefined ? "À convenir" : formatSeptims(total)}

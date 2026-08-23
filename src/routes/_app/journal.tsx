@@ -259,18 +259,20 @@ function JournalRow({
         <span className="block truncate font-semibold">
           {transaction.productName}
         </span>
-        {transaction.counterparty ? (
+        {transaction.counterparty && !transaction.orderId ? (
           <span className="block truncate text-xs text-muted-foreground">
             {transaction.counterparty}
           </span>
         ) : null}
-        <TransactionLines lines={transaction.lines} />
+        {transaction.orderId ? null : (
+          <TransactionLines lines={transaction.lines} />
+        )}
       </TableCell>
       <TableCell className="max-w-40 truncate text-muted-foreground">
         {transaction.actorName}
       </TableCell>
       <TableCell className="text-right">
-        {formatNumber(transaction.quantity)}
+        {transaction.orderId ? "—" : formatNumber(transaction.quantity)}
       </TableCell>
       <TableCell
         className={cn(
@@ -316,7 +318,9 @@ function JournalCard({
         </CardTitle>
         <CardDescription>
           {transaction.actorName}
-          {transaction.counterparty ? ` · ${transaction.counterparty}` : ""}
+          {transaction.counterparty && !transaction.orderId
+            ? ` · ${transaction.counterparty}`
+            : ""}
         </CardDescription>
         <CardAction className="flex items-center gap-1">
           <OperationPill kind={transaction.kind} />
@@ -328,9 +332,11 @@ function JournalCard({
             <time className="text-xs text-muted-foreground">
               {formatDate(transaction.occurredAt)}
             </time>
-            <p className="mt-1 text-xs text-muted-foreground">
-              {formatQuantity(transaction.quantity)}
-            </p>
+            {transaction.orderId ? null : (
+              <p className="mt-1 text-xs text-muted-foreground">
+                {formatQuantity(transaction.quantity)}
+              </p>
+            )}
           </div>
           <p
             className={cn(
@@ -342,7 +348,9 @@ function JournalCard({
             {formatSeptims(transaction.total)}
           </p>
         </div>
-        <TransactionLines lines={transaction.lines} />
+        {transaction.orderId ? null : (
+          <TransactionLines lines={transaction.lines} />
+        )}
         {transaction.canManage || transaction.canDelete ? (
           <TransactionActions
             bundles={bundles}

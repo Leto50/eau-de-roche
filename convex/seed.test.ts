@@ -39,6 +39,7 @@ describe("seed.importWorkbook", () => {
       bundleItems: await ctx.db.query("bundleItems").collect(),
       lines: await ctx.db.query("transactionLines").collect(),
       orderLines: await ctx.db.query("orderLines").collect(),
+      orders: await ctx.db.query("orders").collect(),
       products: await ctx.db.query("products").collect(),
       transactions: await ctx.db.query("transactions").collect(),
     }))
@@ -70,6 +71,23 @@ describe("seed.importWorkbook", () => {
     expect(state.orderLines.every((line) => line.productId)).toBe(true)
     for (const transaction of state.transactions) {
       if (["adjustment", "production"].includes(transaction.kind)) continue
+      const linkedOrder = transaction.orderId
+        ? state.orders.find((order) => order._id === transaction.orderId)
+        : undefined
+      if (linkedOrder) {
+        expect(transaction.discount, transaction.legacyKey).toBeUndefined()
+        expect(transaction.productName, transaction.legacyKey).toBe(
+          linkedOrder.kind === "client"
+            ? `Commande de ${linkedOrder.contactName}`
+            : `Commande auprès de ${linkedOrder.contactName}`
+        )
+        expect(transaction.total, transaction.legacyKey).toBe(
+          linkedOrder.kind === "client"
+            ? linkedOrder.total
+            : -(linkedOrder.total ?? 0)
+        )
+        continue
+      }
       const lines = state.lines.filter(
         (line) => line.transactionId === transaction._id
       )

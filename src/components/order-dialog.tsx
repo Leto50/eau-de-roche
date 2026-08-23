@@ -18,6 +18,7 @@ import {
 import { toast } from "sonner"
 
 import { PriceInput } from "@/components/price-input"
+import { OrderPreparationDetails } from "@/components/order-preparation-details"
 import { ProductPicker } from "@/components/product-picker"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import {
@@ -32,6 +33,7 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog"
 import { Button } from "@/components/ui/button"
+import { Card, CardContent } from "@/components/ui/card"
 import {
   Dialog,
   DialogContent,
@@ -42,6 +44,12 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
+import {
+  InputGroup,
+  InputGroupAddon,
+  InputGroupInput,
+  InputGroupText,
+} from "@/components/ui/input-group"
 import { Label } from "@/components/ui/label"
 import {
   Select,
@@ -55,6 +63,7 @@ import { Textarea } from "@/components/ui/textarea"
 import { api } from "../../convex/_generated/api"
 import { type Doc } from "../../convex/_generated/dataModel"
 import { formatSeptims, orderStatusLabels } from "@/lib/format"
+import { calculateOrderPreparation } from "@/lib/order-preparation"
 import {
   priceDraftFromValue,
   priceDraftToValue,
@@ -63,6 +72,7 @@ import {
 } from "@/lib/prices"
 
 type Order = FunctionReturnType<typeof api.orders.list>[number]
+type Recipe = FunctionReturnType<typeof api.recipes.list>[number]
 type OrderKind = Order["kind"]
 type OrderStatus = Order["status"]
 
@@ -104,12 +114,14 @@ export function OrderDialog({
   isAdmin,
   order,
   products,
+  recipes,
   trigger,
 }: Readonly<{
   initialKind?: OrderKind
   isAdmin: boolean
   order?: Order
   products: readonly Doc<"products">[]
+  recipes: readonly Recipe[]
   trigger?: ReactElement
 }>) {
   const saveOrder = useMutation(api.orders.save)
@@ -119,9 +131,8 @@ export function OrderDialog({
   const [open, setOpen] = useState(false)
   const [kind, setKind] = useState<OrderKind>(initialKind)
   const [contactName, setContactName] = useState("")
-  const [discount, setDiscount] = useState<PriceDraft>(
-    priceDraftFromValue(undefined)
-  )
+  const [agreedTotal, setAgreedTotal] = useState("")
+  const [totalOverridden, setTotalOverridden] = useState(false)
   const [dueDate, setDueDate] = useState("")
   const [notes, setNotes] = useState("")
   const [status, setStatus] = useState<OrderStatus>("open")
@@ -138,7 +149,8 @@ export function OrderDialog({
   function resetForm() {
     setKind(order?.kind ?? initialKind)
     setContactName(order?.contactName ?? "")
-    setDiscount(priceDraftFromValue(order?.discount))
+    setAgreedTotal(order?.total?.toString() ?? "")
+    setTotalOverridden(order?.total !== undefined)
     setDueDate(dateInputFromTimestamp(order?.dueAt))
     setNotes(order?.notes ?? "")
     setStatus(order?.status ?? "open")
@@ -208,25 +220,34 @@ export function OrderDialog({
     quantity: Number(line.quantity),
     unitPrice: priceDraftToValue(line.unitPrice),
   }))
-  const discountValue =
-    kind === "client" ? (priceDraftToValue(discount) ?? 0) : 0
   const gross = lineValues.reduce(
     (sum, line) => sum + line.quantity * (line.unitPrice ?? 0),
     0
   )
-  const previewTotal =
-    lineValues.every(
-      (line) =>
-        Number.isFinite(line.quantity) &&
-        line.quantity > 0 &&
-        line.unitPrice !== null &&
-        Number.isFinite(line.unitPrice)
-    ) &&
-    Number.isFinite(discountValue) &&
-    discountValue >= 0 &&
-    discountValue <= gross
-      ? roundSeptimsDown(gross - discountValue)
-      : undefined
+  const automaticTotal = lineValues.every(
+    (line) =>
+      Number.isFinite(line.quantity) &&
+      line.quantity > 0 &&
+      line.unitPrice !== null &&
+      Number.isFinite(line.unitPrice)
+  )
+    ? roundSeptimsDown(gross)
+    : undefined
+  const displayedTotal = totalOverridden
+    ? agreedTotal
+    : (automaticTotal?.toString() ?? "")
+  const agreedTotalValue = displayedTotal.trim() ? Number(displayedTotal) : null
+  const preparation = calculateOrderPreparation(
+    lines.map((line) => ({
+      productId: line.productId || undefined,
+      productName:
+        products.find((product) => product._id === line.productId)?.name ??
+        "Référence non choisie",
+      quantity: Number(line.quantity),
+    })),
+    products,
+    recipes
+  )
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -276,11 +297,10 @@ export function OrderDialog({
       return
     }
     if (
-      !Number.isFinite(discountValue) ||
-      discountValue < 0 ||
-      discountValue > gross
+      agreedTotalValue !== null &&
+      (!Number.isSafeInteger(agreedTotalValue) || agreedTotalValue < 0)
     ) {
-      toast.error("La remise doit être comprise dans le total de la commande.")
+      toast.error("Le total convenu doit être un nombre entier de septims.")
       return
     }
     const productIds = preparedLines.flatMap((line) =>
@@ -295,7 +315,6 @@ export function OrderDialog({
     try {
       await saveOrder({
         contactName: contactName.trim(),
-        discount: discountValue,
         dueAt: submittedDueAt,
         kind,
         lines: preparedLines.flatMap((line) =>
@@ -312,6 +331,7 @@ export function OrderDialog({
         notes: notes.trim(),
         ...(order ? { orderId: order._id } : {}),
         status,
+        total: agreedTotalValue,
       })
       toast.success(
         order?.transactionId
@@ -540,6 +560,13 @@ export function OrderDialog({
             ))}
           </div>
 
+          {kind === "client" ? (
+            <OrderPreparationDetails
+              defaultOpen={!order}
+              preparation={preparation}
+            />
+          ) : null}
+
           <div className="grid gap-2">
             <Label htmlFor={`${fieldId}-notes`}>Notes</Label>
             <Textarea
@@ -551,34 +578,61 @@ export function OrderDialog({
             />
           </div>
 
-          <div className="grid gap-4 border-y border-border/70 py-4 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
-            {kind === "client" ? (
-              <div className="grid min-w-0 gap-2">
-                <Label htmlFor={`${fieldId}-discount`}>
-                  Remise sur la commande
-                </Label>
-                <PriceInput
-                  id={`${fieldId}-discount`}
-                  onValueChange={setDiscount}
-                  value={discount}
-                />
+          <Card className="gap-0 rounded-none border-primary/25 bg-primary/[0.035] py-0 ring-0">
+            <CardContent className="grid gap-4 p-3 sm:grid-cols-[minmax(0,1fr)_minmax(13rem,0.8fr)] sm:items-end">
+              <div>
+                <p className="text-[0.65rem] tracking-wider text-muted-foreground uppercase">
+                  Total des lignes
+                </p>
+                <p className="mt-1 font-display text-xl">
+                  {automaticTotal === undefined
+                    ? "À calculer"
+                    : formatSeptims(automaticTotal)}
+                </p>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Base indicative avant négociation du montant final.
+                </p>
               </div>
-            ) : (
-              <p className="text-xs text-muted-foreground">
-                Le total est arrondi au septim inférieur.
-              </p>
-            )}
-            <div className="text-right">
-              <p className="text-[0.65rem] tracking-wider text-muted-foreground uppercase">
-                Total après remise
-              </p>
-              <p className="font-display text-xl">
-                {previewTotal === undefined
-                  ? "À convenir"
-                  : formatSeptims(previewTotal)}
-              </p>
-            </div>
-          </div>
+              <div className="grid min-w-0 gap-2">
+                <div className="flex items-center justify-between gap-2">
+                  <Label htmlFor={`${fieldId}-agreed-total`}>
+                    Total convenu
+                  </Label>
+                  {totalOverridden && automaticTotal !== undefined ? (
+                    <Button
+                      className="h-auto px-1 py-0 text-xs"
+                      onClick={() => {
+                        setAgreedTotal("")
+                        setTotalOverridden(false)
+                      }}
+                      type="button"
+                      variant="link"
+                    >
+                      <RefreshCw aria-hidden="true" />
+                      Reprendre le calcul
+                    </Button>
+                  ) : null}
+                </div>
+                <InputGroup className="bg-background/50">
+                  <InputGroupInput
+                    id={`${fieldId}-agreed-total`}
+                    min="0"
+                    onChange={(event) => {
+                      setAgreedTotal(event.target.value)
+                      setTotalOverridden(true)
+                    }}
+                    placeholder="À convenir"
+                    step="1"
+                    type="number"
+                    value={displayedTotal}
+                  />
+                  <InputGroupAddon align="inline-end">
+                    <InputGroupText>septims</InputGroupText>
+                  </InputGroupAddon>
+                </InputGroup>
+              </div>
+            </CardContent>
+          </Card>
 
           <DialogFooter className="gap-2 sm:justify-between">
             <div>

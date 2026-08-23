@@ -13,6 +13,7 @@ import {
   assertWholeNumberRange,
   roundSeptimsDown,
 } from "./lib/numbers"
+import { orderTransactionLabel, withOrderTotal } from "./lib/order"
 import { normalizeName } from "./lib/text"
 import { orderKind, orderStatus } from "./lib/validators"
 
@@ -79,9 +80,10 @@ async function synchronizeLinkedTransaction(
   ctx: MutationCtx,
   transaction: Doc<"transactions">,
   orderId: Id<"orders">,
+  orderKind: Doc<"orders">["kind"],
   contactName: string,
   exchangeLines: readonly Infer<typeof exchangeLineValidator>[],
-  discount: number
+  total: number
 ) {
   const { movements, states } = await loadStockBeforeTransaction(
     ctx,
@@ -90,10 +92,11 @@ async function synchronizeLinkedTransaction(
   const baseStocks = new Map(
     [...states].map(([productId, state]) => [productId, state.baseStock])
   )
-  const prepared = await prepareExchange(ctx, exchangeLines, {
-    baseStocks,
-    discount,
-  })
+  const prepared = withOrderTotal(
+    await prepareExchange(ctx, exchangeLines, { baseStocks }),
+    orderKind,
+    total
+  )
   const oldLines = await ctx.db
     .query("transactionLines")
     .withIndex("by_transaction", (index) =>
@@ -128,7 +131,6 @@ async function synchronizeLinkedTransaction(
       : {}),
     ...(transaction.comment ? { comment: transaction.comment } : {}),
     counterparty: contactName,
-    ...(discount > 0 ? { discount } : {}),
     incomingTotal: prepared.incomingTotal,
     kind: prepared.kind,
     ...(transaction.legacyKey ? { legacyKey: transaction.legacyKey } : {}),
@@ -139,10 +141,7 @@ async function synchronizeLinkedTransaction(
     ...(prepared.lines.length === 1 && firstLine?.productId
       ? { productId: firstLine.productId }
       : {}),
-    productName:
-      prepared.lines.length === 1 && firstLine
-        ? firstLine.productName
-        : `${prepared.lines.length} références`,
+    productName: orderTransactionLabel(orderKind, contactName),
     quantity: prepared.lines.reduce((sum, line) => sum + line.quantity, 0),
     source: transaction.source,
     total: prepared.total,
@@ -210,7 +209,6 @@ export const list = query({
 export const save = mutation({
   args: {
     contactName: v.string(),
-    discount: v.optional(v.number()),
     dueAt: v.union(v.number(), v.null()),
     kind: orderKind,
     lines: v.array(
@@ -223,6 +221,7 @@ export const save = mutation({
     notes: v.string(),
     orderId: v.optional(v.id("orders")),
     status: orderStatus,
+    total: v.union(v.number(), v.null()),
   },
   handler: async (ctx, args) => {
     const user = await requireUser(ctx)
@@ -344,35 +343,18 @@ export const save = mutation({
         unitPrice: number
       } => line.total !== undefined
     )
-    const discount = args.discount ?? 0
-    assertFiniteRange(discount, 0, MAX_PRICE, "La remise")
-    if (args.kind === "supplier" && discount > 0) {
-      throw new ConvexError({
-        code: "INVALID_INPUT",
-        message: "Une remise de commande s’applique uniquement à une vente.",
-      })
-    }
     const gross = pricedLines.reduce((sum, line) => sum + line.total, 0)
-    if (discount > 0 && pricedLines.length !== preparedLines.length) {
-      throw new ConvexError({
-        code: "ORDER_PRICE_REQUIRED",
-        message: "Renseignez tous les prix avant d’appliquer une remise.",
-      })
+    if (args.total !== null) {
+      assertWholeNumberRange(args.total, 0, MAX_PRICE, "Le total convenu")
     }
-    if (discount > gross) {
-      throw new ConvexError({
-        code: "INVALID_INPUT",
-        message: "La remise ne peut pas dépasser le montant de la commande.",
-      })
-    }
-    const total =
+    const automaticTotal =
       pricedLines.length === preparedLines.length
-        ? roundSeptimsDown(gross - discount)
+        ? roundSeptimsDown(gross)
         : undefined
+    const total = args.total ?? automaticTotal
     const details = {
       contactId,
       contactName,
-      ...(discount > 0 ? { discount } : {}),
       ...(args.dueAt === null ? {} : { dueAt: args.dueAt }),
       kind: args.kind,
       ...(existing?.legacyKey ? { legacyKey: existing.legacyKey } : {}),
@@ -406,14 +388,22 @@ export const save = mutation({
     )
     let synchronizedTotal: number | undefined
     if (linkedTransaction) {
+      if (total === undefined) {
+        throw new ConvexError({
+          code: "ORDER_PRICE_REQUIRED",
+          message:
+            "Renseignez le total convenu avant de corriger cette commande.",
+        })
+      }
       const exchangeLines = exchangeLinesFromOrder(args.kind, preparedLines)
       const synchronized = await synchronizeLinkedTransaction(
         ctx,
         linkedTransaction,
         orderId,
+        args.kind,
         contactName,
         exchangeLines,
-        discount
+        total
       )
       synchronizedTotal = synchronized.total
     }
@@ -580,26 +570,23 @@ export const process = mutation({
       })
     }
     const exchangeLines = exchangeLinesFromOrder(order.kind, orderLines)
-    const prepared = await prepareExchange(ctx, exchangeLines, {
-      discount: order.discount,
-    })
+    const preparedFromLines = await prepareExchange(ctx, exchangeLines)
+    const agreedTotal = order.total ?? Math.abs(preparedFromLines.total)
+    assertWholeNumberRange(agreedTotal, 0, MAX_PRICE, "Le total convenu")
+    const prepared = withOrderTotal(preparedFromLines, order.kind, agreedTotal)
     const firstLine = prepared.lines[0]
     const transactionId = await ctx.db.insert("transactions", {
       actorCharacterId: character._id,
       actorName: character.name,
       actorUserId: String(user._id),
       counterparty: order.contactName,
-      ...(order.discount ? { discount: order.discount } : {}),
       incomingTotal: prepared.incomingTotal,
       kind: prepared.kind,
       lineCount: prepared.lines.length,
       occurredAt: args.occurredAt,
       orderId: order._id,
       outgoingTotal: prepared.outgoingTotal,
-      productName:
-        prepared.lines.length === 1 && firstLine
-          ? firstLine.productName
-          : `${prepared.lines.length} références`,
+      productName: orderTransactionLabel(order.kind, order.contactName),
       quantity: prepared.lines.reduce((sum, line) => sum + line.quantity, 0),
       source: "web",
       total: prepared.total,
@@ -634,7 +621,6 @@ export const process = mutation({
       })
     }
     await ctx.db.patch(order._id, {
-      ...(order.discount ? { discount: order.discount } : {}),
       processedAt: args.occurredAt,
       ...(order.kind === "supplier" ? { status: "delivered" as const } : {}),
       transactionId,

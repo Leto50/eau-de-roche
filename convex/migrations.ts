@@ -3,9 +3,10 @@ import { ConvexError } from "convex/values"
 import { type Doc, type Id } from "./_generated/dataModel"
 import { internalMutation, type MutationCtx } from "./_generated/server"
 import { roundSeptimsDown } from "./lib/numbers"
+import { orderTransactionLabel } from "./lib/order"
 import { normalizeName } from "./lib/text"
 
-const EXCHANGE_MIGRATION_KEY = "exchange-model-v4"
+const EXCHANGE_MIGRATION_KEY = "exchange-model-v5"
 
 const productAliases: Readonly<Record<string, string>> = {
   "breuvage de vigueur amelioree": "breuvage vigueur amelioree",
@@ -424,19 +425,24 @@ export async function convertLegacyOperationsData(ctx: MutationCtx) {
         })
       )
       await ctx.db.patch(transaction._id, {
-        discount: discount > 0 ? discount : undefined,
+        discount: !linkedOrder && discount > 0 ? discount : undefined,
         incomingTotal:
           direction === "incoming" ? Math.abs(transaction.total) : 0,
         outgoingTotal:
           direction === "outgoing" ? Math.abs(transaction.total) : 0,
+        ...(linkedOrder
+          ? {
+              productName: orderTransactionLabel(
+                linkedOrder.kind,
+                linkedOrder.contactName
+              ),
+            }
+          : {}),
       })
       if (linkedOrder) {
         await ctx.db.patch(transaction._id, { orderId: linkedOrder._id })
         await ctx.db.patch(linkedOrder._id, {
-          discount:
-            linkedOrder.kind === "client" && discount > 0
-              ? discount
-              : undefined,
+          discount: undefined,
           processedAt: transaction.occurredAt,
           ...(linkedOrder.kind === "supplier"
             ? { status: "delivered" as const }
@@ -474,7 +480,7 @@ export async function convertLegacyOperationsData(ctx: MutationCtx) {
 
     const firstLine = lines[0]
     await ctx.db.patch(transaction._id, {
-      discount: discount > 0 ? discount : undefined,
+      discount: !linkedOrder && discount > 0 ? discount : undefined,
       incomingTotal: direction === "incoming" ? absoluteTotal : 0,
       kind: direction === "incoming" ? "purchase" : "sale",
       lineCount: lines.length,
@@ -483,8 +489,9 @@ export async function convertLegacyOperationsData(ctx: MutationCtx) {
       ...(lines.length === 1 && firstLine?.productId
         ? { productId: firstLine.productId }
         : {}),
-      productName:
-        lines.length === 1 && firstLine
+      productName: linkedOrder
+        ? orderTransactionLabel(linkedOrder.kind, linkedOrder.contactName)
+        : lines.length === 1 && firstLine
           ? firstLine.productName
           : `${lines.length} références`,
       quantity: lines.reduce((sum, line) => sum + line.quantity, 0),
@@ -494,8 +501,7 @@ export async function convertLegacyOperationsData(ctx: MutationCtx) {
     })
     if (linkedOrder) {
       await ctx.db.patch(linkedOrder._id, {
-        discount:
-          linkedOrder.kind === "client" && discount > 0 ? discount : undefined,
+        discount: undefined,
         processedAt: transaction.occurredAt,
         ...(linkedOrder.kind === "supplier"
           ? { status: "delivered" as const }
@@ -541,6 +547,26 @@ export async function convertLegacyOperationsData(ctx: MutationCtx) {
     convertedTransactions += 1
   }
 
+  let normalizedOrders = 0
+  const ordersAfterConversion = await ctx.db.query("orders").collect()
+  for (const order of ordersAfterConversion) {
+    if (!order.transactionId) continue
+    const transaction = await ctx.db.get(order.transactionId)
+    if (transaction?.orderId !== order._id) continue
+    const total = order.total ?? Math.abs(transaction.total)
+    await ctx.db.patch(order._id, { discount: undefined, total })
+    await ctx.db.patch(transaction._id, {
+      counterparty: order.contactName,
+      discount: undefined,
+      incomingTotal: order.kind === "supplier" ? total : 0,
+      kind: order.kind === "supplier" ? "purchase" : "sale",
+      outgoingTotal: order.kind === "client" ? total : 0,
+      productName: orderTransactionLabel(order.kind, order.contactName),
+      total: order.kind === "client" ? total : -total,
+    })
+    normalizedOrders += 1
+  }
+
   const productsAfter = await ctx.db.query("products").collect()
   for (const product of productsAfter) {
     const initialStock = initialStocks.get(product._id)
@@ -558,6 +584,7 @@ export async function convertLegacyOperationsData(ctx: MutationCtx) {
     insertedMovements,
     linkedBundleItems,
     linkedOrderLines,
+    normalizedOrders,
   }
   await ctx.db.insert("systemSettings", {
     key: EXCHANGE_MIGRATION_KEY,

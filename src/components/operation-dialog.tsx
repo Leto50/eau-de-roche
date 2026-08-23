@@ -458,7 +458,7 @@ function TradeCart({
             : "Produits reçus du client ou du fournisseur."}
         </CardDescription>
       </CardHeader>
-      <CardContent className="grid gap-3 p-4">
+      <CardContent className="grid min-w-0 grid-cols-[minmax(0,1fr)] gap-3 p-4">
         <TradeReferencePicker
           bundles={bundles}
           direction={direction}
@@ -502,7 +502,7 @@ function TradeCart({
                       <Trash2 aria-hidden="true" />
                     </Button>
                   </div>
-                  <div className="grid grid-cols-[5.5rem_minmax(0,1fr)] gap-3">
+                  <div className="grid gap-3 sm:grid-cols-[5.5rem_minmax(0,1fr)]">
                     <div className="grid gap-1.5">
                       <Label htmlFor={`${inputPrefix}-quantity`}>
                         Quantité
@@ -568,11 +568,13 @@ export function OperationDialog({
   const formId = useId()
   const productionMode =
     transaction?.kind === "production" || initialKind === "production"
+  const linkedOrderMode = Boolean(transaction?.orderId)
   const [open, setOpen] = useState(false)
   const [productId, setProductId] = useState("")
   const [characterId, setCharacterId] = useState("")
   const [quantity, setQuantity] = useState("1")
   const [tradeLines, setTradeLines] = useState<TradeLine[]>([])
+  const [agreedTotal, setAgreedTotal] = useState("")
   const [discount, setDiscount] = useState("")
   const [counterparty, setCounterparty] = useState("")
   const [comment, setComment] = useState("")
@@ -601,6 +603,10 @@ export function OperationDialog({
     Number.isFinite(parsedQuantity) && parsedQuantity > 0 ? parsedQuantity : 0
   const parsedDiscount = discount.trim() ? Number(discount) : 0
   const previewDiscount = Number.isFinite(parsedDiscount) ? parsedDiscount : 0
+  const parsedAgreedTotal = Number(agreedTotal)
+  const previewAgreedTotal = Number.isSafeInteger(parsedAgreedTotal)
+    ? parsedAgreedTotal
+    : 0
 
   function lineTotal(line: TradeLine): number {
     const quantityValue = Number(line.quantity)
@@ -624,17 +630,28 @@ export function OperationDialog({
   const incomingGross = tradeLines
     .filter((line) => line.direction === "incoming")
     .reduce((sum, line) => sum + lineTotal(line), 0)
-  const outgoingTotal = roundSeptimsDown(
-    Math.max(0, outgoingGross - previewDiscount)
+  const hasOutgoingLines = tradeLines.some(
+    (line) => line.direction === "outgoing"
   )
-  const incomingTotal = roundSeptimsDown(incomingGross)
+  const hasIncomingLines = tradeLines.some(
+    (line) => line.direction === "incoming"
+  )
+  const outgoingTotal =
+    linkedOrderMode && hasOutgoingLines
+      ? previewAgreedTotal
+      : roundSeptimsDown(Math.max(0, outgoingGross - previewDiscount))
+  const incomingTotal =
+    linkedOrderMode && hasIncomingLines
+      ? previewAgreedTotal
+      : roundSeptimsDown(incomingGross)
   const netTotal = outgoingTotal - incomingTotal
   const roundingTolerance =
     Number.EPSILON * Math.max(1, outgoingGross, incomingGross) * 8
   const isPreviewRounded =
-    Math.abs(outgoingTotal - (outgoingGross - previewDiscount)) >
+    !linkedOrderMode &&
+    (Math.abs(outgoingTotal - (outgoingGross - previewDiscount)) >
       roundingTolerance ||
-    Math.abs(incomingTotal - incomingGross) > roundingTolerance
+      Math.abs(incomingTotal - incomingGross) > roundingTolerance)
 
   const stockDeltas = new Map<string, number>()
   for (const line of tradeLines) {
@@ -669,6 +686,9 @@ export function OperationDialog({
     !Number.isFinite(parsedDiscount) ||
     parsedDiscount < 0 ||
     parsedDiscount > outgoingGross
+  const invalidAgreedTotal =
+    linkedOrderMode &&
+    (!Number.isSafeInteger(parsedAgreedTotal) || parsedAgreedTotal < 0)
 
   function resetForm() {
     setProductId(transaction?.productId ?? "")
@@ -708,6 +728,9 @@ export function OperationDialog({
           ]
         : []
     setTradeLines(existingLines?.length ? existingLines : legacyLine)
+    setAgreedTotal(
+      transaction?.orderId ? Math.abs(transaction.total).toString() : ""
+    )
     setDiscount(transaction?.discount?.toString() ?? "")
     setCounterparty(transaction?.counterparty ?? "")
     setComment(transaction?.comment ?? "")
@@ -834,15 +857,22 @@ export function OperationDialog({
           toast.error("Ajoutez au moins une ligne et vérifiez ses valeurs.")
           return
         }
-        if (invalidDiscount) {
+        if (invalidAgreedTotal) {
+          toast.error("Le total convenu doit être un nombre entier de septims.")
+          return
+        }
+        if (!linkedOrderMode && invalidDiscount) {
           toast.error("La remise doit rester comprise dans le total vendu.")
           return
         }
         const args = {
+          ...(linkedOrderMode ? { agreedTotal: parsedAgreedTotal } : {}),
           characterId: character._id,
           ...(comment.trim() ? { comment } : {}),
           ...(counterparty.trim() ? { counterparty } : {}),
-          ...(parsedDiscount > 0 ? { discount: parsedDiscount } : {}),
+          ...(!linkedOrderMode && parsedDiscount > 0
+            ? { discount: parsedDiscount }
+            : {}),
           lines,
           occurredAt,
         }
@@ -876,7 +906,9 @@ export function OperationDialog({
       ? "Modifier la production"
       : "Enregistrer une production"
     : transaction
-      ? "Modifier l’échange"
+      ? linkedOrderMode
+        ? "Modifier la transaction de commande"
+        : "Modifier l’échange"
       : "Enregistrer un échange"
   const submitLabel =
     netTotal > 0
@@ -1068,7 +1100,9 @@ export function OperationDialog({
               >
                 {productionMode
                   ? "Date et détails facultatifs"
-                  : "Date, remise et détails facultatifs"}
+                  : linkedOrderMode
+                    ? "Date, total convenu et détails"
+                    : "Date, remise et détails facultatifs"}
                 <ChevronDown
                   aria-hidden="true"
                   className={cn(
@@ -1087,17 +1121,25 @@ export function OperationDialog({
               >
                 {!productionMode ? (
                   <div className="grid gap-2">
-                    <Label htmlFor={`${formId}-discount`}>
-                      Remise sur ce qui est vendu
+                    <Label
+                      htmlFor={`${formId}-${linkedOrderMode ? "agreed-total" : "discount"}`}
+                    >
+                      {linkedOrderMode
+                        ? "Total convenu de la commande"
+                        : "Remise sur ce qui est vendu"}
                     </Label>
                     <Input
-                      id={`${formId}-discount`}
+                      id={`${formId}-${linkedOrderMode ? "agreed-total" : "discount"}`}
                       min="0"
-                      onChange={(event) => setDiscount(event.target.value)}
+                      onChange={(event) =>
+                        linkedOrderMode
+                          ? setAgreedTotal(event.target.value)
+                          : setDiscount(event.target.value)
+                      }
                       placeholder="0"
-                      step="any"
+                      step={linkedOrderMode ? "1" : "any"}
                       type="number"
-                      value={discount}
+                      value={linkedOrderMode ? agreedTotal : discount}
                     />
                   </div>
                 ) : null}
@@ -1157,7 +1199,9 @@ export function OperationDialog({
                 isSubmitting ||
                 insufficientProducts.length > 0 ||
                 (!productionMode &&
-                  (tradeLines.length === 0 || invalidDiscount))
+                  (tradeLines.length === 0 ||
+                    invalidAgreedTotal ||
+                    (!linkedOrderMode && invalidDiscount)))
               }
               type="submit"
             >
