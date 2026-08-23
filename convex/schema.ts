@@ -100,6 +100,7 @@ export default defineSchema({
   orders: defineTable({
     contactId: v.optional(v.id("contacts")),
     contactName: v.string(),
+    discount: v.optional(v.number()),
     dueAt: v.optional(v.number()),
     dueLabel: v.optional(v.string()),
     kind: orderKind,

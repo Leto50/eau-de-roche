@@ -285,22 +285,20 @@ function OrderEntry({
               ))}
             </SelectContent>
           </Select>
-          {order.transactionId ? null : (
-            <OrderDialog
-              isAdmin={isAdmin}
-              order={order}
-              products={products}
-              trigger={
-                <Button
-                  aria-label={`Modifier la commande de ${order.contactName}`}
-                  size="icon"
-                  variant="ghost"
-                >
-                  <Pencil aria-hidden="true" />
-                </Button>
-              }
-            />
-          )}
+          <OrderDialog
+            isAdmin={isAdmin}
+            order={order}
+            products={products}
+            trigger={
+              <Button
+                aria-label={`Modifier la commande de ${order.contactName}`}
+                size="icon"
+                variant="ghost"
+              >
+                <Pencil aria-hidden="true" />
+              </Button>
+            }
+          />
         </CardAction>
       </CardHeader>
 
@@ -367,6 +365,14 @@ function todayInputValue(): string {
   return `${year}-${month}-${day}`
 }
 
+function dateInputFromTimestamp(timestamp: number): string {
+  const date = new Date(timestamp)
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, "0")
+  const day = String(date.getDate()).padStart(2, "0")
+  return `${year}-${month}-${day}`
+}
+
 function dateInputToTimestamp(value: string): number | undefined {
   const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value)
   if (!match) return undefined
@@ -392,14 +398,18 @@ function OrderProcessingDialog({
   const [occurredOn, setOccurredOn] = useState(todayInputValue)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const clientOrder = order.kind === "client"
+  const processed = Boolean(order.transactionId && order.processedAt)
 
-  if (order.transactionId && order.processedAt) {
-    return (
-      <Badge variant="secondary">
-        <Check aria-hidden="true" />
-        {clientOrder ? "Payée" : "Reçue"} le {formatDate(order.processedAt)}
-      </Badge>
-    )
+  function handleOpenChange(nextOpen: boolean) {
+    if (nextOpen) {
+      setCharacterId(order.linkedTransaction?.actorCharacterId ?? "")
+      setOccurredOn(
+        order.processedAt
+          ? dateInputFromTimestamp(order.processedAt)
+          : todayInputValue()
+      )
+    }
+    setOpen(nextOpen)
   }
 
   if (order.lines.some((line) => line.unitPrice === undefined)) {
@@ -423,9 +433,13 @@ function OrderProcessingDialog({
         orderId: order._id,
       })
       toast.success(
-        clientOrder
-          ? "Paiement ajouté au journal."
-          : "Réception ajoutée au journal et au stock."
+        processed
+          ? clientOrder
+            ? "Paiement corrigé."
+            : "Réception corrigée."
+          : clientOrder
+            ? "Paiement ajouté au journal."
+            : "Réception ajoutée au journal et au stock."
       )
       setOpen(false)
     } catch (error) {
@@ -440,36 +454,59 @@ function OrderProcessingDialog({
   }
 
   return (
-    <AlertDialog onOpenChange={setOpen} open={open}>
+    <AlertDialog onOpenChange={handleOpenChange} open={open}>
       <AlertDialogTrigger asChild>
-        <Button size="sm" type="button" variant="outline">
-          {clientOrder ? (
+        <Button
+          aria-label={
+            processed
+              ? `${clientOrder ? "Corriger le paiement" : "Corriger la réception"} de ${order.contactName}`
+              : undefined
+          }
+          size="sm"
+          type="button"
+          variant={processed ? "secondary" : "outline"}
+        >
+          {processed ? (
+            <Pencil aria-hidden="true" />
+          ) : clientOrder ? (
             <Coins aria-hidden="true" />
           ) : (
             <PackageCheck aria-hidden="true" />
           )}
-          {clientOrder ? "Enregistrer le paiement" : "Réceptionner"}
+          {processed && order.processedAt
+            ? `${clientOrder ? "Payée" : "Reçue"} le ${formatDate(order.processedAt)}`
+            : clientOrder
+              ? "Enregistrer le paiement"
+              : "Réceptionner"}
         </Button>
       </AlertDialogTrigger>
-      <AlertDialogContent className="border-[#6a5436] bg-[#eee1c7]">
+      <AlertDialogContent className="border-[#6a5436] bg-[#eee1c7]" size="lg">
         <form className="grid gap-5" onSubmit={handleSubmit}>
           <AlertDialogHeader>
             <AlertDialogTitle className="font-display text-2xl">
-              {clientOrder
-                ? "Enregistrer le paiement"
-                : "Réceptionner la commande"}
+              {processed
+                ? clientOrder
+                  ? "Corriger le paiement"
+                  : "Corriger la réception"
+                : clientOrder
+                  ? "Enregistrer le paiement"
+                  : "Réceptionner la commande"}
             </AlertDialogTitle>
             <AlertDialogDescription>
-              Une transaction liée sera inscrite au journal. Sa date peut être
-              différente de la date prévue de la commande.
+              {processed
+                ? "La transaction existante sera corrigée sans créer de doublon."
+                : "Une transaction liée sera inscrite au journal. Sa date peut être différente de la date prévue de la commande."}
             </AlertDialogDescription>
           </AlertDialogHeader>
 
-          <div className="grid gap-4 sm:grid-cols-2">
-            <div className="grid gap-2">
+          <div className="grid gap-4 sm:grid-cols-[minmax(0,1.15fr)_minmax(11rem,0.85fr)]">
+            <div className="grid min-w-0 gap-2">
               <Label htmlFor={`order-character-${order._id}`}>Personnage</Label>
               <Select onValueChange={setCharacterId} value={characterId}>
-                <SelectTrigger id={`order-character-${order._id}`}>
+                <SelectTrigger
+                  className="w-full min-w-0"
+                  id={`order-character-${order._id}`}
+                >
                   <SelectValue placeholder="Qui traite la commande ?" />
                 </SelectTrigger>
                 <SelectContent>
@@ -481,11 +518,12 @@ function OrderProcessingDialog({
                 </SelectContent>
               </Select>
             </div>
-            <div className="grid gap-2">
+            <div className="grid min-w-0 gap-2">
               <Label htmlFor={`order-date-${order._id}`}>
                 {clientOrder ? "Date du paiement" : "Date de réception"}
               </Label>
               <Input
+                className="min-w-0"
                 id={`order-date-${order._id}`}
                 onChange={(event) => setOccurredOn(event.target.value)}
                 required
@@ -508,7 +546,11 @@ function OrderProcessingDialog({
               ) : (
                 <PackageCheck aria-hidden="true" />
               )}
-              {clientOrder ? "Valider le paiement" : "Valider la réception"}
+              {processed
+                ? "Enregistrer la correction"
+                : clientOrder
+                  ? "Valider le paiement"
+                  : "Valider la réception"}
             </Button>
           </AlertDialogFooter>
         </form>

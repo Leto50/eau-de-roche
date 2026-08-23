@@ -1,6 +1,13 @@
 import { useMutation } from "convex/react"
 import { type FunctionReturnType } from "convex/server"
-import { ClipboardPlus, LoaderCircle, Pencil, Plus, Trash2 } from "lucide-react"
+import {
+  ClipboardPlus,
+  LoaderCircle,
+  Pencil,
+  Plus,
+  RefreshCw,
+  Trash2,
+} from "lucide-react"
 import {
   useId,
   useRef,
@@ -12,6 +19,7 @@ import { toast } from "sonner"
 
 import { PriceInput } from "@/components/price-input"
 import { ProductPicker } from "@/components/product-picker"
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import {
   AlertDialog,
   AlertDialogAction,
@@ -111,6 +119,9 @@ export function OrderDialog({
   const [open, setOpen] = useState(false)
   const [kind, setKind] = useState<OrderKind>(initialKind)
   const [contactName, setContactName] = useState("")
+  const [discount, setDiscount] = useState<PriceDraft>(
+    priceDraftFromValue(undefined)
+  )
   const [dueDate, setDueDate] = useState("")
   const [notes, setNotes] = useState("")
   const [status, setStatus] = useState<OrderStatus>("open")
@@ -127,6 +138,7 @@ export function OrderDialog({
   function resetForm() {
     setKind(order?.kind ?? initialKind)
     setContactName(order?.contactName ?? "")
+    setDiscount(priceDraftFromValue(order?.discount))
     setDueDate(dateInputFromTimestamp(order?.dueAt))
     setNotes(order?.notes ?? "")
     setStatus(order?.status ?? "open")
@@ -196,20 +208,25 @@ export function OrderDialog({
     quantity: Number(line.quantity),
     unitPrice: priceDraftToValue(line.unitPrice),
   }))
-  const previewTotal = lineValues.every(
-    (line) =>
-      Number.isFinite(line.quantity) &&
-      line.quantity > 0 &&
-      line.unitPrice !== null &&
-      Number.isFinite(line.unitPrice)
+  const discountValue =
+    kind === "client" ? (priceDraftToValue(discount) ?? 0) : 0
+  const gross = lineValues.reduce(
+    (sum, line) => sum + line.quantity * (line.unitPrice ?? 0),
+    0
   )
-    ? roundSeptimsDown(
-        lineValues.reduce(
-          (sum, line) => sum + line.quantity * (line.unitPrice ?? 0),
-          0
-        )
-      )
-    : undefined
+  const previewTotal =
+    lineValues.every(
+      (line) =>
+        Number.isFinite(line.quantity) &&
+        line.quantity > 0 &&
+        line.unitPrice !== null &&
+        Number.isFinite(line.unitPrice)
+    ) &&
+    Number.isFinite(discountValue) &&
+    discountValue >= 0 &&
+    discountValue <= gross
+      ? roundSeptimsDown(gross - discountValue)
+      : undefined
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -258,6 +275,14 @@ export function OrderDialog({
       )
       return
     }
+    if (
+      !Number.isFinite(discountValue) ||
+      discountValue < 0 ||
+      discountValue > gross
+    ) {
+      toast.error("La remise doit être comprise dans le total de la commande.")
+      return
+    }
     const productIds = preparedLines.flatMap((line) =>
       line.productId ? [line.productId] : []
     )
@@ -270,6 +295,7 @@ export function OrderDialog({
     try {
       await saveOrder({
         contactName: contactName.trim(),
+        discount: discountValue,
         dueAt: submittedDueAt,
         kind,
         lines: preparedLines.flatMap((line) =>
@@ -287,7 +313,13 @@ export function OrderDialog({
         ...(order ? { orderId: order._id } : {}),
         status,
       })
-      toast.success(order ? "Commande mise à jour." : "Commande créée.")
+      toast.success(
+        order?.transactionId
+          ? "Commande, transaction et stock mis à jour."
+          : order
+            ? "Commande mise à jour."
+            : "Commande créée."
+      )
       setOpen(false)
     } catch (error) {
       toast.error(
@@ -337,10 +369,23 @@ export function OrderDialog({
             {order ? "Modifier la commande" : "Créer une commande"}
           </DialogTitle>
           <DialogDescription>
-            Une commande prépare un échange futur et ne modifie pas encore le
-            stock.
+            {order?.transactionId
+              ? "Corrigez la commande sans perdre la transaction déjà associée."
+              : "Une commande prépare un échange futur et ne modifie pas encore le stock."}
           </DialogDescription>
         </DialogHeader>
+
+        {order?.transactionId ? (
+          <Alert className="border-primary/30 bg-primary/[0.04]">
+            <RefreshCw aria-hidden="true" />
+            <AlertTitle>Correction synchronisée</AlertTitle>
+            <AlertDescription>
+              Les lignes, le total, la transaction et le stock seront corrigés
+              ensemble. Le personnage et la date se modifient depuis le bouton
+              de paiement ou de réception de la fiche.
+            </AlertDescription>
+          </Alert>
+        ) : null}
 
         <form className="grid gap-5" onSubmit={handleSubmit}>
           <div className="grid gap-4 sm:grid-cols-2">
@@ -506,20 +551,38 @@ export function OrderDialog({
             />
           </div>
 
-          <div className="flex items-center justify-between gap-4 border-y border-border/70 py-3">
-            <p className="text-xs text-muted-foreground">
-              Le total est arrondi au septim inférieur.
-            </p>
-            <p className="font-display text-xl">
-              {previewTotal === undefined
-                ? "À convenir"
-                : formatSeptims(previewTotal)}
-            </p>
+          <div className="grid gap-4 border-y border-border/70 py-4 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end">
+            {kind === "client" ? (
+              <div className="grid min-w-0 gap-2">
+                <Label htmlFor={`${fieldId}-discount`}>
+                  Remise sur la commande
+                </Label>
+                <PriceInput
+                  id={`${fieldId}-discount`}
+                  onValueChange={setDiscount}
+                  value={discount}
+                />
+              </div>
+            ) : (
+              <p className="text-xs text-muted-foreground">
+                Le total est arrondi au septim inférieur.
+              </p>
+            )}
+            <div className="text-right">
+              <p className="text-[0.65rem] tracking-wider text-muted-foreground uppercase">
+                Total après remise
+              </p>
+              <p className="font-display text-xl">
+                {previewTotal === undefined
+                  ? "À convenir"
+                  : formatSeptims(previewTotal)}
+              </p>
+            </div>
           </div>
 
           <DialogFooter className="gap-2 sm:justify-between">
             <div>
-              {order && isAdmin ? (
+              {order && isAdmin && !order.transactionId ? (
                 <AlertDialog>
                   <AlertDialogTrigger asChild>
                     <Button type="button" variant="ghost">

@@ -50,6 +50,11 @@ export interface PreparedExchangeDelta {
   product: Doc<"products">
 }
 
+export interface TransactionStockState {
+  baseStock: number
+  product: Doc<"products">
+}
+
 export interface PreparedExchange {
   deltas: Map<string, PreparedExchangeDelta>
   incomingTotal: number
@@ -74,6 +79,43 @@ function addDelta(
     delta: (current?.delta ?? 0) + delta,
     product,
   })
+}
+
+export async function loadStockBeforeTransaction(
+  ctx: MutationCtx,
+  transactionId: Id<"transactions">
+) {
+  const movements = await ctx.db
+    .query("stockMovements")
+    .withIndex("by_transaction", (index) =>
+      index.eq("transactionId", transactionId)
+    )
+    .collect()
+  const oldDeltas = new Map<string, number>()
+  for (const movement of movements) {
+    oldDeltas.set(
+      movement.productId,
+      (oldDeltas.get(movement.productId) ?? 0) + movement.delta
+    )
+  }
+
+  const states = new Map<string, TransactionStockState>()
+  await Promise.all(
+    [...oldDeltas].map(async ([productId, oldDelta]) => {
+      const product = await ctx.db.get(productId as Id<"products">)
+      if (!product) {
+        throw new ConvexError({
+          code: "NOT_FOUND",
+          message: "Un produit lié à l’opération est introuvable.",
+        })
+      }
+      states.set(product._id, {
+        baseStock: product.currentStock - oldDelta,
+        product,
+      })
+    })
+  )
+  return { movements, states }
 }
 
 export async function prepareExchange(

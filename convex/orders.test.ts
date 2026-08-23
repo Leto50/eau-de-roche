@@ -117,7 +117,7 @@ describe("orders", () => {
     ).rejects.toThrowError("réservée aux administrateurs")
   })
 
-  it("transforme une commande payée en transaction datée sans doublon", async () => {
+  it("corrige une commande payée, sa transaction et son stock sans doublon", async () => {
     const backend = createTestBackend()
     const employee = await asAuthenticatedUser(backend)
     const productId = await seedOrderProduct(backend)
@@ -127,11 +127,18 @@ describe("orders", () => {
         name: "Caissière test",
       })
     )
+    const correctedCharacterId = await backend.run((ctx) =>
+      ctx.db.insert("characters", {
+        active: true,
+        name: "Responsable correction",
+      })
+    )
     const orderId = await employee.mutation(api.orders.save, {
       contactName: "Client du test",
+      discount: 1 / 4,
       dueAt: null,
       kind: "client",
-      lines: [{ productId, quantity: 4, unitPrice: 1 / 4 }],
+      lines: [{ productId, quantity: 8, unitPrice: 1 / 4 }],
       notes: "",
       status: "ready",
     })
@@ -142,46 +149,156 @@ describe("orders", () => {
       occurredAt,
       orderId,
     })
-    await expect(
-      employee.mutation(api.orders.process, {
-        characterId,
-        occurredAt,
-        orderId,
-      })
-    ).rejects.toThrowError("déjà une transaction")
+    expect(result.updated).toBe(false)
+
+    const correctedPaymentDate = Date.now()
+    const correctedPayment = await employee.mutation(api.orders.process, {
+      characterId: correctedCharacterId,
+      occurredAt: correctedPaymentDate,
+      orderId,
+    })
+    expect(correctedPayment).toMatchObject({
+      transactionId: result.transactionId,
+      updated: true,
+    })
 
     const processed = await backend.run(async (ctx) => ({
       order: await ctx.db.get(orderId),
       product: await ctx.db.get(productId),
+      movements: await ctx.db
+        .query("stockMovements")
+        .withIndex("by_transaction", (index) =>
+          index.eq("transactionId", result.transactionId)
+        )
+        .collect(),
       transaction: await ctx.db.get(result.transactionId),
+      transactions: await ctx.db.query("transactions").collect(),
     }))
     expect(processed.order).toMatchObject({
-      processedAt: occurredAt,
+      processedAt: correctedPaymentDate,
       transactionId: result.transactionId,
     })
-    expect(processed.product?.currentStock).toBe(6)
+    expect(processed.product?.currentStock).toBe(2)
     expect(processed.transaction).toMatchObject({
+      actorCharacterId: correctedCharacterId,
+      discount: 1 / 4,
       orderId,
+      occurredAt: correctedPaymentDate,
+      total: 1,
+    })
+    expect(processed.transactions).toHaveLength(1)
+    expect(processed.movements).toEqual([
+      expect.objectContaining({ occurredAt: correctedPaymentDate }),
+    ])
+
+    await expect(
+      employee.mutation(api.orders.save, {
+        contactName: "Correction impossible",
+        discount: 0,
+        dueAt: null,
+        kind: "client",
+        lines: [{ productId, quantity: 11, unitPrice: 1 / 4 }],
+        notes: "",
+        orderId,
+        status: "ready",
+      })
+    ).rejects.toThrowError("Stock insuffisant")
+    const unchangedAfterFailedCorrection = await backend.run(async (ctx) => ({
+      lines: await ctx.db
+        .query("orderLines")
+        .withIndex("by_order", (index) => index.eq("orderId", orderId))
+        .collect(),
+      order: await ctx.db.get(orderId),
+      product: await ctx.db.get(productId),
+      transaction: await ctx.db.get(result.transactionId),
+    }))
+    expect(unchangedAfterFailedCorrection.order).toMatchObject({
+      contactName: "Client du test",
+      discount: 1 / 4,
+    })
+    expect(unchangedAfterFailedCorrection.lines).toEqual([
+      expect.objectContaining({ quantity: 8 }),
+    ])
+    expect(unchangedAfterFailedCorrection.product?.currentStock).toBe(2)
+    expect(unchangedAfterFailedCorrection.transaction).toMatchObject({
+      discount: 1 / 4,
       total: 1,
     })
 
-    const correctedDate = Date.now()
+    await employee.mutation(api.orders.save, {
+      contactName: "Client corrigé",
+      discount: 1,
+      dueAt: null,
+      kind: "client",
+      lines: [{ productId, quantity: 8, unitPrice: 1 / 4 }],
+      notes: "Quantité corrigée après paiement.",
+      orderId,
+      status: "ready",
+    })
+    const correctedOrderState = await backend.run(async (ctx) => ({
+      lines: await ctx.db
+        .query("transactionLines")
+        .withIndex("by_transaction", (index) =>
+          index.eq("transactionId", result.transactionId)
+        )
+        .collect(),
+      order: await ctx.db.get(orderId),
+      product: await ctx.db.get(productId),
+      transaction: await ctx.db.get(result.transactionId),
+    }))
+    expect(correctedOrderState.order).toMatchObject({
+      contactName: "Client corrigé",
+      discount: 1,
+      processedAt: correctedPaymentDate,
+      total: 1,
+      transactionId: result.transactionId,
+    })
+    expect(correctedOrderState.transaction).toMatchObject({
+      counterparty: "Client corrigé",
+      discount: 1,
+      occurredAt: correctedPaymentDate,
+      total: 1,
+    })
+    expect(correctedOrderState.lines).toEqual([
+      expect.objectContaining({ quantity: 8, total: 2 }),
+    ])
+    expect(correctedOrderState.product?.currentStock).toBe(2)
+
+    const correctedDate = Date.now() - 500
     await employee.mutation(api.transactions.updateExchange, {
-      characterId,
+      characterId: correctedCharacterId,
+      counterparty: "Client corrigé depuis le journal",
+      discount: 1 / 4,
       lines: [
         {
           direction: "outgoing",
           kind: "product",
           productId,
-          quantity: 4,
+          quantity: 5,
           unitPrice: 1 / 4,
         },
       ],
       occurredAt: correctedDate,
       transactionId: result.transactionId,
     })
-    const correctedOrder = await backend.run((ctx) => ctx.db.get(orderId))
-    expect(correctedOrder?.processedAt).toBe(correctedDate)
+    const correctedJournalState = await backend.run(async (ctx) => ({
+      lines: await ctx.db
+        .query("orderLines")
+        .withIndex("by_order", (index) => index.eq("orderId", orderId))
+        .collect(),
+      order: await ctx.db.get(orderId),
+      product: await ctx.db.get(productId),
+    }))
+    expect(correctedJournalState.order).toMatchObject({
+      contactName: "Client corrigé depuis le journal",
+      discount: 1 / 4,
+      processedAt: correctedDate,
+      total: 1,
+    })
+    expect(correctedJournalState.lines).toEqual([
+      expect.objectContaining({ quantity: 5, total: 5 / 4 }),
+    ])
+    expect(correctedJournalState.product?.currentStock).toBe(5)
 
     await employee.mutation(api.transactions.remove, {
       transactionId: result.transactionId,

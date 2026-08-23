@@ -5,7 +5,7 @@ import { internalMutation, type MutationCtx } from "./_generated/server"
 import { roundSeptimsDown } from "./lib/numbers"
 import { normalizeName } from "./lib/text"
 
-const EXCHANGE_MIGRATION_KEY = "exchange-model-v3"
+const EXCHANGE_MIGRATION_KEY = "exchange-model-v4"
 
 const productAliases: Readonly<Record<string, string>> = {
   "breuvage de vigueur amelioree": "breuvage vigueur amelioree",
@@ -433,6 +433,10 @@ export async function convertLegacyOperationsData(ctx: MutationCtx) {
       if (linkedOrder) {
         await ctx.db.patch(transaction._id, { orderId: linkedOrder._id })
         await ctx.db.patch(linkedOrder._id, {
+          discount:
+            linkedOrder.kind === "client" && discount > 0
+              ? discount
+              : undefined,
           processedAt: transaction.occurredAt,
           ...(linkedOrder.kind === "supplier"
             ? { status: "delivered" as const }
@@ -490,6 +494,8 @@ export async function convertLegacyOperationsData(ctx: MutationCtx) {
     })
     if (linkedOrder) {
       await ctx.db.patch(linkedOrder._id, {
+        discount:
+          linkedOrder.kind === "client" && discount > 0 ? discount : undefined,
         processedAt: transaction.occurredAt,
         ...(linkedOrder.kind === "supplier"
           ? { status: "delivered" as const }
