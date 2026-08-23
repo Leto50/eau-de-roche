@@ -1,33 +1,59 @@
 import { ConvexError, v } from "convex/values"
 
-import { type Id } from "./_generated/dataModel"
-import { mutation, query } from "./_generated/server"
+import { type Doc, type Id } from "./_generated/dataModel"
+import { mutation, query, type QueryCtx } from "./_generated/server"
 import { requireAdmin, requireUser } from "./lib/auth"
-import { assertFiniteRange, assertWholeNumberRange } from "./lib/numbers"
-import { normalizeName } from "./lib/text"
+import { assertWholeNumberRange } from "./lib/numbers"
+import { calculateRecipeCost } from "./lib/recipeCost"
 
-const MAX_COST = 1_000_000_000
 const MAX_EFFECT_LENGTH = 500
 const MAX_FAMILY_LENGTH = 60
 const MAX_INGREDIENTS = 50
-const MAX_NAME_LENGTH = 100
 const MAX_QUANTITY = 1_000_000
+
+async function completeRecipe(
+  ctx: QueryCtx,
+  recipe: Doc<"recipes">,
+  productsById: ReadonlyMap<string, Doc<"products">>
+) {
+  const ingredients = await ctx.db
+    .query("recipeIngredients")
+    .withIndex("by_recipe", (index) => index.eq("recipeId", recipe._id))
+    .collect()
+  const product = recipe.productId
+    ? productsById.get(recipe.productId)
+    : undefined
+  const { cost, missingReferences } = calculateRecipeCost(
+    ingredients,
+    productsById
+  )
+  const storedRecipe = { ...recipe }
+  delete storedRecipe.cost
+
+  return {
+    ...storedRecipe,
+    ...(cost === undefined ? {} : { cost }),
+    ingredients,
+    missingCostReferences: missingReferences,
+    name: product?.name ?? recipe.name,
+  }
+}
 
 export const list = query({
   args: {},
   handler: async (ctx) => {
     await requireUser(ctx)
-    const recipes = await ctx.db.query("recipes").collect()
+    const [recipes, products] = await Promise.all([
+      ctx.db.query("recipes").collect(),
+      ctx.db.query("products").collect(),
+    ])
+    const productsById = new Map(
+      products.map((product) => [product._id, product])
+    )
     const withIngredients = await Promise.all(
       recipes
         .filter((recipe) => recipe.active !== false)
-        .map(async (recipe) => ({
-          ...recipe,
-          ingredients: await ctx.db
-            .query("recipeIngredients")
-            .withIndex("by_recipe", (index) => index.eq("recipeId", recipe._id))
-            .collect(),
-        }))
+        .map((recipe) => completeRecipe(ctx, recipe, productsById))
     )
     return withIngredients.sort((left, right) =>
       left.name.localeCompare(right.name, "fr")
@@ -39,16 +65,16 @@ export const listArchived = query({
   args: {},
   handler: async (ctx) => {
     await requireAdmin(ctx)
-    const recipes = await ctx.db.query("recipes").collect()
+    const [recipes, products] = await Promise.all([
+      ctx.db.query("recipes").collect(),
+      ctx.db.query("products").collect(),
+    ])
     const archived = recipes.filter((recipe) => recipe.active === false)
+    const productsById = new Map(
+      products.map((product) => [product._id, product])
+    )
     const withIngredients = await Promise.all(
-      archived.map(async (recipe) => ({
-        ...recipe,
-        ingredients: await ctx.db
-          .query("recipeIngredients")
-          .withIndex("by_recipe", (index) => index.eq("recipeId", recipe._id))
-          .collect(),
-      }))
+      archived.map((recipe) => completeRecipe(ctx, recipe, productsById))
     )
     return withIngredients.sort((left, right) =>
       left.name.localeCompare(right.name, "fr")
@@ -58,7 +84,6 @@ export const listArchived = query({
 
 export const save = mutation({
   args: {
-    cost: v.union(v.number(), v.null()),
     effect: v.string(),
     family: v.string(),
     ingredients: v.array(
@@ -67,21 +92,13 @@ export const save = mutation({
         quantity: v.number(),
       })
     ),
-    name: v.string(),
-    productId: v.union(v.id("products"), v.null()),
+    productId: v.id("products"),
     recipeId: v.optional(v.id("recipes")),
   },
   handler: async (ctx, args) => {
     const user = await requireAdmin(ctx)
-    const name = args.name.trim()
     const family = args.family.trim()
     const effect = args.effect.trim()
-    if (!name || name.length > MAX_NAME_LENGTH) {
-      throw new ConvexError({
-        code: "INVALID_INPUT",
-        message: `Le nom doit contenir entre 1 et ${MAX_NAME_LENGTH} caractères.`,
-      })
-    }
     if (!family || family.length > MAX_FAMILY_LENGTH) {
       throw new ConvexError({
         code: "INVALID_INPUT",
@@ -103,10 +120,6 @@ export const save = mutation({
         message: `Une recette doit contenir entre 1 et ${MAX_INGREDIENTS} ingrédients.`,
       })
     }
-    if (args.cost !== null) {
-      assertFiniteRange(args.cost, 0, MAX_COST, "Le coût")
-    }
-
     const existing = args.recipeId ? await ctx.db.get(args.recipeId) : undefined
     if (args.recipeId && !existing) {
       throw new ConvexError({
@@ -114,33 +127,27 @@ export const save = mutation({
         message: "Recette introuvable.",
       })
     }
-    const normalizedName = normalizeName(name)
+    const linkedProduct = await ctx.db.get(args.productId)
+    if (!linkedProduct?.active || !linkedProduct.tracksStock) {
+      throw new ConvexError({
+        code: "NOT_FOUND",
+        message: "L’article fabriqué est introuvable ou indisponible.",
+      })
+    }
     const recipes = await ctx.db.query("recipes").collect()
     if (
       recipes.some(
         (recipe) =>
-          recipe._id !== args.recipeId &&
-          normalizeName(recipe.name) === normalizedName
+          recipe._id !== args.recipeId && recipe.productId === linkedProduct._id
       )
     ) {
       throw new ConvexError({
         code: "ALREADY_EXISTS",
-        message: "Une recette portant ce nom existe déjà.",
+        message: `Une recette existe déjà pour « ${linkedProduct.name} ».`,
       })
     }
 
-    let linkedProductId: Id<"products"> | undefined
-    if (args.productId !== null) {
-      const linkedProduct = await ctx.db.get(args.productId)
-      if (!linkedProduct?.active) {
-        throw new ConvexError({
-          code: "NOT_FOUND",
-          message: "Le produit fabriqué est introuvable ou indisponible.",
-        })
-      }
-      linkedProductId = linkedProduct._id
-    }
-
+    const ingredientProductsById = new Map<string, Doc<"products">>()
     const seenProducts = new Set<string>()
     const preparedIngredients = await Promise.all(
       args.ingredients.map(async (ingredient) => {
@@ -164,6 +171,13 @@ export const save = mutation({
             message: "Un ingrédient est introuvable ou indisponible.",
           })
         }
+        if (product._id === linkedProduct._id) {
+          throw new ConvexError({
+            code: "INVALID_INPUT",
+            message: "Un article ne peut pas être son propre ingrédient.",
+          })
+        }
+        ingredientProductsById.set(product._id, product)
         return {
           ingredientName: product.name,
           productId: product._id,
@@ -173,14 +187,19 @@ export const save = mutation({
       })
     )
 
+    const { cost } = calculateRecipeCost(
+      preparedIngredients,
+      ingredientProductsById
+    )
+
     const details = {
       active: existing?.active ?? true,
-      ...(args.cost === null ? {} : { cost: args.cost }),
+      ...(cost === undefined ? {} : { cost }),
       ...(effect ? { effect } : {}),
       family,
       ...(existing?.legacyKey ? { legacyKey: existing.legacyKey } : {}),
-      name,
-      ...(linkedProductId ? { productId: linkedProductId } : {}),
+      name: linkedProduct.name,
+      productId: linkedProduct._id,
     }
     let recipeId: Id<"recipes">
     if (existing) {
@@ -206,7 +225,7 @@ export const save = mutation({
       action: existing ? "recipe.updated" : "recipe.created",
       actorUserId: String(user._id),
       createdAt: Date.now(),
-      detail: `${name}:${preparedIngredients.length}`,
+      detail: `${linkedProduct.name}:${preparedIngredients.length}`,
       entityId: recipeId,
       entityType: "recipe",
     })

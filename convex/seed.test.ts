@@ -41,6 +41,8 @@ describe("seed.importWorkbook", () => {
       orderLines: await ctx.db.query("orderLines").collect(),
       orders: await ctx.db.query("orders").collect(),
       products: await ctx.db.query("products").collect(),
+      recipeIngredients: await ctx.db.query("recipeIngredients").collect(),
+      recipes: await ctx.db.query("recipes").collect(),
       transactions: await ctx.db.query("transactions").collect(),
     }))
 
@@ -51,6 +53,10 @@ describe("seed.importWorkbook", () => {
         convertedTransactions: 111,
         linkedBundleItems: 21,
         linkedOrderLines: 8,
+      },
+      recipeMigration: {
+        createdProducts: 0,
+        repaired: true,
       },
     })
     expect(secondMigration).toMatchObject({ converted: false })
@@ -69,6 +75,10 @@ describe("seed.importWorkbook", () => {
     expect(state.lines).toHaveLength(124)
     expect(state.bundleItems.every((item) => item.productId)).toBe(true)
     expect(state.orderLines.every((line) => line.productId)).toBe(true)
+    expect(state.recipes.every((recipe) => recipe.productId)).toBe(true)
+    expect(
+      state.recipeIngredients.every((ingredient) => ingredient.productId)
+    ).toBe(true)
     for (const transaction of state.transactions) {
       if (["adjustment", "production"].includes(transaction.kind)) continue
       const linkedOrder = transaction.orderId
@@ -111,6 +121,12 @@ describe("seed.importWorkbook", () => {
         (product) => product.name === "Location table étranger"
       )
     ).toMatchObject({ currentStock: 0, salePrice: 20, tracksStock: false })
+    expect(
+      state.products.find((product) => product.name === "Sucrelune")
+    ).toMatchObject({ currentStock: 0, tracksStock: true })
+    expect(
+      state.recipes.find((recipe) => recipe.name === "Médicinale")
+    ).toMatchObject({ family: "Médicinale" })
     expect(
       state.products
         .filter((product) => product.legacyKey)

@@ -541,6 +541,39 @@ function extractRecipes(workbook: ExcelJS.Workbook): RecipeSeed[] {
   return recipes
 }
 
+function includeSupplementalRecipeProducts(
+  products: readonly ProductSeed[],
+  recipes: readonly RecipeSeed[]
+): ProductSeed[] {
+  const references = new Set(
+    recipes.flatMap((recipe) =>
+      recipe.ingredients.map((ingredient) =>
+        normalizeName(ingredient.ingredientName)
+      )
+    )
+  )
+  const completed = [...products]
+  if (
+    references.has(normalizeName("Sucrelune")) &&
+    !completed.some(
+      (product) => product.normalizedName === normalizeName("Sucrelune")
+    )
+  ) {
+    completed.push({
+      category: "ingredient",
+      currentStock: 0,
+      legacyKey: "product:sucrelune",
+      minimumStock: 50,
+      name: "Sucrelune",
+      normalizedName: normalizeName("Sucrelune"),
+      tracksStock: true,
+    })
+  }
+  return completed.sort((left, right) =>
+    left.name.localeCompare(right.name, "fr")
+  )
+}
+
 function extractBundles(workbook: ExcelJS.Workbook): BundleSeed[] {
   const sheet = requireWorksheet(workbook, "Lots")
   const bundles: BundleSeed[] = []
@@ -605,10 +638,13 @@ async function main(): Promise<void> {
   const sourceStat = await stat(workbookPath)
   await workbook.xlsx.readFile(workbookPath)
 
-  const products = extractProducts(workbook)
   const transactions = extractTransactions(workbook)
   const orders = extractOrders(workbook)
   const recipes = extractRecipes(workbook)
+  const products = includeSupplementalRecipeProducts(
+    extractProducts(workbook),
+    recipes
+  )
   const bundles = extractBundles(workbook)
   const characters = extractCharacters(workbook)
   const contacts = extractContacts(orders)

@@ -72,12 +72,12 @@ async function asAuthenticatedMember(
 }
 
 describe("dashboard.overview", () => {
-  it("valorise le stock actif au prix d’achat ou de vente à défaut", async () => {
+  it("valorise un article fabriqué avec le coût courant de sa recette", async () => {
     const backend = createTestBackend()
     const member = await asAuthenticatedMember(backend)
 
     await backend.run(async (ctx) => {
-      await ctx.db.insert("products", {
+      const potionId = await ctx.db.insert("products", {
         active: true,
         category: "potion",
         currentStock: 10,
@@ -87,6 +87,29 @@ describe("dashboard.overview", () => {
         purchasePrice: 4,
         salePrice: 12,
         tracksStock: true,
+      })
+      const ingredientId = await ctx.db.insert("products", {
+        active: true,
+        category: "ingredient",
+        currentStock: 0,
+        minimumStock: 0,
+        name: "Poudre minérale",
+        normalizedName: "poudre minerale",
+        purchasePrice: 2,
+        tracksStock: true,
+      })
+      const recipeId = await ctx.db.insert("recipes", {
+        active: true,
+        family: "Soin",
+        name: "Potion de soin",
+        productId: potionId,
+      })
+      await ctx.db.insert("recipeIngredients", {
+        ingredientName: "Poudre minérale",
+        productId: ingredientId,
+        quantity: 3,
+        raw: "3 Poudre minérale",
+        recipeId,
       })
       await ctx.db.insert("products", {
         active: true,
@@ -122,6 +145,6 @@ describe("dashboard.overview", () => {
 
     const overview = await member.query(api.dashboard.overview, {})
 
-    expect(overview.stockValue).toBe(61)
+    expect(overview.stockValue).toBe(81)
   })
 })

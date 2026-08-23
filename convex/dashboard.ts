@@ -1,5 +1,6 @@
 import { query } from "./_generated/server"
 import { requireUser } from "./lib/auth"
+import { calculateRecipeCost } from "./lib/recipeCost"
 
 const WEEK_IN_MILLISECONDS = 7 * 24 * 60 * 60 * 1_000
 
@@ -8,20 +9,41 @@ export const overview = query({
   handler: async (ctx) => {
     await requireUser(ctx)
     const now = Date.now()
-    const [products, recentTransactionCandidates, openOrders] =
-      await Promise.all([
-        ctx.db.query("products").collect(),
-        ctx.db
-          .query("transactions")
-          .withIndex("by_occurred_at")
-          .order("desc")
-          .take(24),
-        ctx.db
-          .query("orders")
-          .withIndex("by_status", (index) => index.eq("status", "open"))
-          .collect(),
-      ])
+    const [
+      products,
+      recipes,
+      recipeIngredients,
+      recentTransactionCandidates,
+      openOrders,
+    ] = await Promise.all([
+      ctx.db.query("products").collect(),
+      ctx.db.query("recipes").collect(),
+      ctx.db.query("recipeIngredients").collect(),
+      ctx.db
+        .query("transactions")
+        .withIndex("by_occurred_at")
+        .order("desc")
+        .take(24),
+      ctx.db
+        .query("orders")
+        .withIndex("by_status", (index) => index.eq("status", "open"))
+        .collect(),
+    ])
     const recentTransactions = recentTransactionCandidates.slice(0, 8)
+    const productsById = new Map(
+      products.map((product) => [product._id, product])
+    )
+    const productionCosts = new Map<string, number>()
+    for (const recipe of recipes) {
+      if (recipe.active === false || !recipe.productId) continue
+      const { cost } = calculateRecipeCost(
+        recipeIngredients.filter(
+          (ingredient) => ingredient.recipeId === recipe._id
+        ),
+        productsById
+      )
+      if (cost !== undefined) productionCosts.set(recipe.productId, cost)
+    }
 
     const activeStock = products.filter(
       (product) => product.active && product.tracksStock
@@ -38,7 +60,10 @@ export const overview = query({
       (total, product) =>
         total +
         product.currentStock *
-          (product.purchasePrice ?? product.salePrice ?? 0),
+          (productionCosts.get(product._id) ??
+            product.purchasePrice ??
+            product.salePrice ??
+            0),
       0
     )
     const weeklyTransactions = await ctx.db

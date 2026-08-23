@@ -80,6 +80,9 @@ function RecipesPage() {
         recipe.name.toLocaleLowerCase("fr").includes(normalizedSearch) ||
         recipe.effect?.toLocaleLowerCase("fr").includes(normalizedSearch))
   )
+  const usedRecipeProductIds = new Set(
+    recipes.flatMap((recipe) => (recipe.productId ? [recipe.productId] : []))
+  )
 
   return (
     <div className="animate-in duration-300 fade-in slide-in-from-bottom-1 motion-reduce:animate-none">
@@ -137,7 +140,10 @@ function RecipesPage() {
             {isAdmin ? (
               <>
                 <RecipeArchivesDialog />
-                <RecipeDialog products={products} />
+                <RecipeDialog
+                  products={products}
+                  usedProductIds={usedRecipeProductIds}
+                />
               </>
             ) : null}
             <BookMarked aria-hidden="true" className="size-5 text-primary" />
@@ -151,6 +157,7 @@ function RecipesPage() {
                 key={recipe._id}
                 products={products}
                 recipe={recipe}
+                usedProductIds={usedRecipeProductIds}
               />
             ))}
           </div>
@@ -208,10 +215,12 @@ function RecipeEntry({
   isAdmin,
   products,
   recipe,
+  usedProductIds,
 }: Readonly<{
   isAdmin: boolean
   products: readonly Doc<"products">[]
   recipe: Recipe
+  usedProductIds: ReadonlySet<string>
 }>) {
   return (
     <Card className="min-h-48 gap-0 rounded-none border-[#5b462b]/30 border-t-[#684f2d]/60 bg-linear-to-br from-[#fffbed]/60 to-[#e3d3b3]/20 py-0 ring-0">
@@ -223,11 +232,18 @@ function RecipeEntry({
           {recipe.name}
         </CardTitle>
         <CardAction className="flex items-center gap-1 text-sm font-semibold">
-          {recipe.cost !== undefined ? formatDecimalSeptims(recipe.cost) : null}
+          {recipe.cost === undefined ? (
+            <Badge variant="outline">Coût incomplet</Badge>
+          ) : (
+            <span title="Coût matière calculé">
+              {formatDecimalSeptims(recipe.cost)}
+            </span>
+          )}
           {isAdmin ? (
             <RecipeDialog
               products={products}
               recipe={recipe}
+              usedProductIds={usedProductIds}
               trigger={
                 <Button
                   aria-label={`Modifier ${recipe.name}`}

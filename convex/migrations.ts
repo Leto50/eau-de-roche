@@ -4,23 +4,41 @@ import { type Doc, type Id } from "./_generated/dataModel"
 import { internalMutation, type MutationCtx } from "./_generated/server"
 import { roundSeptimsDown } from "./lib/numbers"
 import { orderTransactionLabel } from "./lib/order"
+import { calculateRecipeCost } from "./lib/recipeCost"
 import { normalizeName } from "./lib/text"
 
 const EXCHANGE_MIGRATION_KEY = "exchange-model-v5"
+const RECIPE_REFERENCE_MIGRATION_KEY = "recipe-references-v1"
 
 const productAliases: Readonly<Record<string, string>> = {
+  "breuvage mana accru": "breuvage magie accrue",
+  "breuvage resistance magie": "breuvage resistance magique",
+  "breuvage vigueur accru": "breuvage vigueur amelioree",
   "breuvage de vigueur amelioree": "breuvage vigueur amelioree",
   "breuvages de recuperation": "breuvage recuperation",
   "breuvages de vigueur amelioree": "breuvage vigueur amelioree",
   "breuvages du guerrier": "breuvage guerrier",
   "breuvages du guerisseur": "breuvage guerisseur",
   chardon: "tige de chardon",
+  "gemme spirituelle insignifiante": "gemme insignifiante",
+  genievre: "genievres",
+  "griffes d ours": "griffe d ours",
+  hydromel: "hydromelle",
+  hyvernelle: "hivernelle",
+  lichen: "lichen geant",
+  medicinal: "medicinale",
+  "oeuf fauvette": "oeuf de fauvette",
+  "oreille elfe": "oreilles d elfes",
+  "plantes grimpantes": "plante grimpante",
+  "potion mana accru": "potion magie accrue",
   "potion de pied leger": "pied leger",
   "potion de recuperation": "potion recuperation",
   "potion de soin": "soin moyen",
   "potion de soin mineur": "soin mineur",
   "potion de soin profuse": "soin profus",
   "potion medicinale": "medicinale",
+  "potion resistance magie": "potion resistance magique",
+  "potion vigueur accru": "potion vigueur amelioree",
   "potions de berserker": "potion berserker",
   "potions de pied leger": "pied leger",
   "potions de puissance durable": "potion puissance durable",
@@ -29,8 +47,13 @@ const productAliases: Readonly<Record<string, string>> = {
   "potions de soin moyenne": "soin moyen",
   "potions medicinale": "medicinale",
   "potions medicinales": "medicinale",
+  "racine canis": "racine de canis",
   raisin: "raisin jasbay",
   "raisin de jazbai": "raisin jasbay",
+  "sel du neant": "sel de neant",
+  "sel feu": "sel de feu",
+  "sel givre": "sel de givre",
+  "sel neant": "sel de neant",
 }
 
 const bundleAliases: Readonly<Record<string, string>> = {
@@ -144,7 +167,7 @@ function reconcileLegacyAmounts(
   return 0
 }
 
-function canonicalProductName(value: string): string {
+export function canonicalProductName(value: string): string {
   const normalized = normalizeName(value)
   return productAliases[normalized] ?? normalized
 }
@@ -305,6 +328,111 @@ async function movementDeltasForLines(
     }
   }
   return deltas
+}
+
+export async function repairRecipeReferencesData(ctx: MutationCtx) {
+  const existingMigration = await ctx.db
+    .query("systemSettings")
+    .withIndex("by_key", (index) =>
+      index.eq("key", RECIPE_REFERENCE_MIGRATION_KEY)
+    )
+    .unique()
+  if (existingMigration) {
+    return {
+      repaired: false,
+      message: "Les références des recettes sont déjà normalisées.",
+    }
+  }
+
+  const initialProducts = await ctx.db.query("products").collect()
+  const products = new Map(
+    initialProducts.map((product) => [product.normalizedName, product])
+  )
+  let createdProducts = 0
+  if (!products.has(normalizeName("Sucrelune"))) {
+    const productId = await ctx.db.insert("products", {
+      active: true,
+      category: "ingredient",
+      currentStock: 0,
+      legacyKey: "product:sucrelune",
+      minimumStock: 50,
+      name: "Sucrelune",
+      normalizedName: normalizeName("Sucrelune"),
+      tracksStock: true,
+    })
+    const product = await ctx.db.get(productId)
+    if (product) products.set(product.normalizedName, product)
+    createdProducts += 1
+  }
+
+  const productsById = new Map(
+    [...products.values()].map((product) => [product._id, product])
+  )
+  const ingredients = await ctx.db.query("recipeIngredients").collect()
+  const resolvedIngredientProducts = new Map<string, Id<"products">>()
+  let linkedIngredients = 0
+  for (const ingredient of ingredients) {
+    const product =
+      (ingredient.productId
+        ? productsById.get(ingredient.productId)
+        : undefined) ?? requireProduct(products, ingredient.ingredientName)
+    resolvedIngredientProducts.set(ingredient._id, product._id)
+    if (
+      ingredient.productId !== product._id ||
+      ingredient.ingredientName !== product.name
+    ) {
+      await ctx.db.patch(ingredient._id, {
+        ingredientName: product.name,
+        productId: product._id,
+        raw: `${ingredient.quantity} ${product.name}`,
+      })
+      linkedIngredients += 1
+    }
+  }
+
+  const recipes = await ctx.db.query("recipes").collect()
+  let linkedRecipes = 0
+  let pricedRecipes = 0
+  for (const recipe of recipes) {
+    const product =
+      (recipe.productId ? productsById.get(recipe.productId) : undefined) ??
+      requireProduct(products, recipe.name)
+    const recipeIngredients = ingredients
+      .filter((ingredient) => ingredient.recipeId === recipe._id)
+      .map((ingredient) => ({
+        ...ingredient,
+        productId: resolvedIngredientProducts.get(ingredient._id),
+      }))
+    const { cost } = calculateRecipeCost(recipeIngredients, productsById)
+    const family =
+      normalizeName(recipe.family) === normalizeName(recipe.name)
+        ? product.name
+        : recipe.family
+    await ctx.db.patch(recipe._id, {
+      cost,
+      family,
+      name: product.name,
+      productId: product._id,
+    })
+    if (cost !== undefined) pricedRecipes += 1
+    if (recipe.productId !== product._id || recipe.name !== product.name) {
+      linkedRecipes += 1
+    }
+  }
+
+  const result = {
+    createdProducts,
+    linkedIngredients,
+    linkedRecipes,
+    pricedRecipes,
+    repaired: true,
+  }
+  await ctx.db.insert("systemSettings", {
+    key: RECIPE_REFERENCE_MIGRATION_KEY,
+    updatedAt: Date.now(),
+    value: JSON.stringify(result),
+  })
+  return result
 }
 
 export async function convertLegacyOperationsData(ctx: MutationCtx) {
@@ -597,4 +725,9 @@ export async function convertLegacyOperationsData(ctx: MutationCtx) {
 export const convertLegacyOperations = internalMutation({
   args: {},
   handler: convertLegacyOperationsData,
+})
+
+export const repairRecipeReferences = internalMutation({
+  args: {},
+  handler: repairRecipeReferencesData,
 })

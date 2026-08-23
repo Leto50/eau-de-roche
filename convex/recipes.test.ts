@@ -14,6 +14,7 @@ async function seedRecipeProducts(
       minimumStock: 2,
       name: "Poudre minérale",
       normalizedName: "poudre minerale",
+      purchasePrice: 1.25,
       tracksStock: true,
     })
     const outputId = await ctx.db.insert("products", {
@@ -36,19 +37,15 @@ describe("recipes", () => {
     const { ingredientId, outputId } = await seedRecipeProducts(backend)
 
     const recipeId = await admin.mutation(api.recipes.save, {
-      cost: 1 / 4,
       effect: "Aide à tenir pendant une longue garde.",
       family: "Fortifiants",
       ingredients: [{ productId: ingredientId, quantity: 2 }],
-      name: "Élixir du veilleur",
       productId: outputId,
     })
     await admin.mutation(api.recipes.save, {
-      cost: 1 / 2,
       effect: "Soutient l’effort prolongé.",
       family: "Fortifiants",
       ingredients: [{ productId: ingredientId, quantity: 3 }],
-      name: "Élixir du veilleur renforcé",
       productId: outputId,
       recipeId,
     })
@@ -67,8 +64,8 @@ describe("recipes", () => {
     }))
     expect(state.recipe).toMatchObject({
       active: false,
-      cost: 1 / 2,
-      name: "Élixir du veilleur renforcé",
+      cost: 3.75,
+      name: "Élixir du veilleur",
     })
     expect(state.ingredients).toHaveLength(1)
     expect(state.ingredients[0]).toMatchObject({
@@ -85,16 +82,14 @@ describe("recipes", () => {
   it("refuse les quantités d’ingrédients fractionnaires", async () => {
     const backend = createTestBackend()
     const admin = await asAuthenticatedUser(backend, "admin")
-    const { ingredientId } = await seedRecipeProducts(backend)
+    const { ingredientId, outputId } = await seedRecipeProducts(backend)
 
     await expect(
       admin.mutation(api.recipes.save, {
-        cost: null,
         effect: "",
         family: "Essais",
         ingredients: [{ productId: ingredientId, quantity: 1.5 }],
-        name: "Préparation incomplète",
-        productId: null,
+        productId: outputId,
       })
     ).rejects.toThrowError("nombre entier")
   })
@@ -102,17 +97,44 @@ describe("recipes", () => {
   it("réserve la gestion des recettes aux administrateurs", async () => {
     const backend = createTestBackend()
     const employee = await asAuthenticatedUser(backend)
-    const { ingredientId } = await seedRecipeProducts(backend)
+    const { ingredientId, outputId } = await seedRecipeProducts(backend)
 
     await expect(
       employee.mutation(api.recipes.save, {
-        cost: null,
         effect: "",
         family: "Essais",
         ingredients: [{ productId: ingredientId, quantity: 1 }],
-        name: "Préparation réservée",
-        productId: null,
+        productId: outputId,
       })
     ).rejects.toThrowError("réservée aux administrateurs")
+  })
+
+  it("calcule le coût courant et interdit deux recettes pour le même article", async () => {
+    const backend = createTestBackend()
+    const admin = await asAuthenticatedUser(backend, "admin")
+    const { ingredientId, outputId } = await seedRecipeProducts(backend)
+
+    await admin.mutation(api.recipes.save, {
+      effect: "",
+      family: "Fortifiants",
+      ingredients: [{ productId: ingredientId, quantity: 2 }],
+      productId: outputId,
+    })
+    await backend.run((ctx) => ctx.db.patch(ingredientId, { purchasePrice: 2 }))
+
+    const recipes = await admin.query(api.recipes.list, {})
+    expect(recipes[0]).toMatchObject({
+      cost: 4,
+      name: "Élixir du veilleur",
+      productId: outputId,
+    })
+    await expect(
+      admin.mutation(api.recipes.save, {
+        effect: "",
+        family: "Doublon",
+        ingredients: [{ productId: ingredientId, quantity: 1 }],
+        productId: outputId,
+      })
+    ).rejects.toThrowError("existe déjà")
   })
 })

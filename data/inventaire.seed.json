@@ -250,7 +250,7 @@
       "characters": 5,
       "contacts": 11,
       "orders": 12,
-      "products": 83,
+      "products": 84,
       "recipes": 35,
       "transactions": 111
     }
@@ -1307,6 +1307,15 @@
       "tracksStock": true,
       "legacyKey": "product:soin profus",
       "normalizedName": "soin profus"
+    },
+    {
+      "category": "ingredient",
+      "currentStock": 0,
+      "legacyKey": "product:sucrelune",
+      "minimumStock": 50,
+      "name": "Sucrelune",
+      "normalizedName": "sucrelune",
+      "tracksStock": true
     },
     {
       "category": "ingredient",

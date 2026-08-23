@@ -10,6 +10,7 @@ import {
   Scale,
   UsersRound,
 } from "lucide-react"
+import { useState } from "react"
 
 import { AccountSettingsDialog } from "@/components/account-settings-dialog"
 import { PageError } from "@/components/page-error"
@@ -18,11 +19,19 @@ import { PageSkeleton } from "@/components/page-skeleton"
 import { Badge } from "@/components/ui/badge"
 import {
   Card,
+  CardAction,
   CardContent,
   CardDescription,
   CardHeader,
   CardTitle,
 } from "@/components/ui/card"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
 import { Separator } from "@/components/ui/separator"
 import {
   Table,
@@ -66,6 +75,13 @@ function AccountPage() {
     isHydrated && (session?.user.role?.split(",").includes("admin") ?? false)
   const currentWeek = data.weeks[0]
   const resultAfterCharges = (currentWeek?.net ?? 0) - data.charges.total
+  const [selectedWeekStartsAt, setSelectedWeekStartsAt] = useState(
+    currentWeek?.startsAt.toString() ?? ""
+  )
+  const selectedWeek =
+    data.weeks.find(
+      (week) => week.startsAt.toString() === selectedWeekStartsAt
+    ) ?? currentWeek
 
   return (
     <div className="animate-in duration-300 fade-in slide-in-from-bottom-1 motion-reduce:animate-none">
@@ -101,6 +117,134 @@ function AccountPage() {
           value={formatSeptims(data.journalBalance)}
         />
       </section>
+
+      <Card className="mt-5 rounded-none border-[#5b462b]/35 bg-[#fff8e7]/30 py-0 ring-0">
+        <CardHeader className="border-b border-border/60">
+          <CardTitle className="flex items-center gap-2 font-display text-xl">
+            <UsersRound aria-hidden="true" className="size-5 text-primary" />
+            Activité par personnage
+          </CardTitle>
+          <CardDescription>
+            Le chiffre encaissé et les achats traités par chaque membre de la
+            boutique.
+          </CardDescription>
+          <CardAction className="max-sm:col-span-2 max-sm:row-start-3">
+            <Select
+              onValueChange={setSelectedWeekStartsAt}
+              value={selectedWeek?.startsAt.toString() ?? ""}
+            >
+              <SelectTrigger
+                aria-label="Semaine détaillée"
+                className="w-52 max-w-full bg-background/50"
+              >
+                <SelectValue placeholder="Choisir une semaine" />
+              </SelectTrigger>
+              <SelectContent>
+                {data.weeks.map((week, index) => (
+                  <SelectItem
+                    key={week.startsAt}
+                    value={week.startsAt.toString()}
+                  >
+                    {formatWeek(week.startsAt, week.endsAt)}
+                    {index === 0 ? " · en cours" : ""}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </CardAction>
+        </CardHeader>
+
+        {selectedWeek && selectedWeek.actors.length > 0 ? (
+          <>
+            <CardContent className="px-0 max-md:hidden">
+              <Table>
+                <TableHeader>
+                  <TableRow className="bg-[#684f2d]/8 hover:bg-[#684f2d]/8">
+                    <TableHead className="pl-4">Personnage</TableHead>
+                    <TableHead className="text-right">
+                      Chiffre encaissé
+                    </TableHead>
+                    <TableHead className="text-right">Achats</TableHead>
+                    <TableHead className="text-right">Solde</TableHead>
+                    <TableHead className="pr-4 text-right">
+                      Opérations
+                    </TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {selectedWeek.actors.map((actor) => (
+                    <TableRow
+                      className="border-[#5b462b]/20"
+                      key={actor.actorCharacterId ?? actor.actorName}
+                    >
+                      <TableCell className="pl-4 font-semibold">
+                        {actor.actorName}
+                      </TableCell>
+                      <TableCell className="text-right font-semibold text-[#456044] tabular-nums">
+                        {formatSeptims(actor.incoming)}
+                      </TableCell>
+                      <TableCell className="text-right font-semibold text-[#8a3e2f] tabular-nums">
+                        {formatSeptims(actor.outgoing)}
+                      </TableCell>
+                      <TableCell
+                        className={cn(
+                          "text-right font-display tabular-nums",
+                          actor.net >= 0 ? "text-[#456044]" : "text-[#8a3e2f]"
+                        )}
+                      >
+                        {actor.net > 0 ? "+" : ""}
+                        {formatSeptims(actor.net)}
+                      </TableCell>
+                      <TableCell className="pr-4 text-right text-muted-foreground tabular-nums">
+                        {formatNumber(actor.transactionCount)}
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </CardContent>
+
+            <CardContent className="grid divide-y divide-border/70 px-0 py-0 md:hidden">
+              {selectedWeek.actors.map((actor) => (
+                <div
+                  className="grid gap-3 p-4"
+                  key={actor.actorCharacterId ?? actor.actorName}
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <p className="font-semibold">{actor.actorName}</p>
+                    <Badge variant="outline">
+                      {formatNumber(actor.transactionCount)} opération
+                      {actor.transactionCount === 1 ? "" : "s"}
+                    </Badge>
+                  </div>
+                  <div className="grid grid-cols-3 gap-2 text-right">
+                    <ActorAmount
+                      label="Chiffre"
+                      tone="positive"
+                      value={actor.incoming}
+                    />
+                    <ActorAmount
+                      label="Achats"
+                      tone="negative"
+                      value={actor.outgoing}
+                    />
+                    <ActorAmount
+                      label="Solde"
+                      signed
+                      tone={actor.net >= 0 ? "positive" : "negative"}
+                      value={actor.net}
+                    />
+                  </div>
+                </div>
+              ))}
+            </CardContent>
+          </>
+        ) : (
+          <CardContent className="py-8 text-center text-sm text-muted-foreground">
+            Aucun mouvement enregistré pour cette semaine.
+          </CardContent>
+        )}
+      </Card>
 
       <section className="mt-6 grid gap-5 xl:grid-cols-[minmax(0,1.35fr)_minmax(19rem,0.65fr)]">
         <Card className="rounded-none border-[#5b462b]/35 bg-[#fff8e7]/30 py-0 ring-0">
@@ -275,6 +419,35 @@ function AccountPage() {
           </CardContent>
         </Card>
       </section>
+    </div>
+  )
+}
+
+function ActorAmount({
+  label,
+  signed = false,
+  tone,
+  value,
+}: Readonly<{
+  label: string
+  signed?: boolean
+  tone: "negative" | "positive"
+  value: number
+}>) {
+  return (
+    <div>
+      <p className="text-[0.62rem] font-bold tracking-wider text-muted-foreground uppercase">
+        {label}
+      </p>
+      <p
+        className={cn(
+          "mt-1 text-sm font-semibold tabular-nums",
+          tone === "positive" ? "text-[#456044]" : "text-[#8a3e2f]"
+        )}
+      >
+        {signed && value > 0 ? "+" : ""}
+        {formatSeptims(value)}
+      </p>
     </div>
   )
 }

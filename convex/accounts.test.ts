@@ -6,11 +6,12 @@ import { asAuthenticatedUser, createTestBackend } from "./test.helpers"
 async function insertTransaction(
   backend: ReturnType<typeof createTestBackend>,
   occurredAt: number,
-  total: number
+  total: number,
+  actorName = "Comptable test"
 ) {
   await backend.run((ctx) =>
     ctx.db.insert("transactions", {
-      actorName: "Comptable test",
+      actorName,
       kind: total >= 0 ? "sale" : "purchase",
       occurredAt,
       productName: "Écriture test",
@@ -26,8 +27,8 @@ describe("accounts", () => {
     const backend = createTestBackend()
     const employee = await asAuthenticatedUser(backend)
     const now = Date.now()
-    await insertTransaction(backend, now, 100)
-    await insertTransaction(backend, now, -25)
+    await insertTransaction(backend, now, 100, "Anoril Aliaria")
+    await insertTransaction(backend, now, -25, "Gand Ulf")
     await insertTransaction(backend, now - 8 * 24 * 60 * 60 * 1_000, 40)
 
     const account = await employee.query(api.accounts.overview, {})
@@ -41,6 +42,22 @@ describe("accounts", () => {
       weeklyRent: 500,
     })
     expect(account.weeks[0]).toMatchObject({
+      actors: [
+        {
+          actorName: "Anoril Aliaria",
+          incoming: 100,
+          net: 100,
+          outgoing: 0,
+          transactionCount: 1,
+        },
+        {
+          actorName: "Gand Ulf",
+          incoming: 0,
+          net: -25,
+          outgoing: 25,
+          transactionCount: 1,
+        },
+      ],
       incoming: 100,
       net: 75,
       outgoing: 25,

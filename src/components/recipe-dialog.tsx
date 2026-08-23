@@ -4,6 +4,8 @@ import {
   Archive,
   ArchiveRestore,
   BookPlus,
+  Calculator,
+  CircleAlert,
   LoaderCircle,
   Pencil,
   Plus,
@@ -11,6 +13,7 @@ import {
 } from "lucide-react"
 import {
   useId,
+  useMemo,
   useRef,
   useState,
   type FormEvent,
@@ -32,6 +35,7 @@ import {
 } from "@/components/ui/alert-dialog"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
+import { Card, CardContent } from "@/components/ui/card"
 import {
   Dialog,
   DialogContent,
@@ -42,12 +46,6 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
-import {
-  InputGroup,
-  InputGroupAddon,
-  InputGroupInput,
-  InputGroupText,
-} from "@/components/ui/input-group"
 import { Label } from "@/components/ui/label"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Separator } from "@/components/ui/separator"
@@ -68,33 +66,78 @@ export function RecipeDialog({
   products,
   recipe,
   trigger,
+  usedProductIds,
 }: Readonly<{
   products: readonly Doc<"products">[]
   recipe?: Recipe
   trigger?: ReactElement
+  usedProductIds?: ReadonlySet<string>
 }>) {
   const saveRecipe = useMutation(api.recipes.save)
   const setRecipeActive = useMutation(api.recipes.setActive)
   const fieldId = useId()
   const nextLineKey = useRef(1)
   const [open, setOpen] = useState(false)
-  const [name, setName] = useState("")
   const [family, setFamily] = useState("")
   const [effect, setEffect] = useState("")
   const [productId, setProductId] = useState("")
-  const [cost, setCost] = useState("")
   const [ingredients, setIngredients] = useState<IngredientDraft[]>([
     { key: 0, productId: "", quantity: "1" },
   ])
   const [isSubmitting, setIsSubmitting] = useState(false)
-  const ingredientProducts = products.filter((product) => product.tracksStock)
+  const ingredientProducts = useMemo(
+    () => products.filter((product) => product.tracksStock),
+    [products]
+  )
+  const outputProducts = useMemo(
+    () =>
+      ingredientProducts.filter(
+        (product) =>
+          product._id === recipe?.productId || !usedProductIds?.has(product._id)
+      ),
+    [ingredientProducts, recipe?.productId, usedProductIds]
+  )
+  const costCalculation = useMemo(() => {
+    const missingPrices = new Set<string>()
+    let complete = ingredients.length > 0
+    let value = 0
+
+    for (const ingredient of ingredients) {
+      const product = ingredientProducts.find(
+        (entry) => entry._id === ingredient.productId
+      )
+      const quantity = Number(ingredient.quantity)
+      if (
+        !product ||
+        !Number.isFinite(quantity) ||
+        !Number.isInteger(quantity) ||
+        quantity <= 0
+      ) {
+        complete = false
+        continue
+      }
+      if (product.purchasePrice === undefined) {
+        missingPrices.add(product.name)
+        continue
+      }
+      value += product.purchasePrice * quantity
+    }
+
+    return {
+      cost:
+        complete && missingPrices.size === 0 && ingredients.length > 0
+          ? value
+          : undefined,
+      missingPrices: [...missingPrices].sort((left, right) =>
+        left.localeCompare(right, "fr")
+      ),
+    }
+  }, [ingredientProducts, ingredients])
 
   function resetForm() {
-    setName(recipe?.name ?? "")
     setFamily(recipe?.family ?? "")
     setEffect(recipe?.effect ?? "")
     setProductId(recipe?.productId ?? "")
-    setCost(recipe?.cost?.toString() ?? "")
     if (recipe?.ingredients.length) {
       setIngredients(
         recipe.ingredients.map((ingredient, index) => ({
@@ -140,7 +183,6 @@ export function RecipeDialog({
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
-    const submittedCost = cost.trim() ? Number(cost) : null
     const preparedIngredients = ingredients.map((ingredient) => ({
       productId: ingredientProducts.find(
         (product) => product._id === ingredient.productId
@@ -151,8 +193,8 @@ export function RecipeDialog({
       (product) => product._id === productId
     )?._id
 
-    if (!name.trim() || !family.trim()) {
-      toast.error("Le nom et la famille de la recette sont obligatoires.")
+    if (!linkedProductId || !family.trim()) {
+      toast.error("L’article fabriqué et la famille sont obligatoires.")
       return
     }
     if (
@@ -177,18 +219,14 @@ export function RecipeDialog({
       toast.error("Un ingrédient ne peut apparaître qu’une fois.")
       return
     }
-    if (
-      submittedCost !== null &&
-      (!Number.isFinite(submittedCost) || submittedCost < 0)
-    ) {
-      toast.error("Le coût de fabrication doit être un nombre positif.")
+    if (ingredientIds.includes(linkedProductId)) {
+      toast.error("Un article ne peut pas être son propre ingrédient.")
       return
     }
 
     setIsSubmitting(true)
     try {
       await saveRecipe({
-        cost: submittedCost,
         effect: effect.trim(),
         family: family.trim(),
         ingredients: preparedIngredients.flatMap((ingredient) =>
@@ -201,8 +239,7 @@ export function RecipeDialog({
               ]
             : []
         ),
-        name: name.trim(),
-        productId: linkedProductId ?? null,
+        productId: linkedProductId,
         ...(recipe ? { recipeId: recipe._id } : {}),
       })
       toast.success(recipe ? "Recette mise à jour." : "Recette créée.")
@@ -255,22 +292,26 @@ export function RecipeDialog({
             {recipe ? "Modifier la recette" : "Créer une recette"}
           </DialogTitle>
           <DialogDescription>
-            Renseignez le résultat, le coût et les ingrédients consommés.
+            Choisissez l’article obtenu et les ingrédients consommés pour le
+            fabriquer.
           </DialogDescription>
         </DialogHeader>
 
         <form className="grid gap-5" onSubmit={handleSubmit}>
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="grid gap-2">
-              <Label htmlFor={`${fieldId}-name`}>Nom de la recette</Label>
-              <Input
-                id={`${fieldId}-name`}
-                maxLength={100}
-                onChange={(event) => setName(event.target.value)}
-                placeholder="Nom de la préparation"
-                required
-                value={name}
+              <Label>Article fabriqué</Label>
+              <ProductPicker
+                onChange={(value) => setProductId(value ?? "")}
+                placeholder="Choisir l’article obtenu…"
+                products={outputProducts}
+                selectedProductId={productId}
+                showStock={false}
               />
+              <p className="text-xs text-muted-foreground">
+                Son nom devient celui de la recette et relie la fabrication au
+                stock.
+              </p>
             </div>
             <div className="grid gap-2">
               <Label htmlFor={`${fieldId}-family`}>Famille</Label>
@@ -282,40 +323,6 @@ export function RecipeDialog({
                 required
                 value={family}
               />
-            </div>
-          </div>
-
-          <div className="grid gap-4 sm:grid-cols-2">
-            <div className="grid gap-2">
-              <Label>Produit fabriqué</Label>
-              <ProductPicker
-                clearLabel="Aucun produit lié"
-                onChange={(value) => setProductId(value ?? "")}
-                products={products}
-                selectedProductId={productId}
-                showStock={false}
-              />
-              <p className="text-xs text-muted-foreground">
-                Ce lien permet d’utiliser la recette lors d’une production.
-              </p>
-            </div>
-            <div className="grid gap-2">
-              <Label htmlFor={`${fieldId}-cost`}>Coût de fabrication</Label>
-              <InputGroup>
-                <InputGroupInput
-                  id={`${fieldId}-cost`}
-                  inputMode="decimal"
-                  min="0"
-                  onChange={(event) => setCost(event.target.value)}
-                  placeholder="Ex. 19,5"
-                  step="any"
-                  type="number"
-                  value={cost}
-                />
-                <InputGroupAddon align="inline-end">
-                  <InputGroupText>septims</InputGroupText>
-                </InputGroupAddon>
-              </InputGroup>
             </div>
           </div>
 
@@ -398,6 +405,39 @@ export function RecipeDialog({
               </div>
             ))}
           </div>
+
+          <Card className="gap-0 rounded-none border-primary/20 bg-primary/[0.035] py-0 ring-0">
+            <CardContent className="flex items-center justify-between gap-4 p-4">
+              <div className="flex min-w-0 items-center gap-3">
+                <Calculator
+                  aria-hidden="true"
+                  className="size-5 shrink-0 text-primary"
+                />
+                <div className="min-w-0">
+                  <p className="text-sm font-semibold">Coût matière calculé</p>
+                  <p className="text-xs text-muted-foreground">
+                    Quantités × prix d’achat actuels des ingrédients.
+                  </p>
+                </div>
+              </div>
+              <output className="shrink-0 font-display text-lg text-primary tabular-nums">
+                {costCalculation.cost === undefined
+                  ? "—"
+                  : formatDecimalSeptims(costCalculation.cost)}
+              </output>
+            </CardContent>
+          </Card>
+
+          {costCalculation.missingPrices.length > 0 ? (
+            <Alert className="border-[#8a4233]/30 bg-[#8a4233]/5">
+              <CircleAlert aria-hidden="true" />
+              <AlertTitle>Prix d’achat manquant</AlertTitle>
+              <AlertDescription>
+                Renseignez dans l’inventaire le prix d’achat manquant pour :{" "}
+                {costCalculation.missingPrices.join(", ")}.
+              </AlertDescription>
+            </Alert>
+          ) : null}
 
           <DialogFooter className="gap-2 sm:justify-between">
             <div>
@@ -531,7 +571,7 @@ export function RecipeArchivesDialog() {
                     <p className="text-xs text-muted-foreground">
                       {recipe.family}
                       {recipe.cost === undefined
-                        ? ""
+                        ? " · coût incomplet"
                         : ` · ${formatDecimalSeptims(recipe.cost)}`}
                     </p>
                   </div>

@@ -1,5 +1,6 @@
 import { v } from "convex/values"
 
+import { type Doc } from "./_generated/dataModel"
 import { mutation, query } from "./_generated/server"
 import { requireAdmin, requireUser } from "./lib/auth"
 import { assertFiniteRange, assertWholeNumberRange } from "./lib/numbers"
@@ -27,6 +28,47 @@ function startOfUtcWeek(timestamp: number): number {
     date.getUTCFullYear(),
     date.getUTCMonth(),
     date.getUTCDate() - dayFromMonday
+  )
+}
+
+function summarizeActors(transactions: readonly Doc<"transactions">[]) {
+  const actors = new Map<
+    string,
+    {
+      actorCharacterId?: Doc<"transactions">["actorCharacterId"]
+      actorName: string
+      incoming: number
+      net: number
+      outgoing: number
+      transactionCount: number
+    }
+  >()
+
+  for (const transaction of transactions) {
+    if (transaction.total === 0) continue
+    const key = transaction.actorCharacterId ?? `name:${transaction.actorName}`
+    const actor = actors.get(key) ?? {
+      ...(transaction.actorCharacterId
+        ? { actorCharacterId: transaction.actorCharacterId }
+        : {}),
+      actorName: transaction.actorName,
+      incoming: 0,
+      net: 0,
+      outgoing: 0,
+      transactionCount: 0,
+    }
+    actor.incoming += Math.max(transaction.total, 0)
+    actor.net += transaction.total
+    actor.outgoing += Math.abs(Math.min(transaction.total, 0))
+    actor.transactionCount += 1
+    actors.set(key, actor)
+  }
+
+  return [...actors.values()].sort(
+    (left, right) =>
+      right.incoming - left.incoming ||
+      right.net - left.net ||
+      left.actorName.localeCompare(right.actorName, "fr")
   )
 }
 
@@ -62,6 +104,7 @@ export const overview = query({
         0
       )
       return {
+        actors: summarizeActors(weeklyTransactions),
         endsAt,
         incoming,
         net: incoming - outgoing,
