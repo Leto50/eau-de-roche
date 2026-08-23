@@ -21,9 +21,7 @@ export const overview = query({
           .withIndex("by_status", (index) => index.eq("status", "open"))
           .collect(),
       ])
-    const recentTransactions = recentTransactionCandidates
-      .filter((transaction) => transaction.cancelledAt === undefined)
-      .slice(0, 8)
+    const recentTransactions = recentTransactionCandidates.slice(0, 8)
 
     const activeStock = products.filter(
       (product) => product.active && product.tracksStock
@@ -49,10 +47,7 @@ export const overview = query({
         index.gte("occurredAt", now - WEEK_IN_MILLISECONDS)
       )
       .collect()
-    const activeWeeklyTransactions = weeklyTransactions.filter(
-      (transaction) => transaction.cancelledAt === undefined
-    )
-    const weeklyBalance = activeWeeklyTransactions.reduce(
+    const weeklyBalance = weeklyTransactions.reduce(
       (total, transaction) => total + transaction.total,
       0
     )
@@ -63,7 +58,7 @@ export const overview = query({
       recentTransactions,
       stockValue,
       weeklyBalance,
-      weeklyTransactionCount: activeWeeklyTransactions.length,
+      weeklyTransactionCount: weeklyTransactions.length,
     }
   },
 })

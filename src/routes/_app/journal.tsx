@@ -9,9 +9,8 @@ import {
   Pencil,
   ScrollText,
   Trash2,
-  Undo2,
 } from "lucide-react"
-import { useState, type FormEvent, type MouseEvent } from "react"
+import { useState, type MouseEvent } from "react"
 import { toast } from "sonner"
 
 import { OperationDialog } from "@/components/operation-dialog"
@@ -53,8 +52,6 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
-import { Label } from "@/components/ui/label"
-import { Textarea } from "@/components/ui/textarea"
 import {
   Tooltip,
   TooltipContent,
@@ -233,22 +230,13 @@ function JournalRow({
   showActions: boolean
   transaction: Transaction
 }>) {
-  const isCancelled = transaction.cancelledAt !== undefined
   return (
-    <TableRow
-      className={cn(
-        "border-[#5b462b]/20 hover:bg-[#fffdeb]/40",
-        isCancelled && "opacity-60"
-      )}
-    >
+    <TableRow className="border-[#5b462b]/20 hover:bg-[#fffdeb]/40">
       <TableCell className="pl-4 text-muted-foreground">
         {formatDate(transaction.occurredAt)}
       </TableCell>
       <TableCell>
-        <div className="flex flex-wrap items-center gap-1.5">
-          <OperationPill kind={transaction.kind} />
-          {isCancelled ? <Badge variant="secondary">Annulée</Badge> : null}
-        </div>
+        <OperationPill kind={transaction.kind} />
       </TableCell>
       <TableCell className="max-w-72">
         <span className="block truncate font-semibold">
@@ -260,11 +248,6 @@ function JournalRow({
           </span>
         ) : null}
         <TransactionLines lines={transaction.lines} />
-        {transaction.cancellationReason ? (
-          <span className="block text-xs text-muted-foreground italic">
-            {transaction.cancellationReason}
-          </span>
-        ) : null}
       </TableCell>
       <TableCell className="max-w-40 truncate text-muted-foreground">
         {transaction.actorName}
@@ -275,7 +258,6 @@ function JournalRow({
       <TableCell
         className={cn(
           "pr-4 text-right font-semibold tabular-nums",
-          isCancelled && "line-through",
           transaction.total >= 0 ? "text-[#456044]" : "text-[#8a3e2f]"
         )}
       >
@@ -309,14 +291,8 @@ function JournalCard({
   products: readonly Doc<"products">[]
   transaction: Transaction
 }>) {
-  const isCancelled = transaction.cancelledAt !== undefined
   return (
-    <Card
-      className={cn(
-        "rounded-none border-[#5b462b]/35 bg-[#fff8e7]/30 shadow-[2px_3px_0_rgba(84,63,37,0.05)] ring-0",
-        isCancelled && "opacity-60"
-      )}
-    >
+    <Card className="rounded-none border-[#5b462b]/35 bg-[#fff8e7]/30 shadow-[2px_3px_0_rgba(84,63,37,0.05)] ring-0">
       <CardHeader>
         <CardTitle className="font-display text-base">
           {transaction.productName}
@@ -326,11 +302,7 @@ function JournalCard({
           {transaction.counterparty ? ` · ${transaction.counterparty}` : ""}
         </CardDescription>
         <CardAction className="flex items-center gap-1">
-          {isCancelled ? (
-            <Badge variant="secondary">Annulée</Badge>
-          ) : (
-            <OperationPill kind={transaction.kind} />
-          )}
+          <OperationPill kind={transaction.kind} />
         </CardAction>
       </CardHeader>
       <CardContent className="grid gap-3 border-t border-border/60 pt-4">
@@ -346,7 +318,6 @@ function JournalCard({
           <p
             className={cn(
               "font-display text-lg",
-              isCancelled && "line-through",
               transaction.total >= 0 ? "text-[#456044]" : "text-[#8a3e2f]"
             )}
           >
@@ -355,11 +326,6 @@ function JournalCard({
           </p>
         </div>
         <TransactionLines lines={transaction.lines} />
-        {transaction.cancellationReason ? (
-          <p className="text-xs text-muted-foreground italic">
-            {transaction.cancellationReason}
-          </p>
-        ) : null}
         {transaction.canManage || transaction.canDelete ? (
           <TransactionActions
             bundles={bundles}
@@ -409,9 +375,6 @@ function TransactionActions({
           />
           <TooltipContent>Modifier</TooltipContent>
         </Tooltip>
-      ) : null}
-      {transaction.canManage ? (
-        <TransactionCancellation transaction={transaction} />
       ) : null}
       {transaction.canDelete ? (
         <TransactionDeletion transaction={transaction} />
@@ -494,105 +457,6 @@ function TransactionDeletion({
             Supprimer définitivement
           </AlertDialogAction>
         </AlertDialogFooter>
-      </AlertDialogContent>
-    </AlertDialog>
-  )
-}
-
-function TransactionCancellation({
-  transaction,
-}: Readonly<{ transaction: Transaction }>) {
-  const cancelTransaction = useMutation(api.transactions.cancel)
-  const [open, setOpen] = useState(false)
-  const [reason, setReason] = useState("")
-  const [isSubmitting, setIsSubmitting] = useState(false)
-
-  function handleOpenChange(nextOpen: boolean) {
-    if (nextOpen && !open) setReason("")
-    setOpen(nextOpen)
-  }
-
-  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    if (!reason.trim()) {
-      toast.error("Le motif de l’annulation est obligatoire.")
-      return
-    }
-    setIsSubmitting(true)
-    try {
-      await cancelTransaction({
-        reason: reason.trim(),
-        transactionId: transaction._id,
-      })
-      toast.success("Opération annulée et stock corrigé.")
-      setOpen(false)
-    } catch (error) {
-      toast.error(
-        error instanceof Error
-          ? error.message
-          : "Impossible d’annuler cette opération."
-      )
-    } finally {
-      setIsSubmitting(false)
-    }
-  }
-
-  return (
-    <AlertDialog onOpenChange={handleOpenChange} open={open}>
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <AlertDialogTrigger asChild>
-            <Button
-              aria-label={`Annuler ${operationLabels[transaction.kind]} — ${transaction.productName}`}
-              className="md:size-6 md:px-0"
-              size="sm"
-              type="button"
-              variant="ghost"
-            >
-              <Undo2 aria-hidden="true" />
-              <span className="md:sr-only">Annuler</span>
-            </Button>
-          </AlertDialogTrigger>
-        </TooltipTrigger>
-        <TooltipContent>Annuler</TooltipContent>
-      </Tooltip>
-      <AlertDialogContent className="rounded-[0.2rem] border-[#6a5436] bg-[#eee1c7]">
-        <form onSubmit={handleSubmit}>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Annuler cette opération ?</AlertDialogTitle>
-            <AlertDialogDescription>
-              Le stock sera corrigé par le mouvement inverse. L’opération
-              restera visible dans le journal pour conserver une trace fiable.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <div className="my-5 grid gap-2">
-            <Label htmlFor={`cancel-${transaction._id}`}>
-              Motif de l’annulation
-            </Label>
-            <Textarea
-              id={`cancel-${transaction._id}`}
-              maxLength={500}
-              onChange={(event) => setReason(event.target.value)}
-              placeholder="Erreur de saisie, doublon, opération non réalisée…"
-              required
-              value={reason}
-            />
-          </div>
-          <AlertDialogFooter>
-            <AlertDialogCancel type="button">Conserver</AlertDialogCancel>
-            <AlertDialogAction disabled={isSubmitting} type="submit">
-              {isSubmitting ? (
-                <LoaderCircle
-                  aria-hidden="true"
-                  className="animate-spin motion-reduce:animate-none"
-                />
-              ) : (
-                <Undo2 aria-hidden="true" />
-              )}
-              Annuler l’opération
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </form>
       </AlertDialogContent>
     </AlertDialog>
   )
