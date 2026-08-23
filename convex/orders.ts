@@ -32,6 +32,12 @@ interface OrderLineForExchange {
   unitPrice?: number
 }
 
+interface LinkedTransactionCorrection {
+  actorCharacterId: Id<"characters">
+  actorName: string
+  occurredAt: number
+}
+
 function exchangeLinesFromOrder(
   kind: Doc<"orders">["kind"],
   lines: readonly OrderLineForExchange[]
@@ -83,7 +89,8 @@ async function synchronizeLinkedTransaction(
   orderKind: Doc<"orders">["kind"],
   contactName: string,
   exchangeLines: readonly Infer<typeof exchangeLineValidator>[],
-  total: number
+  total: number,
+  correction?: LinkedTransactionCorrection
 ) {
   const { movements, states } = await loadStockBeforeTransaction(
     ctx,
@@ -121,11 +128,15 @@ async function synchronizeLinkedTransaction(
   }
 
   const firstLine = prepared.lines[0]
+  const occurredAt = correction?.occurredAt ?? transaction.occurredAt
   await ctx.db.replace(transaction._id, {
-    ...(transaction.actorCharacterId
-      ? { actorCharacterId: transaction.actorCharacterId }
+    ...((correction?.actorCharacterId ?? transaction.actorCharacterId)
+      ? {
+          actorCharacterId:
+            correction?.actorCharacterId ?? transaction.actorCharacterId,
+        }
       : {}),
-    actorName: transaction.actorName,
+    actorName: correction?.actorName ?? transaction.actorName,
     ...(transaction.actorUserId
       ? { actorUserId: transaction.actorUserId }
       : {}),
@@ -135,7 +146,7 @@ async function synchronizeLinkedTransaction(
     kind: prepared.kind,
     ...(transaction.legacyKey ? { legacyKey: transaction.legacyKey } : {}),
     lineCount: prepared.lines.length,
-    occurredAt: transaction.occurredAt,
+    occurredAt,
     orderId,
     outgoingTotal: prepared.outgoingTotal,
     ...(prepared.lines.length === 1 && firstLine?.productId
@@ -167,7 +178,7 @@ async function synchronizeLinkedTransaction(
     const resultingStock = baseStock + delta
     await ctx.db.insert("stockMovements", {
       delta,
-      occurredAt: transaction.occurredAt,
+      occurredAt,
       previousStock: baseStock,
       productId: product._id,
       reason: prepared.kind,
@@ -208,6 +219,7 @@ export const list = query({
 
 export const save = mutation({
   args: {
+    actorCharacterId: v.optional(v.id("characters")),
     contactName: v.string(),
     dueAt: v.union(v.number(), v.null()),
     kind: orderKind,
@@ -220,6 +232,7 @@ export const save = mutation({
     ),
     notes: v.string(),
     orderId: v.optional(v.id("orders")),
+    processedAt: v.optional(v.number()),
     status: orderStatus,
     total: v.union(v.number(), v.null()),
   },
@@ -278,6 +291,43 @@ export const save = mutation({
       throw new ConvexError({
         code: "INVALID_LINKED_TRANSACTION",
         message: "La transaction est liée à une autre commande.",
+      })
+    }
+    if (
+      !linkedTransaction &&
+      (args.actorCharacterId !== undefined || args.processedAt !== undefined)
+    ) {
+      throw new ConvexError({
+        code: "INVALID_OPERATION",
+        message:
+          "Le personnage et la date ne peuvent être corrigés qu’après le traitement de la commande.",
+      })
+    }
+    if (
+      linkedTransaction &&
+      (args.actorCharacterId === undefined) !== (args.processedAt === undefined)
+    ) {
+      throw new ConvexError({
+        code: "INVALID_INPUT",
+        message:
+          "Le personnage et la date de la transaction doivent être corrigés ensemble.",
+      })
+    }
+    if (args.processedAt !== undefined) {
+      assertFiniteRange(
+        args.processedAt,
+        0,
+        Date.now() + 86_400_000,
+        "La date de transaction"
+      )
+    }
+    const correctedCharacter = args.actorCharacterId
+      ? await ctx.db.get(args.actorCharacterId)
+      : undefined
+    if (args.actorCharacterId && !correctedCharacter?.active) {
+      throw new ConvexError({
+        code: "NOT_FOUND",
+        message: "Personnage introuvable ou archivé.",
       })
     }
 
@@ -359,9 +409,9 @@ export const save = mutation({
       kind: args.kind,
       ...(existing?.legacyKey ? { legacyKey: existing.legacyKey } : {}),
       ...(notes ? { notes } : {}),
-      ...(existing?.processedAt === undefined
+      ...(existing?.processedAt === undefined && args.processedAt === undefined
         ? {}
-        : { processedAt: existing.processedAt }),
+        : { processedAt: args.processedAt ?? existing?.processedAt }),
       status: args.status,
       ...(total === undefined ? {} : { total }),
       ...(existing?.transactionId
@@ -403,7 +453,14 @@ export const save = mutation({
         args.kind,
         contactName,
         exchangeLines,
-        total
+        total,
+        correctedCharacter && args.processedAt !== undefined
+          ? {
+              actorCharacterId: correctedCharacter._id,
+              actorName: correctedCharacter.name,
+              occurredAt: args.processedAt,
+            }
+          : undefined
       )
       synchronizedTotal = synchronized.total
     }

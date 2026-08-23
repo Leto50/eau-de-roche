@@ -18,7 +18,6 @@ import {
 } from "react"
 import { toast } from "sonner"
 
-import { PriceInput } from "@/components/price-input"
 import { ProductPicker } from "@/components/product-picker"
 import {
   AlertDialog,
@@ -43,18 +42,19 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
+import {
+  InputGroup,
+  InputGroupAddon,
+  InputGroupInput,
+  InputGroupText,
+} from "@/components/ui/input-group"
 import { Label } from "@/components/ui/label"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Separator } from "@/components/ui/separator"
 import { Textarea } from "@/components/ui/textarea"
 import { api } from "../../convex/_generated/api"
 import { type Doc } from "../../convex/_generated/dataModel"
-import { formatSeptims } from "@/lib/format"
-import {
-  priceDraftFromValue,
-  priceDraftToValue,
-  type PriceDraft,
-} from "@/lib/prices"
+import { formatDecimalSeptims } from "@/lib/format"
 
 type Recipe = FunctionReturnType<typeof api.recipes.list>[number]
 
@@ -82,9 +82,7 @@ export function RecipeDialog({
   const [family, setFamily] = useState("")
   const [effect, setEffect] = useState("")
   const [productId, setProductId] = useState("")
-  const [cost, setCost] = useState<PriceDraft>(() =>
-    priceDraftFromValue(undefined)
-  )
+  const [cost, setCost] = useState("")
   const [ingredients, setIngredients] = useState<IngredientDraft[]>([
     { key: 0, productId: "", quantity: "1" },
   ])
@@ -96,7 +94,7 @@ export function RecipeDialog({
     setFamily(recipe?.family ?? "")
     setEffect(recipe?.effect ?? "")
     setProductId(recipe?.productId ?? "")
-    setCost(priceDraftFromValue(recipe?.cost))
+    setCost(recipe?.cost?.toString() ?? "")
     if (recipe?.ingredients.length) {
       setIngredients(
         recipe.ingredients.map((ingredient, index) => ({
@@ -142,7 +140,7 @@ export function RecipeDialog({
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
-    const submittedCost = priceDraftToValue(cost)
+    const submittedCost = cost.trim() ? Number(cost) : null
     const preparedIngredients = ingredients.map((ingredient) => ({
       productId: ingredientProducts.find(
         (product) => product._id === ingredient.productId
@@ -179,10 +177,11 @@ export function RecipeDialog({
       toast.error("Un ingrédient ne peut apparaître qu’une fois.")
       return
     }
-    if (submittedCost !== null && !Number.isFinite(submittedCost)) {
-      toast.error(
-        "Indiquez un nombre entier de septims pour un nombre entier d’unités."
-      )
+    if (
+      submittedCost !== null &&
+      (!Number.isFinite(submittedCost) || submittedCost < 0)
+    ) {
+      toast.error("Le coût de fabrication doit être un nombre positif.")
       return
     }
 
@@ -302,11 +301,21 @@ export function RecipeDialog({
             </div>
             <div className="grid gap-2">
               <Label htmlFor={`${fieldId}-cost`}>Coût de fabrication</Label>
-              <PriceInput
-                id={`${fieldId}-cost`}
-                onValueChange={setCost}
-                value={cost}
-              />
+              <InputGroup>
+                <InputGroupInput
+                  id={`${fieldId}-cost`}
+                  inputMode="decimal"
+                  min="0"
+                  onChange={(event) => setCost(event.target.value)}
+                  placeholder="Ex. 19,5"
+                  step="any"
+                  type="number"
+                  value={cost}
+                />
+                <InputGroupAddon align="inline-end">
+                  <InputGroupText>septims</InputGroupText>
+                </InputGroupAddon>
+              </InputGroup>
             </div>
           </div>
 
@@ -523,7 +532,7 @@ export function RecipeArchivesDialog() {
                       {recipe.family}
                       {recipe.cost === undefined
                         ? ""
-                        : ` · ${formatSeptims(recipe.cost)}`}
+                        : ` · ${formatDecimalSeptims(recipe.cost)}`}
                     </p>
                   </div>
                   <Button

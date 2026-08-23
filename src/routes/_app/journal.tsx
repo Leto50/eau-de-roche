@@ -15,6 +15,7 @@ import { useState, type MouseEvent } from "react"
 import { toast } from "sonner"
 
 import { OperationDialog } from "@/components/operation-dialog"
+import { OrderDialog } from "@/components/order-dialog"
 import { PageError } from "@/components/page-error"
 import { PageHeader } from "@/components/page-header"
 import { PageSkeleton } from "@/components/page-skeleton"
@@ -60,6 +61,8 @@ import {
 } from "@/components/ui/tooltip"
 import { api } from "../../../convex/_generated/api"
 import { type Doc } from "../../../convex/_generated/dataModel"
+import { useHydrated } from "@/hooks/use-hydrated"
+import { authClient } from "@/lib/auth-client"
 import {
   formatDate,
   formatNumber,
@@ -71,6 +74,8 @@ import { cn } from "@/lib/utils"
 
 type Transaction = FunctionReturnType<typeof api.transactions.list>[number]
 type Bundle = FunctionReturnType<typeof api.recipes.listBundles>[number]
+type Order = FunctionReturnType<typeof api.orders.list>[number]
+type Recipe = FunctionReturnType<typeof api.recipes.list>[number]
 
 export const Route = createFileRoute("/_app/journal")({
   component: JournalPage,
@@ -87,6 +92,8 @@ export const Route = createFileRoute("/_app/journal")({
       context.queryClient.ensureQueryData(
         convexQuery(api.recipes.listBundles, {})
       ),
+      context.queryClient.ensureQueryData(convexQuery(api.orders.list, {})),
+      context.queryClient.ensureQueryData(convexQuery(api.recipes.list, {})),
     ])
   },
   pendingComponent: PageSkeleton,
@@ -106,6 +113,8 @@ const operationToneClasses: Readonly<
 }
 
 function JournalPage() {
+  const { data: session } = authClient.useSession()
+  const isHydrated = useHydrated()
   const { data: transactions } = useSuspenseQuery(
     convexQuery(api.transactions.list, { limit: 150 })
   )
@@ -118,6 +127,10 @@ function JournalPage() {
   const { data: bundles } = useSuspenseQuery(
     convexQuery(api.recipes.listBundles, {})
   )
+  const { data: orders } = useSuspenseQuery(convexQuery(api.orders.list, {}))
+  const { data: recipes } = useSuspenseQuery(convexQuery(api.recipes.list, {}))
+  const isAdmin =
+    isHydrated && (session?.user.role?.split(",").includes("admin") ?? false)
   const showActions = transactions.some(
     (transaction) => transaction.canManage || transaction.canDelete
   )
@@ -175,8 +188,11 @@ function JournalPage() {
                     <JournalRow
                       bundles={bundles}
                       characters={characters}
+                      isAdmin={isAdmin}
                       key={transaction._id}
+                      orders={orders}
                       products={products}
+                      recipes={recipes}
                       showActions={showActions}
                       transaction={transaction}
                     />
@@ -191,8 +207,11 @@ function JournalPage() {
               <JournalCard
                 bundles={bundles}
                 characters={characters}
+                isAdmin={isAdmin}
                 key={transaction._id}
+                orders={orders}
                 products={products}
+                recipes={recipes}
                 transaction={transaction}
               />
             ))}
@@ -213,6 +232,7 @@ function JournalPage() {
 
 function isEditableTransaction(transaction: Transaction): boolean {
   return (
+    Boolean(transaction.orderId) ||
     transaction.kind === "production" ||
     transaction.kind === "exchange" ||
     transaction.kind === "purchase" ||
@@ -237,13 +257,19 @@ function OperationPill({
 function JournalRow({
   bundles,
   characters,
+  isAdmin,
+  orders,
   products,
+  recipes,
   showActions,
   transaction,
 }: Readonly<{
   bundles: readonly Bundle[]
   characters: readonly Doc<"characters">[]
+  isAdmin: boolean
+  orders: readonly Order[]
   products: readonly Doc<"products">[]
+  recipes: readonly Recipe[]
   showActions: boolean
   transaction: Transaction
 }>) {
@@ -289,7 +315,10 @@ function JournalRow({
             <TransactionActions
               bundles={bundles}
               characters={characters}
+              isAdmin={isAdmin}
+              orders={orders}
               products={products}
+              recipes={recipes}
               transaction={transaction}
             />
           ) : null}
@@ -302,12 +331,18 @@ function JournalRow({
 function JournalCard({
   bundles,
   characters,
+  isAdmin,
+  orders,
   products,
+  recipes,
   transaction,
 }: Readonly<{
   bundles: readonly Bundle[]
   characters: readonly Doc<"characters">[]
+  isAdmin: boolean
+  orders: readonly Order[]
   products: readonly Doc<"products">[]
+  recipes: readonly Recipe[]
   transaction: Transaction
 }>) {
   return (
@@ -355,7 +390,10 @@ function JournalCard({
           <TransactionActions
             bundles={bundles}
             characters={characters}
+            isAdmin={isAdmin}
+            orders={orders}
             products={products}
+            recipes={recipes}
             transaction={transaction}
           />
         ) : null}
@@ -367,37 +405,74 @@ function JournalCard({
 function TransactionActions({
   bundles,
   characters,
+  isAdmin,
+  orders,
   products,
+  recipes,
   transaction,
 }: Readonly<{
   bundles: readonly Bundle[]
   characters: readonly Doc<"characters">[]
+  isAdmin: boolean
+  orders: readonly Order[]
   products: readonly Doc<"products">[]
+  recipes: readonly Recipe[]
   transaction: Transaction
 }>) {
+  const linkedOrder = transaction.orderId
+    ? orders.find((order) => order._id === transaction.orderId)
+    : undefined
+  const canEdit =
+    transaction.canManage &&
+    isEditableTransaction(transaction) &&
+    (!transaction.orderId || linkedOrder !== undefined)
+
   return (
     <div className="flex flex-nowrap justify-end gap-1">
-      {transaction.canManage && isEditableTransaction(transaction) ? (
+      {canEdit ? (
         <Tooltip>
-          <OperationDialog
-            bundles={bundles}
-            characters={characters}
-            products={products}
-            transaction={transaction}
-            trigger={
-              <TooltipTrigger asChild>
-                <Button
-                  className="md:size-6 md:px-0"
-                  size="sm"
-                  type="button"
-                  variant="ghost"
-                >
-                  <Pencil aria-hidden="true" />
-                  <span className="md:sr-only">Modifier</span>
-                </Button>
-              </TooltipTrigger>
-            }
-          />
+          {linkedOrder ? (
+            <OrderDialog
+              characters={characters}
+              isAdmin={isAdmin}
+              order={linkedOrder}
+              products={products}
+              recipes={recipes}
+              trigger={
+                <TooltipTrigger asChild>
+                  <Button
+                    className="md:size-6 md:px-0"
+                    size="sm"
+                    type="button"
+                    variant="ghost"
+                  >
+                    <Pencil aria-hidden="true" />
+                    <span className="md:sr-only">Modifier</span>
+                  </Button>
+                </TooltipTrigger>
+              }
+            />
+          ) : (
+            <OperationDialog
+              bundles={bundles}
+              characters={characters}
+              products={products}
+              transaction={transaction}
+              trigger={
+                <TooltipTrigger asChild>
+                  <Button
+                    className="md:size-6 md:px-0"
+                    size="sm"
+                    type="button"
+                    variant="ghost"
+                  >
+                    <Pencil aria-hidden="true" />
+                    <span className="md:sr-only">Modifier</span>
+                  </Button>
+                </TooltipTrigger>
+              }
+            />
+          )}
           <TooltipContent>Modifier</TooltipContent>
         </Tooltip>
       ) : null}

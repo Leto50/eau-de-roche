@@ -228,13 +228,16 @@ describe("orders", () => {
       total: 1,
     })
 
+    const savedCorrectionDate = Date.now() - 750
     await employee.mutation(api.orders.save, {
+      actorCharacterId: characterId,
       contactName: "Client corrigé",
       dueAt: null,
       kind: "client",
       lines: [{ productId, quantity: 8, unitPrice: 1 / 4 }],
       notes: "Quantité corrigée après paiement.",
       orderId,
+      processedAt: savedCorrectionDate,
       status: "ready",
       total: 1,
     })
@@ -247,17 +250,25 @@ describe("orders", () => {
         .collect(),
       order: await ctx.db.get(orderId),
       product: await ctx.db.get(productId),
+      movements: await ctx.db
+        .query("stockMovements")
+        .withIndex("by_transaction", (index) =>
+          index.eq("transactionId", result.transactionId)
+        )
+        .collect(),
       transaction: await ctx.db.get(result.transactionId),
     }))
     expect(correctedOrderState.order).toMatchObject({
       contactName: "Client corrigé",
-      processedAt: correctedPaymentDate,
+      processedAt: savedCorrectionDate,
       total: 1,
       transactionId: result.transactionId,
     })
     expect(correctedOrderState.transaction).toMatchObject({
       counterparty: "Client corrigé",
-      occurredAt: correctedPaymentDate,
+      actorCharacterId: characterId,
+      actorName: "Caissière test",
+      occurredAt: savedCorrectionDate,
       productName: "Commande de Client corrigé",
       total: 1,
     })
@@ -265,6 +276,9 @@ describe("orders", () => {
       expect.objectContaining({ quantity: 8, total: 2 }),
     ])
     expect(correctedOrderState.product?.currentStock).toBe(2)
+    expect(correctedOrderState.movements).toEqual([
+      expect.objectContaining({ occurredAt: savedCorrectionDate }),
+    ])
 
     const correctedDate = Date.now() - 500
     await employee.mutation(api.transactions.updateExchange, {

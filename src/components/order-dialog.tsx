@@ -110,6 +110,7 @@ function defaultPrice(product: Doc<"products">, kind: OrderKind) {
 }
 
 export function OrderDialog({
+  characters,
   initialKind = "client",
   isAdmin,
   order,
@@ -117,6 +118,7 @@ export function OrderDialog({
   recipes,
   trigger,
 }: Readonly<{
+  characters: readonly Doc<"characters">[]
   initialKind?: OrderKind
   isAdmin: boolean
   order?: Order
@@ -136,6 +138,8 @@ export function OrderDialog({
   const [dueDate, setDueDate] = useState("")
   const [notes, setNotes] = useState("")
   const [status, setStatus] = useState<OrderStatus>("open")
+  const [processedCharacterId, setProcessedCharacterId] = useState("")
+  const [processedDate, setProcessedDate] = useState("")
   const [lines, setLines] = useState<OrderLineDraft[]>([
     {
       key: 0,
@@ -154,6 +158,12 @@ export function OrderDialog({
     setDueDate(dateInputFromTimestamp(order?.dueAt))
     setNotes(order?.notes ?? "")
     setStatus(order?.status ?? "open")
+    setProcessedCharacterId(order?.linkedTransaction?.actorCharacterId ?? "")
+    setProcessedDate(
+      dateInputFromTimestamp(
+        order?.processedAt ?? order?.linkedTransaction?.occurredAt
+      )
+    )
     if (order?.lines.length) {
       setLines(
         order.lines.map((line, index) => ({
@@ -252,6 +262,7 @@ export function OrderDialog({
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     const submittedDueAt = timestampFromDateInput(dueDate)
+    const submittedProcessedAt = timestampFromDateInput(processedDate)
     const preparedLines = lines.map((line) => ({
       productId: products.find((product) => product._id === line.productId)
         ?._id,
@@ -269,6 +280,17 @@ export function OrderDialog({
     }
     if (submittedDueAt !== null && !Number.isFinite(submittedDueAt)) {
       toast.error("La date prévue n’est pas valide.")
+      return
+    }
+    if (
+      order?.transactionId &&
+      (!characters.some(
+        (character) => character._id === processedCharacterId
+      ) ||
+        submittedProcessedAt === null ||
+        !Number.isFinite(submittedProcessedAt))
+    ) {
+      toast.error("Choisissez le personnage et la date de la transaction liée.")
       return
     }
     if (
@@ -314,6 +336,13 @@ export function OrderDialog({
     setIsSubmitting(true)
     try {
       await saveOrder({
+        ...(order?.transactionId
+          ? {
+              actorCharacterId:
+                processedCharacterId as Doc<"characters">["_id"],
+              processedAt: submittedProcessedAt!,
+            }
+          : {}),
         contactName: contactName.trim(),
         dueAt: submittedDueAt,
         kind,
@@ -400,9 +429,8 @@ export function OrderDialog({
             <RefreshCw aria-hidden="true" />
             <AlertTitle>Correction synchronisée</AlertTitle>
             <AlertDescription>
-              Les lignes, le total, la transaction et le stock seront corrigés
-              ensemble. Le personnage et la date se modifient depuis le bouton
-              de paiement ou de réception de la fiche.
+              Les lignes, le total, le personnage, la date, la transaction et le
+              stock seront corrigés ensemble.
             </AlertDescription>
           </Alert>
         ) : null}
@@ -444,6 +472,50 @@ export function OrderDialog({
               />
             </div>
           </div>
+
+          {order?.transactionId ? (
+            <Card className="gap-0 rounded-none border-primary/25 bg-primary/[0.035] py-0 ring-0">
+              <CardContent className="grid gap-4 p-3 sm:grid-cols-2">
+                <div className="grid min-w-0 gap-2">
+                  <Label htmlFor={`${fieldId}-processed-character`}>
+                    Personnage de la transaction
+                  </Label>
+                  <Select
+                    onValueChange={setProcessedCharacterId}
+                    value={processedCharacterId}
+                  >
+                    <SelectTrigger
+                      className="w-full"
+                      id={`${fieldId}-processed-character`}
+                    >
+                      <SelectValue placeholder="Choisir un personnage" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {characters.map((character) => (
+                        <SelectItem key={character._id} value={character._id}>
+                          {character.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="grid gap-2">
+                  <Label htmlFor={`${fieldId}-processed-date`}>
+                    {kind === "client"
+                      ? "Date du paiement"
+                      : "Date de réception"}
+                  </Label>
+                  <Input
+                    id={`${fieldId}-processed-date`}
+                    onChange={(event) => setProcessedDate(event.target.value)}
+                    required
+                    type="date"
+                    value={processedDate}
+                  />
+                </div>
+              </CardContent>
+            </Card>
+          ) : null}
 
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="grid gap-2">

@@ -161,6 +161,7 @@ function OrdersPage() {
       <PageHeader
         action={
           <OrderDialog
+            characters={characters}
             initialKind={kind}
             isAdmin={isAdmin}
             products={products}
@@ -296,6 +297,7 @@ function OrderEntry({
             </SelectContent>
           </Select>
           <OrderDialog
+            characters={characters}
             isAdmin={isAdmin}
             order={order}
             products={products}

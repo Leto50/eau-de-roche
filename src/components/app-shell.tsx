@@ -4,6 +4,7 @@ import {
   BookOpenText,
   Boxes,
   ClipboardList,
+  Landmark,
   LayoutDashboard,
   LogOut,
   ScrollText,
@@ -42,6 +43,7 @@ interface NavigationItem {
   to:
     | "/"
     | "/commandes"
+    | "/compte"
     | "/inventaire"
     | "/journal"
     | "/personnages"
@@ -52,6 +54,7 @@ const navigation: readonly NavigationItem[] = [
   { icon: LayoutDashboard, label: "Aujourd’hui", to: "/" },
   { icon: Boxes, label: "Inventaire", to: "/inventaire" },
   { icon: ScrollText, label: "Activité", to: "/journal" },
+  { icon: Landmark, label: "Compte", to: "/compte" },
   { icon: ClipboardList, label: "Commandes", to: "/commandes" },
   { icon: BookOpenText, label: "Recettes & lots", to: "/recettes" },
 ]

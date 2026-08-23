@@ -11,6 +11,19 @@ import {
 } from "./lib/validators"
 
 export default defineSchema({
+  accountSettings: defineTable({
+    cashBalance: v.number(),
+    censusPerEmployee: v.number(),
+    employeeCount: v.number(),
+    fundsBalance: v.number(),
+    key: v.literal("main"),
+    salaryPerEmployee: v.number(),
+    taxRate: v.number(),
+    updatedAt: v.number(),
+    updatedBy: v.string(),
+    weeklyRent: v.number(),
+  }).index("by_key", ["key"]),
+
   products: defineTable({
     active: v.boolean(),
     category: productCategory,

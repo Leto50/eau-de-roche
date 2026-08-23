@@ -43,6 +43,7 @@ import {
 import { api } from "../../../convex/_generated/api"
 import {
   formatDate,
+  formatDecimalSeptims,
   formatNumber,
   formatQuantity,
   formatSeptims,
@@ -219,7 +220,7 @@ function DashboardPage() {
               Valeur estimée du stock
             </p>
             <p className="mt-1 font-display text-2xl leading-none font-[600] text-primary tabular-nums">
-              {formatSeptims(data.stockValue)}
+              {formatDecimalSeptims(data.stockValue)}
             </p>
             <p className="mt-1 text-xs text-muted-foreground">
               Prix d’achat, ou de vente à défaut

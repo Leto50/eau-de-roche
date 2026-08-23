@@ -33,7 +33,7 @@ import { api } from "../../../convex/_generated/api"
 import { type Doc } from "../../../convex/_generated/dataModel"
 import { useHydrated } from "@/hooks/use-hydrated"
 import { authClient } from "@/lib/auth-client"
-import { formatNumber, formatSeptims } from "@/lib/format"
+import { formatDecimalSeptims, formatNumber, formatSeptims } from "@/lib/format"
 
 type Recipe = FunctionReturnType<typeof api.recipes.list>[number]
 type Bundle = FunctionReturnType<typeof api.recipes.listBundles>[number]
@@ -223,7 +223,7 @@ function RecipeEntry({
           {recipe.name}
         </CardTitle>
         <CardAction className="flex items-center gap-1 text-sm font-semibold">
-          {recipe.cost !== undefined ? formatSeptims(recipe.cost) : null}
+          {recipe.cost !== undefined ? formatDecimalSeptims(recipe.cost) : null}
           {isAdmin ? (
             <RecipeDialog
               products={products}

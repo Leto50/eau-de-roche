@@ -10,7 +10,7 @@ import {
   CollapsibleTrigger,
 } from "@/components/ui/collapsible"
 import { Separator } from "@/components/ui/separator"
-import { formatNumber, formatSeptims } from "@/lib/format"
+import { formatDecimalSeptims, formatNumber } from "@/lib/format"
 import { type OrderPreparation } from "@/lib/order-preparation"
 import { cn } from "@/lib/utils"
 
@@ -50,7 +50,7 @@ export function OrderPreparationDetails({
                       : "ingrédients"}
                     {preparation.productionCost === undefined
                       ? " · coût matière incomplet"
-                      : ` · coût matière : ${formatSeptims(preparation.productionCost)}`}
+                      : ` · coût matière : ${formatDecimalSeptims(preparation.productionCost)}`}
                   </span>
                 </span>
               </span>

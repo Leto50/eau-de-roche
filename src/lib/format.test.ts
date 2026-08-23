@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest"
 
-import { formatQuantity, formatSeptims, formatUnitPrice } from "./format"
+import {
+  formatDecimalSeptims,
+  formatQuantity,
+  formatSeptims,
+  formatUnitPrice,
+} from "./format"
 
 describe("formatQuantity", () => {
   it("accorde unité au singulier", () => {
@@ -20,6 +25,14 @@ describe("formatSeptims", () => {
     expect(formatSeptims(3.5)).toBe("3 1/2 sept.")
     expect(formatSeptims(1_234.5)).toBe("1 234 1/2 sept.")
     expect(formatSeptims(-0.25)).toBe("−1/4 sept.")
+  })
+})
+
+describe("formatDecimalSeptims", () => {
+  it("affiche les valeurs calculées en décimal plutôt qu’en fraction", () => {
+    expect(formatDecimalSeptims(1 / 3)).toBe("0,33 sept.")
+    expect(formatDecimalSeptims(1_234.5)).toBe("1 234,5 sept.")
+    expect(formatDecimalSeptims(-0.25)).toBe("−0,25 sept.")
   })
 })
 
