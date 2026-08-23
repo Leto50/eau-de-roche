@@ -165,6 +165,91 @@ describe("transactions.record", () => {
   })
 })
 
+describe("transactions.recordExchange", () => {
+  it("mélange produits, lot, service et achat dans un seul panier", async () => {
+    const backend = createTestBackend()
+    const member = await asAuthenticatedUser(backend)
+    const { characterId, productId } = await seedStock(backend)
+    const references = await backend.run(async (ctx) => {
+      const ingredientId = await ctx.db.insert("products", {
+        active: true,
+        category: "ingredient",
+        currentStock: 1,
+        minimumStock: 0,
+        name: "Ail du test",
+        normalizedName: "ail du test",
+        purchasePrice: 1 / 4,
+        tracksStock: true,
+      })
+      const serviceId = await ctx.db.insert("products", {
+        active: true,
+        category: "service",
+        currentStock: 0,
+        minimumStock: 0,
+        name: "Location test",
+        normalizedName: "location test",
+        salePrice: 20,
+        tracksStock: false,
+      })
+      const bundleId = await ctx.db.insert("bundles", {
+        active: true,
+        name: "Lot du test",
+        price: 30,
+      })
+      await ctx.db.insert("bundleItems", {
+        bundleId,
+        productId,
+        productName: "Potion de soin",
+        quantity: 2,
+      })
+      return { bundleId, ingredientId, serviceId }
+    })
+
+    const result = await member.mutation(api.transactions.recordExchange, {
+      characterId,
+      lines: [
+        {
+          bundleId: references.bundleId,
+          direction: "outgoing",
+          kind: "bundle",
+          quantity: 1,
+        },
+        {
+          direction: "outgoing",
+          kind: "product",
+          productId: references.serviceId,
+          quantity: 1,
+        },
+        {
+          direction: "incoming",
+          kind: "product",
+          productId: references.ingredientId,
+          quantity: 4,
+        },
+      ],
+      occurredAt: Date.now(),
+    })
+    const state = await backend.run(async (ctx) => ({
+      ingredient: await ctx.db.get(references.ingredientId),
+      lines: await ctx.db.query("transactionLines").collect(),
+      potion: await ctx.db.get(productId),
+      transactions: await ctx.db.query("transactions").collect(),
+    }))
+
+    expect(result).toMatchObject({
+      incomingTotal: 1,
+      outgoingTotal: 50,
+      total: 49,
+    })
+    expect(state.transactions[0]).toMatchObject({ kind: "exchange" })
+    expect(state.potion?.currentStock).toBe(8)
+    expect(state.ingredient?.currentStock).toBe(5)
+    expect(state.lines.map((line) => line.direction)).toEqual(
+      expect.arrayContaining(["incoming", "outgoing"])
+    )
+  })
+})
+
 describe("transactions.recordTrade", () => {
   it("enregistre un achat multi-produits dans une seule transaction", async () => {
     const backend = createTestBackend()

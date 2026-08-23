@@ -6,6 +6,7 @@ import {
   orderStatus,
   productCategory,
   transactionKind,
+  transactionLineDirection,
   transactionLineKind,
 } from "./lib/validators"
 
@@ -53,10 +54,13 @@ export default defineSchema({
     comment: v.optional(v.string()),
     counterparty: v.optional(v.string()),
     discount: v.optional(v.number()),
+    incomingTotal: v.optional(v.number()),
     kind: transactionKind,
     legacyKey: v.optional(v.string()),
     lineCount: v.optional(v.number()),
     occurredAt: v.number(),
+    orderId: v.optional(v.id("orders")),
+    outgoingTotal: v.optional(v.number()),
     productId: v.optional(v.id("products")),
     productName: v.string(),
     quantity: v.number(),
@@ -71,6 +75,7 @@ export default defineSchema({
 
   transactionLines: defineTable({
     bundleId: v.optional(v.id("bundles")),
+    direction: v.optional(transactionLineDirection),
     kind: transactionLineKind,
     productId: v.optional(v.id("products")),
     productName: v.string(),
@@ -100,14 +105,19 @@ export default defineSchema({
     kind: orderKind,
     legacyKey: v.optional(v.string()),
     notes: v.optional(v.string()),
+    processedAt: v.optional(v.number()),
     status: orderStatus,
     total: v.optional(v.number()),
+    transactionId: v.optional(v.id("transactions")),
   })
     .index("by_kind_and_status", ["kind", "status"])
     .index("by_legacy_key", ["legacyKey"])
-    .index("by_status", ["status"]),
+    .index("by_status", ["status"])
+    .index("by_transaction", ["transactionId"]),
 
   orderLines: defineTable({
+    bundleId: v.optional(v.id("bundles")),
+    kind: v.optional(transactionLineKind),
     legacyKey: v.optional(v.string()),
     orderId: v.id("orders"),
     productId: v.optional(v.id("products")),

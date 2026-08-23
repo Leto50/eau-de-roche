@@ -8,6 +8,7 @@ import {
   assertWholeNumberRange,
   roundSeptimsDown,
 } from "./lib/numbers"
+import { exchangeLineValidator, prepareExchange } from "./lib/exchange"
 import { stockOperationKind } from "./lib/validators"
 
 const MAX_TEXT_LENGTH = 500
@@ -62,8 +63,9 @@ function requireTransactionManager(
 
 function isEditableKind(
   kind: Doc<"transactions">["kind"]
-): kind is "production" | "purchase" | "sale" | "service" {
+): kind is "exchange" | "production" | "purchase" | "sale" | "service" {
   return (
+    kind === "exchange" ||
     kind === "production" ||
     kind === "purchase" ||
     kind === "sale" ||
@@ -132,6 +134,98 @@ export const list = query({
         }
       })
     )
+  },
+})
+
+export const recordExchange = mutation({
+  args: {
+    characterId: v.id("characters"),
+    comment: v.optional(v.string()),
+    counterparty: v.optional(v.string()),
+    discount: v.optional(v.number()),
+    lines: v.array(exchangeLineValidator),
+    occurredAt: v.number(),
+  },
+  handler: async (ctx, args) => {
+    const user = await requireUser(ctx)
+    const character = await ctx.db.get(args.characterId)
+    if (!character?.active) {
+      throw new ConvexError({
+        code: "NOT_FOUND",
+        message: "Personnage introuvable ou archivé.",
+      })
+    }
+    assertFiniteRange(args.occurredAt, 0, Date.now() + 86_400_000, "La date")
+    const discount = args.discount ?? 0
+    const prepared = await prepareExchange(ctx, args.lines, { discount })
+    const comment = cleanOptionalText(args.comment)
+    const counterparty = cleanOptionalText(args.counterparty)
+    const firstLine = prepared.lines[0]
+    const transactionId = await ctx.db.insert("transactions", {
+      actorCharacterId: character._id,
+      actorName: character.name,
+      actorUserId: String(user._id),
+      ...(comment ? { comment } : {}),
+      ...(counterparty ? { counterparty } : {}),
+      ...(discount > 0 ? { discount } : {}),
+      incomingTotal: prepared.incomingTotal,
+      kind: prepared.kind,
+      lineCount: prepared.lines.length,
+      occurredAt: args.occurredAt,
+      outgoingTotal: prepared.outgoingTotal,
+      productName:
+        prepared.lines.length === 1 && firstLine
+          ? firstLine.productName
+          : `${prepared.lines.length} références`,
+      quantity: prepared.lines.reduce((sum, line) => sum + line.quantity, 0),
+      source: "web",
+      total: prepared.total,
+      ...(prepared.lines.length === 1 && firstLine
+        ? { unitPrice: firstLine.unitPrice }
+        : {}),
+    })
+
+    for (const line of prepared.lines) {
+      await ctx.db.insert("transactionLines", {
+        ...(line.bundleId ? { bundleId: line.bundleId } : {}),
+        direction: line.direction,
+        kind: line.kind,
+        ...(line.productId ? { productId: line.productId } : {}),
+        productName: line.productName,
+        quantity: line.quantity,
+        total: line.total,
+        transactionId,
+        unitPrice: line.unitPrice,
+      })
+    }
+    for (const { delta, product } of prepared.deltas.values()) {
+      const resultingStock = product.currentStock + delta
+      await ctx.db.patch(product._id, { currentStock: resultingStock })
+      await ctx.db.insert("stockMovements", {
+        delta,
+        occurredAt: args.occurredAt,
+        previousStock: product.currentStock,
+        productId: product._id,
+        reason: prepared.kind,
+        resultingStock,
+        transactionId,
+      })
+    }
+    await ctx.db.insert("auditLogs", {
+      action: "exchange.recorded",
+      actorUserId: String(user._id),
+      createdAt: Date.now(),
+      detail: `${prepared.lines.length}:${prepared.total}`,
+      entityId: transactionId,
+      entityType: "transaction",
+    })
+
+    return {
+      incomingTotal: prepared.incomingTotal,
+      outgoingTotal: prepared.outgoingTotal,
+      total: prepared.total,
+      transactionId,
+    }
   },
 })
 
@@ -551,6 +645,164 @@ async function loadStockBeforeTransaction(
   return { movements, states }
 }
 
+export const updateExchange = mutation({
+  args: {
+    characterId: v.id("characters"),
+    comment: v.optional(v.string()),
+    counterparty: v.optional(v.string()),
+    discount: v.optional(v.number()),
+    lines: v.array(exchangeLineValidator),
+    occurredAt: v.number(),
+    transactionId: v.id("transactions"),
+  },
+  handler: async (ctx, args) => {
+    const user = await requireUser(ctx)
+    const transaction = await ctx.db.get(args.transactionId)
+    if (!transaction) {
+      throw new ConvexError({
+        code: "NOT_FOUND",
+        message: "Opération introuvable.",
+      })
+    }
+    if (transaction.kind === "production") {
+      throw new ConvexError({
+        code: "INVALID_OPERATION",
+        message: "Une production utilise son formulaire dédié.",
+      })
+    }
+    requireTransactionManager(user, transaction)
+    const character = await ctx.db.get(args.characterId)
+    if (!character?.active) {
+      throw new ConvexError({
+        code: "NOT_FOUND",
+        message: "Personnage introuvable ou archivé.",
+      })
+    }
+    assertFiniteRange(args.occurredAt, 0, Date.now() + 86_400_000, "La date")
+    const { movements, states } = await loadStockBeforeTransaction(
+      ctx,
+      transaction._id
+    )
+    const baseStocks = new Map(
+      [...states].map(([productId, state]) => [productId, state.baseStock])
+    )
+    const discount = args.discount ?? 0
+    const prepared = await prepareExchange(ctx, args.lines, {
+      baseStocks,
+      discount,
+    })
+    const existingLines = await ctx.db
+      .query("transactionLines")
+      .withIndex("by_transaction", (index) =>
+        index.eq("transactionId", transaction._id)
+      )
+      .collect()
+    const stockIds = new Set([...states.keys(), ...prepared.deltas.keys()])
+    for (const productId of stockIds) {
+      const state = states.get(productId)
+      const newDelta = prepared.deltas.get(productId)
+      const product = state?.product ?? newDelta?.product
+      if (!product) continue
+      const baseStock = state?.baseStock ?? product.currentStock
+      const resultingStock = baseStock + (newDelta?.delta ?? 0)
+      if (resultingStock < 0) {
+        throw new ConvexError({
+          code: "INSUFFICIENT_STOCK",
+          message: `Stock insuffisant pour « ${product.name} » : ${baseStock} disponibles.`,
+        })
+      }
+    }
+
+    await Promise.all([
+      ...existingLines.map((line) => ctx.db.delete(line._id)),
+      ...movements.map((movement) => ctx.db.delete(movement._id)),
+    ])
+    for (const productId of stockIds) {
+      const state = states.get(productId)
+      const newDelta = prepared.deltas.get(productId)
+      const product = state?.product ?? newDelta?.product
+      if (!product) continue
+      const baseStock = state?.baseStock ?? product.currentStock
+      await ctx.db.patch(product._id, {
+        currentStock: baseStock + (newDelta?.delta ?? 0),
+      })
+    }
+
+    const comment = cleanOptionalText(args.comment)
+    const counterparty = cleanOptionalText(args.counterparty)
+    const firstLine = prepared.lines[0]
+    await ctx.db.replace(transaction._id, {
+      actorCharacterId: character._id,
+      actorName: character.name,
+      actorUserId: transaction.actorUserId ?? String(user._id),
+      ...(comment ? { comment } : {}),
+      ...(counterparty ? { counterparty } : {}),
+      ...(discount > 0 ? { discount } : {}),
+      incomingTotal: prepared.incomingTotal,
+      kind: prepared.kind,
+      ...(transaction.legacyKey ? { legacyKey: transaction.legacyKey } : {}),
+      lineCount: prepared.lines.length,
+      occurredAt: args.occurredAt,
+      ...(transaction.orderId ? { orderId: transaction.orderId } : {}),
+      outgoingTotal: prepared.outgoingTotal,
+      productName:
+        prepared.lines.length === 1 && firstLine
+          ? firstLine.productName
+          : `${prepared.lines.length} références`,
+      quantity: prepared.lines.reduce((sum, line) => sum + line.quantity, 0),
+      source: transaction.source,
+      total: prepared.total,
+      ...(prepared.lines.length === 1 && firstLine
+        ? { unitPrice: firstLine.unitPrice }
+        : {}),
+    })
+    if (transaction.orderId) {
+      await ctx.db.patch(transaction.orderId, { processedAt: args.occurredAt })
+    }
+    for (const line of prepared.lines) {
+      await ctx.db.insert("transactionLines", {
+        ...(line.bundleId ? { bundleId: line.bundleId } : {}),
+        direction: line.direction,
+        kind: line.kind,
+        ...(line.productId ? { productId: line.productId } : {}),
+        productName: line.productName,
+        quantity: line.quantity,
+        total: line.total,
+        transactionId: transaction._id,
+        unitPrice: line.unitPrice,
+      })
+    }
+    for (const { delta, product } of prepared.deltas.values()) {
+      const baseStock =
+        states.get(product._id)?.baseStock ?? product.currentStock
+      const resultingStock = baseStock + delta
+      await ctx.db.insert("stockMovements", {
+        delta,
+        occurredAt: args.occurredAt,
+        previousStock: baseStock,
+        productId: product._id,
+        reason: prepared.kind,
+        resultingStock,
+        transactionId: transaction._id,
+      })
+    }
+    await ctx.db.insert("auditLogs", {
+      action: "transaction.updated",
+      actorUserId: String(user._id),
+      createdAt: Date.now(),
+      detail: `${transaction.kind}->${prepared.kind}:${transaction.total}->${prepared.total}`,
+      entityId: transaction._id,
+      entityType: "transaction",
+    })
+
+    return {
+      incomingTotal: prepared.incomingTotal,
+      outgoingTotal: prepared.outgoingTotal,
+      total: prepared.total,
+    }
+  },
+})
+
 export const remove = mutation({
   args: {
     transactionId: v.id("transactions"),
@@ -585,6 +837,12 @@ export const remove = mutation({
         index.eq("transactionId", transaction._id)
       )
       .collect()
+    const linkedOrder = await ctx.db
+      .query("orders")
+      .withIndex("by_transaction", (index) =>
+        index.eq("transactionId", transaction._id)
+      )
+      .unique()
     await Promise.all([
       ...lines.map((line) => ctx.db.delete(line._id)),
       ...movements.map((movement) => ctx.db.delete(movement._id)),
@@ -595,6 +853,12 @@ export const remove = mutation({
       )
     )
     await ctx.db.delete(transaction._id)
+    if (linkedOrder) {
+      await ctx.db.patch(linkedOrder._id, {
+        processedAt: undefined,
+        transactionId: undefined,
+      })
+    }
     await ctx.db.insert("auditLogs", {
       action: "transaction.deleted",
       actorUserId: String(user._id),

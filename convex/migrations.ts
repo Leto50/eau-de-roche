@@ -1,0 +1,567 @@
+import { ConvexError } from "convex/values"
+
+import { type Doc, type Id } from "./_generated/dataModel"
+import { internalMutation, type MutationCtx } from "./_generated/server"
+import { roundSeptimsDown } from "./lib/numbers"
+import { normalizeName } from "./lib/text"
+
+const EXCHANGE_MIGRATION_KEY = "exchange-model-v3"
+
+const productAliases: Readonly<Record<string, string>> = {
+  "breuvage de vigueur amelioree": "breuvage vigueur amelioree",
+  "breuvages de recuperation": "breuvage recuperation",
+  "breuvages de vigueur amelioree": "breuvage vigueur amelioree",
+  "breuvages du guerrier": "breuvage guerrier",
+  "breuvages du guerisseur": "breuvage guerisseur",
+  chardon: "tige de chardon",
+  "potion de pied leger": "pied leger",
+  "potion de recuperation": "potion recuperation",
+  "potion de soin": "soin moyen",
+  "potion de soin mineur": "soin mineur",
+  "potion de soin profuse": "soin profus",
+  "potion medicinale": "medicinale",
+  "potions de berserker": "potion berserker",
+  "potions de pied leger": "pied leger",
+  "potions de puissance durable": "potion puissance durable",
+  "potions de resistance magique": "potion resistance magique",
+  "potions de soin mineur": "soin mineur",
+  "potions de soin moyenne": "soin moyen",
+  "potions medicinale": "medicinale",
+  "potions medicinales": "medicinale",
+  raisin: "raisin jasbay",
+  "raisin de jazbai": "raisin jasbay",
+}
+
+const bundleAliases: Readonly<Record<string, string>> = {
+  "l aventurier debutant": "l aventurier en herbe",
+}
+
+interface LegacyOrderLine {
+  productName: string
+  quantity: number
+  unitPrice: number
+}
+
+const legacyOrderLines: Readonly<Record<string, readonly LegacyOrderLine[]>> = {
+  "transaction:10": [
+    { productName: "Médicinale", quantity: 5, unitPrice: 12 },
+    { productName: "Soin Mineur", quantity: 10, unitPrice: 12 },
+    { productName: "Soin Moyen", quantity: 5, unitPrice: 17 },
+    { productName: "Potion Récupération", quantity: 5, unitPrice: 17 },
+  ],
+  "transaction:19": [{ productName: "Blé", quantity: 800, unitPrice: 1 / 2 }],
+  "transaction:20": [
+    { productName: "Raisin jasbay", quantity: 1200, unitPrice: 5 / 24 },
+    { productName: "Rayon de miel", quantity: 50, unitPrice: 3 },
+  ],
+  "transaction:50": [
+    { productName: "Soin Mineur", quantity: 50, unitPrice: 12 },
+    { productName: "Soin Moyen", quantity: 40, unitPrice: 17 },
+    { productName: "Soin Profus", quantity: 15, unitPrice: 25 },
+  ],
+  "transaction:53": [
+    { productName: "Lys bleu", quantity: 2000, unitPrice: 1 / 10 },
+  ],
+  "transaction:54": [
+    { productName: "Bière", quantity: 150, unitPrice: 10 / 3 },
+    { productName: "Vin", quantity: 150, unitPrice: 4 },
+  ],
+  "transaction:60": [
+    { productName: "Médicinale", quantity: 10, unitPrice: 11 },
+    { productName: "Soin Mineur", quantity: 30, unitPrice: 12 },
+    { productName: "Soin Moyen", quantity: 20, unitPrice: 17 },
+    { productName: "Soin Profus", quantity: 5, unitPrice: 25 },
+  ],
+  "transaction:70": [
+    { productName: "Médicinale", quantity: 25, unitPrice: 11 },
+    { productName: "Soin Mineur", quantity: 25, unitPrice: 12 },
+    { productName: "Tige de Chardon", quantity: 300, unitPrice: 0 },
+  ],
+  "transaction:89": [
+    { productName: "Raisin jasbay", quantity: 1200, unitPrice: 1 / 5 },
+  ],
+  "transaction:9": [
+    { productName: "Bière", quantity: 150, unitPrice: 10 / 3 },
+    { productName: "Vin", quantity: 50, unitPrice: 4 },
+  ],
+  "transaction:97": [{ productName: "Blé", quantity: 800, unitPrice: 1 / 2 }],
+}
+
+const legacyOrderLinks: Readonly<Record<string, string>> = {
+  "transaction:10": "order:client:zahreen-350-debut-de-semaine",
+  "transaction:53": "order:supplier:mordred-14",
+  "transaction:54": "order:client:jahim-al-suna-1100-debut-de-semaine",
+  "transaction:60":
+    "order:client:garde-de-solitude-935-reduit-a-800-livre-le-11-08-26",
+  "transaction:89": "order:supplier:gue-du-sombreflot-11",
+}
+
+interface PreparedLegacyLine {
+  bundleId?: Id<"bundles">
+  direction: "incoming" | "outgoing"
+  kind: "bundle" | "product"
+  productId?: Id<"products">
+  productName: string
+  quantity: number
+  total: number
+  unitPrice: number
+}
+
+function reconcileLegacyAmounts(
+  lines: PreparedLegacyLine[],
+  transaction: Doc<"transactions">
+): number {
+  const direction = transactionDirection(transaction)
+  const targetTotal = Math.abs(transaction.total)
+  const gross = lines.reduce((sum, line) => sum + line.total, 0)
+  const firstLine = lines[0]
+
+  if (!firstLine) {
+    throw new ConvexError("Une opération convertie doit avoir une ligne.")
+  }
+  if (direction === "incoming") {
+    if (roundSeptimsDown(gross) !== targetTotal) {
+      firstLine.unitPrice += (targetTotal - gross) / firstLine.quantity
+      firstLine.total = firstLine.quantity * firstLine.unitPrice
+    }
+    return 0
+  }
+
+  const originalDiscount = transaction.discount ?? 0
+  if (roundSeptimsDown(gross - originalDiscount) === targetTotal) {
+    return originalDiscount
+  }
+  if (roundSeptimsDown(gross) === targetTotal) {
+    return 0
+  }
+  if (gross > targetTotal) {
+    return gross - targetTotal
+  }
+
+  firstLine.unitPrice += (targetTotal - gross) / firstLine.quantity
+  firstLine.total = firstLine.quantity * firstLine.unitPrice
+  return 0
+}
+
+function canonicalProductName(value: string): string {
+  const normalized = normalizeName(value)
+  return productAliases[normalized] ?? normalized
+}
+
+function canonicalBundleName(value: string): string {
+  const normalized = normalizeName(value)
+  return bundleAliases[normalized] ?? normalized
+}
+
+function requireProduct(
+  products: ReadonlyMap<string, Doc<"products">>,
+  name: string
+): Doc<"products"> {
+  const product = products.get(canonicalProductName(name))
+  if (product) return product
+  throw new ConvexError({
+    code: "MIGRATION_REFERENCE_MISSING",
+    message: `La référence historique « ${name} » ne correspond à aucun produit.`,
+  })
+}
+
+function requireBundle(
+  bundles: ReadonlyMap<string, Doc<"bundles">>,
+  name: string
+): Doc<"bundles"> {
+  const bundle = bundles.get(canonicalBundleName(name))
+  if (bundle) return bundle
+  throw new ConvexError({
+    code: "MIGRATION_REFERENCE_MISSING",
+    message: `Le lot historique « ${name} » est introuvable.`,
+  })
+}
+
+function transactionDirection(
+  transaction: Doc<"transactions">
+): "incoming" | "outgoing" {
+  return transaction.kind === "purchase" || transaction.total < 0
+    ? "incoming"
+    : "outgoing"
+}
+
+async function prepareTransactionLines(
+  ctx: MutationCtx,
+  transaction: Doc<"transactions">,
+  products: ReadonlyMap<string, Doc<"products">>,
+  bundles: ReadonlyMap<string, Doc<"bundles">>
+): Promise<PreparedLegacyLine[]> {
+  const direction = transactionDirection(transaction)
+  if (transaction.kind === "order") {
+    const specs = transaction.legacyKey
+      ? legacyOrderLines[transaction.legacyKey]
+      : undefined
+    if (!specs) {
+      throw new ConvexError({
+        code: "MIGRATION_REFERENCE_MISSING",
+        message: `Le détail de ${transaction.legacyKey ?? transaction._id} est absent.`,
+      })
+    }
+    return specs.map((spec) => {
+      const product = requireProduct(products, spec.productName)
+      return {
+        direction,
+        kind: "product" as const,
+        productId: product._id,
+        productName: product.name,
+        quantity: spec.quantity,
+        total: spec.quantity * spec.unitPrice,
+        unitPrice: spec.unitPrice,
+      }
+    })
+  }
+
+  if (transaction.kind === "bundle") {
+    const bundle = requireBundle(bundles, transaction.productName)
+    const unitPrice = Math.abs(transaction.total) / transaction.quantity
+    return [
+      {
+        bundleId: bundle._id,
+        direction: "outgoing",
+        kind: "bundle",
+        productName: bundle.name,
+        quantity: transaction.quantity,
+        total: Math.abs(transaction.total),
+        unitPrice,
+      },
+    ]
+  }
+
+  const product = transaction.productId
+    ? await ctx.db.get(transaction.productId)
+    : requireProduct(products, transaction.productName)
+  if (!product) {
+    throw new ConvexError({
+      code: "MIGRATION_REFERENCE_MISSING",
+      message: `Le produit de ${transaction.legacyKey ?? transaction._id} est introuvable.`,
+    })
+  }
+  const unitPrice =
+    transaction.unitPrice ??
+    Math.abs(transaction.total) / Math.max(1, transaction.quantity)
+  return [
+    {
+      direction,
+      kind: "product",
+      productId: product._id,
+      productName: product.name,
+      quantity: transaction.quantity,
+      total: transaction.quantity * unitPrice,
+      unitPrice,
+    },
+  ]
+}
+
+async function movementDeltasForLines(
+  ctx: MutationCtx,
+  lines: readonly PreparedLegacyLine[]
+): Promise<Map<string, { delta: number; product: Doc<"products"> }>> {
+  const deltas = new Map<string, { delta: number; product: Doc<"products"> }>()
+  const add = (product: Doc<"products">, delta: number) => {
+    const current = deltas.get(product._id)
+    deltas.set(product._id, {
+      delta: (current?.delta ?? 0) + delta,
+      product,
+    })
+  }
+
+  for (const line of lines) {
+    if (line.kind === "product" && line.productId) {
+      const product = await ctx.db.get(line.productId)
+      if (product?.tracksStock) {
+        add(
+          product,
+          line.direction === "incoming" ? line.quantity : -line.quantity
+        )
+      }
+      continue
+    }
+    if (!line.bundleId) continue
+    const items = await ctx.db
+      .query("bundleItems")
+      .withIndex("by_bundle", (index) => index.eq("bundleId", line.bundleId!))
+      .collect()
+    for (const item of items) {
+      if (!item.productId) {
+        throw new ConvexError({
+          code: "MIGRATION_REFERENCE_MISSING",
+          message: `Le composant « ${item.productName} » n’est pas relié.`,
+        })
+      }
+      const product = await ctx.db.get(item.productId)
+      if (!product?.tracksStock) {
+        throw new ConvexError({
+          code: "MIGRATION_REFERENCE_MISSING",
+          message: `Le composant « ${item.productName} » est indisponible.`,
+        })
+      }
+      add(product, -(item.quantity * line.quantity))
+    }
+  }
+  return deltas
+}
+
+export async function convertLegacyOperationsData(ctx: MutationCtx) {
+  const existingMigration = await ctx.db
+    .query("systemSettings")
+    .withIndex("by_key", (index) => index.eq("key", EXCHANGE_MIGRATION_KEY))
+    .unique()
+  if (existingMigration) {
+    return {
+      converted: false,
+      message: "Les opérations historiques sont déjà converties.",
+    }
+  }
+
+  const initialProducts = await ctx.db.query("products").collect()
+  const initialStocks = new Map(
+    initialProducts.map((product) => [product._id, product.currentStock])
+  )
+  const products = new Map(
+    initialProducts.map((product) => [product.normalizedName, product])
+  )
+  if (!products.has(normalizeName("Location table étranger"))) {
+    const productId = await ctx.db.insert("products", {
+      active: true,
+      category: "service",
+      currentStock: 0,
+      minimumStock: 0,
+      name: "Location table étranger",
+      normalizedName: normalizeName("Location table étranger"),
+      salePrice: 20,
+      tracksStock: false,
+    })
+    const product = await ctx.db.get(productId)
+    if (product) products.set(product.normalizedName, product)
+  }
+
+  const bundlesList = await ctx.db.query("bundles").collect()
+  const bundles = new Map(
+    bundlesList.map((bundle) => [normalizeName(bundle.name), bundle])
+  )
+  const bundleItems = await ctx.db.query("bundleItems").collect()
+  let linkedBundleItems = 0
+  for (const item of bundleItems) {
+    if (item.productId) continue
+    const product = requireProduct(products, item.productName)
+    await ctx.db.patch(item._id, {
+      productId: product._id,
+      productName: product.name,
+    })
+    linkedBundleItems += 1
+  }
+
+  const orderLines = await ctx.db.query("orderLines").collect()
+  let linkedOrderLines = 0
+  for (const line of orderLines) {
+    if (line.productId || line.bundleId) continue
+    const product = requireProduct(products, line.productName)
+    await ctx.db.patch(line._id, {
+      kind: "product",
+      productId: product._id,
+      productName: product.name,
+    })
+    linkedOrderLines += 1
+  }
+
+  const orders = await ctx.db.query("orders").collect()
+  const ordersByLegacyKey = new Map(
+    orders.flatMap((order) =>
+      order.legacyKey ? [[order.legacyKey, order] as const] : []
+    )
+  )
+  const transactions = await ctx.db.query("transactions").collect()
+  let convertedTransactions = 0
+  let insertedMovements = 0
+
+  for (const transaction of transactions) {
+    if (
+      !transaction.legacyKey ||
+      transaction.kind === "adjustment" ||
+      transaction.kind === "production"
+    ) {
+      continue
+    }
+    const existingLines = await ctx.db
+      .query("transactionLines")
+      .withIndex("by_transaction", (index) =>
+        index.eq("transactionId", transaction._id)
+      )
+      .collect()
+    const linkedOrderLegacyKey = transaction.legacyKey
+      ? legacyOrderLinks[transaction.legacyKey]
+      : undefined
+    const linkedOrder = linkedOrderLegacyKey
+      ? ordersByLegacyKey.get(linkedOrderLegacyKey)
+      : undefined
+    if (existingLines.length > 0) {
+      const direction = transactionDirection(transaction)
+      const lines: PreparedLegacyLine[] = existingLines.map((line) => ({
+        ...(line.bundleId ? { bundleId: line.bundleId } : {}),
+        direction: line.direction ?? direction,
+        kind: line.kind,
+        ...(line.productId ? { productId: line.productId } : {}),
+        productName: line.productName,
+        quantity: line.quantity,
+        total: line.total,
+        unitPrice: line.unitPrice,
+      }))
+      const discount = reconcileLegacyAmounts(lines, transaction)
+      await Promise.all(
+        lines.map((line, index) => {
+          const existingLine = existingLines[index]
+          if (!existingLine) return Promise.resolve()
+          return ctx.db.patch(existingLine._id, {
+            direction: line.direction,
+            total: line.total,
+            unitPrice: line.unitPrice,
+          })
+        })
+      )
+      await ctx.db.patch(transaction._id, {
+        discount: discount > 0 ? discount : undefined,
+        incomingTotal:
+          direction === "incoming" ? Math.abs(transaction.total) : 0,
+        outgoingTotal:
+          direction === "outgoing" ? Math.abs(transaction.total) : 0,
+      })
+      if (linkedOrder) {
+        await ctx.db.patch(transaction._id, { orderId: linkedOrder._id })
+        await ctx.db.patch(linkedOrder._id, {
+          processedAt: transaction.occurredAt,
+          ...(linkedOrder.kind === "supplier"
+            ? { status: "delivered" as const }
+            : {}),
+          total: Math.abs(transaction.total),
+          transactionId: transaction._id,
+        })
+      }
+      continue
+    }
+
+    const lines = await prepareTransactionLines(
+      ctx,
+      transaction,
+      products,
+      bundles
+    )
+    const direction = transactionDirection(transaction)
+    const absoluteTotal = Math.abs(transaction.total)
+    const discount = reconcileLegacyAmounts(lines, transaction)
+
+    for (const line of lines) {
+      await ctx.db.insert("transactionLines", {
+        ...(line.bundleId ? { bundleId: line.bundleId } : {}),
+        direction: line.direction,
+        kind: line.kind,
+        ...(line.productId ? { productId: line.productId } : {}),
+        productName: line.productName,
+        quantity: line.quantity,
+        total: line.total,
+        transactionId: transaction._id,
+        unitPrice: line.unitPrice,
+      })
+    }
+
+    const firstLine = lines[0]
+    await ctx.db.patch(transaction._id, {
+      discount: discount > 0 ? discount : undefined,
+      incomingTotal: direction === "incoming" ? absoluteTotal : 0,
+      kind: direction === "incoming" ? "purchase" : "sale",
+      lineCount: lines.length,
+      ...(linkedOrder ? { orderId: linkedOrder._id } : {}),
+      outgoingTotal: direction === "outgoing" ? absoluteTotal : 0,
+      ...(lines.length === 1 && firstLine?.productId
+        ? { productId: firstLine.productId }
+        : {}),
+      productName:
+        lines.length === 1 && firstLine
+          ? firstLine.productName
+          : `${lines.length} références`,
+      quantity: lines.reduce((sum, line) => sum + line.quantity, 0),
+      ...(lines.length === 1 && firstLine
+        ? { unitPrice: firstLine.unitPrice }
+        : {}),
+    })
+    if (linkedOrder) {
+      await ctx.db.patch(linkedOrder._id, {
+        processedAt: transaction.occurredAt,
+        ...(linkedOrder.kind === "supplier"
+          ? { status: "delivered" as const }
+          : {}),
+        total: absoluteTotal,
+        transactionId: transaction._id,
+      })
+    }
+
+    const existingMovements = await ctx.db
+      .query("stockMovements")
+      .withIndex("by_transaction", (index) =>
+        index.eq("transactionId", transaction._id)
+      )
+      .collect()
+    const kind = direction === "incoming" ? "purchase" : "sale"
+    if (existingMovements.length > 0) {
+      for (const movement of existingMovements) {
+        const product = await ctx.db.get(movement.productId)
+        if (!product) continue
+        await ctx.db.patch(movement._id, {
+          previousStock: product.currentStock - movement.delta,
+          reason: kind,
+          resultingStock: product.currentStock,
+        })
+      }
+    } else {
+      const deltas = await movementDeltasForLines(ctx, lines)
+      for (const { delta, product } of deltas.values()) {
+        if (delta === 0) continue
+        await ctx.db.insert("stockMovements", {
+          delta,
+          occurredAt: transaction.occurredAt,
+          previousStock: product.currentStock - delta,
+          productId: product._id,
+          reason: kind,
+          resultingStock: product.currentStock,
+          transactionId: transaction._id,
+        })
+        insertedMovements += 1
+      }
+    }
+    convertedTransactions += 1
+  }
+
+  const productsAfter = await ctx.db.query("products").collect()
+  for (const product of productsAfter) {
+    const initialStock = initialStocks.get(product._id)
+    if (initialStock !== undefined && initialStock !== product.currentStock) {
+      throw new ConvexError({
+        code: "MIGRATION_STOCK_CHANGED",
+        message: `La migration a modifié le stock de « ${product.name} ».`,
+      })
+    }
+  }
+
+  const result = {
+    converted: true,
+    convertedTransactions,
+    insertedMovements,
+    linkedBundleItems,
+    linkedOrderLines,
+  }
+  await ctx.db.insert("systemSettings", {
+    key: EXCHANGE_MIGRATION_KEY,
+    updatedAt: Date.now(),
+    value: JSON.stringify(result),
+  })
+  return result
+}
+
+export const convertLegacyOperations = internalMutation({
+  args: {},
+  handler: convertLegacyOperationsData,
+})

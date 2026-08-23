@@ -6,6 +6,8 @@ import { type FunctionReturnType } from "convex/server"
 import {
   CalendarClock,
   Check,
+  Coins,
+  LoaderCircle,
   MessageSquareText,
   PackageCheck,
   Pencil,
@@ -19,6 +21,16 @@ import { PageError } from "@/components/page-error"
 import { PageHeader } from "@/components/page-header"
 import { PageSkeleton } from "@/components/page-skeleton"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
+import {
+  AlertDialog,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
@@ -30,6 +42,8 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card"
+import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
 import {
   Select,
   SelectContent,
@@ -94,6 +108,7 @@ export const Route = createFileRoute("/_app/commandes")({
       context.queryClient.ensureQueryData(
         convexQuery(api.products.selectable, {})
       ),
+      context.queryClient.ensureQueryData(convexQuery(api.characters.list, {})),
     ])
   },
   pendingComponent: PageSkeleton,
@@ -105,6 +120,9 @@ function OrdersPage() {
   const { data: orders } = useSuspenseQuery(convexQuery(api.orders.list, {}))
   const { data: products } = useSuspenseQuery(
     convexQuery(api.products.selectable, {})
+  )
+  const { data: characters } = useSuspenseQuery(
+    convexQuery(api.characters.list, {})
   )
   const updateStatus = useMutation(api.orders.updateStatus)
   const [kind, setKind] = useState<OrderKind>("client")
@@ -176,6 +194,7 @@ function OrdersPage() {
         <div className="mt-6 grid gap-5 xl:grid-cols-2">
           {visibleOrders.map((order) => (
             <OrderEntry
+              characters={characters}
               isAdmin={isAdmin}
               key={order._id}
               onStatusChange={(value) => handleStatusChange(order, value)}
@@ -206,17 +225,19 @@ function orderTotal(order: Order): number | undefined {
   const lineTotals = order.lines
     .map((line) => line.total)
     .filter((value): value is number => value !== undefined)
-  return lineTotals.length > 0
+  return lineTotals.length === order.lines.length && lineTotals.length > 0
     ? lineTotals.reduce((total, value) => total + value, 0)
     : undefined
 }
 
 function OrderEntry({
+  characters,
   isAdmin,
   onStatusChange,
   order,
   products,
 }: Readonly<{
+  characters: readonly Doc<"characters">[]
   isAdmin: boolean
   onStatusChange: (value: string) => void
   order: Order
@@ -264,20 +285,22 @@ function OrderEntry({
               ))}
             </SelectContent>
           </Select>
-          <OrderDialog
-            isAdmin={isAdmin}
-            order={order}
-            products={products}
-            trigger={
-              <Button
-                aria-label={`Modifier la commande de ${order.contactName}`}
-                size="icon"
-                variant="ghost"
-              >
-                <Pencil aria-hidden="true" />
-              </Button>
-            }
-          />
+          {order.transactionId ? null : (
+            <OrderDialog
+              isAdmin={isAdmin}
+              order={order}
+              products={products}
+              trigger={
+                <Button
+                  aria-label={`Modifier la commande de ${order.contactName}`}
+                  size="icon"
+                  variant="ghost"
+                >
+                  <Pencil aria-hidden="true" />
+                </Button>
+              }
+            />
+          )}
         </CardAction>
       </CardHeader>
 
@@ -315,11 +338,14 @@ function OrderEntry({
         ) : null}
       </CardContent>
 
-      <CardFooter className="justify-between gap-3 border-t border-border/60">
-        <Badge className={statusBadgeClasses[order.status]} variant="outline">
-          {order.status === "delivered" ? <Check aria-hidden="true" /> : null}
-          {orderStatusLabels[order.status]}
-        </Badge>
+      <CardFooter className="flex-wrap justify-between gap-3 border-t border-border/60">
+        <div className="flex flex-wrap items-center gap-2">
+          <Badge className={statusBadgeClasses[order.status]} variant="outline">
+            {order.status === "delivered" ? <Check aria-hidden="true" /> : null}
+            {orderStatusLabels[order.status]}
+          </Badge>
+          <OrderProcessingDialog characters={characters} order={order} />
+        </div>
         <div className="text-right">
           <p className="text-[0.65rem] tracking-wider text-muted-foreground uppercase">
             Total
@@ -330,5 +356,163 @@ function OrderEntry({
         </div>
       </CardFooter>
     </Card>
+  )
+}
+
+function todayInputValue(): string {
+  const today = new Date()
+  const year = today.getFullYear()
+  const month = String(today.getMonth() + 1).padStart(2, "0")
+  const day = String(today.getDate()).padStart(2, "0")
+  return `${year}-${month}-${day}`
+}
+
+function dateInputToTimestamp(value: string): number | undefined {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value)
+  if (!match) return undefined
+  const timestamp = new Date(
+    Number(match[1]),
+    Number(match[2]) - 1,
+    Number(match[3]),
+    12
+  ).getTime()
+  return Number.isFinite(timestamp) ? timestamp : undefined
+}
+
+function OrderProcessingDialog({
+  characters,
+  order,
+}: Readonly<{
+  characters: readonly Doc<"characters">[]
+  order: Order
+}>) {
+  const processOrder = useMutation(api.orders.process)
+  const [open, setOpen] = useState(false)
+  const [characterId, setCharacterId] = useState("")
+  const [occurredOn, setOccurredOn] = useState(todayInputValue)
+  const [isSubmitting, setIsSubmitting] = useState(false)
+  const clientOrder = order.kind === "client"
+
+  if (order.transactionId && order.processedAt) {
+    return (
+      <Badge variant="secondary">
+        <Check aria-hidden="true" />
+        {clientOrder ? "Payée" : "Reçue"} le {formatDate(order.processedAt)}
+      </Badge>
+    )
+  }
+
+  if (order.lines.some((line) => line.unitPrice === undefined)) {
+    return <Badge variant="outline">Prix à renseigner</Badge>
+  }
+
+  async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    const character = characters.find((entry) => entry._id === characterId)
+    const occurredAt = dateInputToTimestamp(occurredOn)
+    if (!character || !occurredAt) {
+      toast.error("Choisissez un personnage et une date valide.")
+      return
+    }
+
+    setIsSubmitting(true)
+    try {
+      await processOrder({
+        characterId: character._id,
+        occurredAt,
+        orderId: order._id,
+      })
+      toast.success(
+        clientOrder
+          ? "Paiement ajouté au journal."
+          : "Réception ajoutée au journal et au stock."
+      )
+      setOpen(false)
+    } catch (error) {
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : "Impossible de traiter cette commande."
+      )
+    } finally {
+      setIsSubmitting(false)
+    }
+  }
+
+  return (
+    <AlertDialog onOpenChange={setOpen} open={open}>
+      <AlertDialogTrigger asChild>
+        <Button size="sm" type="button" variant="outline">
+          {clientOrder ? (
+            <Coins aria-hidden="true" />
+          ) : (
+            <PackageCheck aria-hidden="true" />
+          )}
+          {clientOrder ? "Enregistrer le paiement" : "Réceptionner"}
+        </Button>
+      </AlertDialogTrigger>
+      <AlertDialogContent className="border-[#6a5436] bg-[#eee1c7]">
+        <form className="grid gap-5" onSubmit={handleSubmit}>
+          <AlertDialogHeader>
+            <AlertDialogTitle className="font-display text-2xl">
+              {clientOrder
+                ? "Enregistrer le paiement"
+                : "Réceptionner la commande"}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              Une transaction liée sera inscrite au journal. Sa date peut être
+              différente de la date prévue de la commande.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div className="grid gap-2">
+              <Label htmlFor={`order-character-${order._id}`}>Personnage</Label>
+              <Select onValueChange={setCharacterId} value={characterId}>
+                <SelectTrigger id={`order-character-${order._id}`}>
+                  <SelectValue placeholder="Qui traite la commande ?" />
+                </SelectTrigger>
+                <SelectContent>
+                  {characters.map((character) => (
+                    <SelectItem key={character._id} value={character._id}>
+                      {character.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="grid gap-2">
+              <Label htmlFor={`order-date-${order._id}`}>
+                {clientOrder ? "Date du paiement" : "Date de réception"}
+              </Label>
+              <Input
+                id={`order-date-${order._id}`}
+                onChange={(event) => setOccurredOn(event.target.value)}
+                required
+                type="date"
+                value={occurredOn}
+              />
+            </div>
+          </div>
+
+          <AlertDialogFooter>
+            <AlertDialogCancel type="button">Retour</AlertDialogCancel>
+            <Button disabled={isSubmitting} type="submit">
+              {isSubmitting ? (
+                <LoaderCircle
+                  aria-hidden="true"
+                  className="animate-spin motion-reduce:animate-none"
+                />
+              ) : clientOrder ? (
+                <Coins aria-hidden="true" />
+              ) : (
+                <PackageCheck aria-hidden="true" />
+              )}
+              {clientOrder ? "Valider le paiement" : "Valider la réception"}
+            </Button>
+          </AlertDialogFooter>
+        </form>
+      </AlertDialogContent>
+    </AlertDialog>
   )
 }

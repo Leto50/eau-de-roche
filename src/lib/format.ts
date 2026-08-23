@@ -56,6 +56,7 @@ export const categoryLabels = {
 export const operationLabels = {
   adjustment: "Ajustement",
   bundle: "Lot",
+  exchange: "Échange",
   order: "Commande",
   production: "Production",
   purchase: "Achat",

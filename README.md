@@ -77,7 +77,7 @@ pnpm extract:workbook
 pnpm seed -- '{"seedSecret":"votre-secret-de-seed"}'
 ```
 
-Le jeu actuel contient 83 produits, 111 opérations valides, 12 commandes,
+Le jeu actuel contient 84 produits, 111 opérations valides, 12 commandes,
 35 recettes, 8 lots, 5 personnages et 11 contacts. L’import Convex est
 idempotent : un `systemSetting` empêche de dupliquer un jeu déjà initialisé.
 La mutation d’import refuse toute requête qui ne présente pas `SEED_SECRET`.
@@ -85,9 +85,13 @@ La mutation d’import refuse toute requête qui ne présente pas `SEED_SECRET`.
 ## Règles métier importantes
 
 - Toutes les requêtes et mutations applicatives exigent une session valide.
-- Une vente, un achat ou une production écrit dans une même mutation Convex
-  l’opération, le mouvement de stock, le nouveau stock et l’audit.
-- Une vente est refusée si elle rendrait le stock négatif.
+- Un échange peut réunir dans le même panier produits, lots et services vendus,
+  ainsi que les produits achetés par la boutique. La production reste séparée.
+- Chaque échange écrit dans une même mutation Convex l’opération, ses lignes,
+  les mouvements de stock, les nouveaux stocks et l’audit.
+- Un échange est refusé si son résultat rendrait un stock négatif.
+- Le paiement d’une commande client et la réception d’une commande fournisseur
+  créent une transaction liée, à la date choisie par l’employé.
 - Les quantités, prix, remises, dates et textes sont validés côté backend.
 - Un service ne produit aucun mouvement de stock.
 - L’inscription publique est désactivée côté Better Auth, y compris si son
@@ -140,6 +144,16 @@ pnpm convex run --prod internal.auth.bootstrapAdmin '{"name":"Administrateur"}'
 pnpm convex env remove --prod INITIAL_ADMIN_PASSWORD
 ```
 
+L’import initial convertit directement les données du classeur. Pour un
+déploiement qui contenait déjà ces données avant cette évolution, exécuter une
+seule fois, après le déploiement des fonctions :
+
+```bash
+pnpm convex run --prod migrations:convertLegacyOperations
+```
+
+La migration est idempotente et ne rejoue aucun mouvement sur le stock courant.
+
 Après la première connexion, l’administrateur crée les comptes employés depuis
 le menu « Administration ». Il n’existe aucune page d’inscription publique.
 
@@ -150,13 +164,14 @@ sont isolées de la production.
 
 ## Commandes utiles
 
-| Commande                | Rôle                                          |
-| ----------------------- | --------------------------------------------- |
-| `pnpm dev`              | Convex et site local en parallèle             |
-| `pnpm extract:workbook` | Régénère `data/inventaire.seed.json`          |
-| `pnpm seed -- '{…}'`    | Importe le seed avec le secret du déploiement |
-| `pnpm lint`             | ESLint strict, zéro avertissement             |
-| `pnpm typecheck`        | Vérification TypeScript sans émission         |
-| `pnpm test`             | Tests métier Convex + Better Auth             |
-| `pnpm build`            | Build client, SSR et fonction Netlify         |
-| `pnpm build:netlify`    | Déploiement Convex puis build Netlify         |
+| Commande                                                    | Rôle                                          |
+| ----------------------------------------------------------- | --------------------------------------------- |
+| `pnpm dev`                                                  | Convex et site local en parallèle             |
+| `pnpm extract:workbook`                                     | Régénère `data/inventaire.seed.json`          |
+| `pnpm seed -- '{…}'`                                        | Importe le seed avec le secret du déploiement |
+| `pnpm convex run --prod migrations:convertLegacyOperations` | Convertit un stock historique déjà importé    |
+| `pnpm lint`                                                 | ESLint strict, zéro avertissement             |
+| `pnpm typecheck`                                            | Vérification TypeScript sans émission         |
+| `pnpm test`                                                 | Tests métier Convex + Better Auth             |
+| `pnpm build`                                                | Build client, SSR et fonction Netlify         |
+| `pnpm build:netlify`                                        | Déploiement Convex puis build Netlify         |

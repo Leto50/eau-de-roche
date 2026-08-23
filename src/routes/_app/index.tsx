@@ -3,16 +3,14 @@ import { useSuspenseQuery } from "@tanstack/react-query"
 import { createFileRoute, Link } from "@tanstack/react-router"
 import {
   AlertTriangle,
-  ArrowDownToLine,
   ArrowDownLeft,
+  ArrowLeftRight,
   ArrowUpRight,
   CalendarDays,
   ChevronRight,
   Coins,
   Hammer,
-  ReceiptText,
   ScrollText,
-  ShoppingBasket,
 } from "lucide-react"
 
 import { OperationDialog } from "@/components/operation-dialog"
@@ -98,7 +96,7 @@ function DashboardPage() {
           </CardTitle>
           <CardDescription>Que venez-vous de faire ?</CardDescription>
         </CardHeader>
-        <CardContent className="grid grid-cols-2 gap-2 lg:grid-cols-4">
+        <CardContent className="grid gap-2 sm:grid-cols-2">
           <OperationDialog
             bundles={bundles}
             characters={characters}
@@ -108,24 +106,8 @@ function DashboardPage() {
                 className="h-20 w-full flex-col gap-1.5 px-3 text-center text-sm whitespace-normal shadow-sm"
                 size="lg"
               >
-                <ShoppingBasket aria-hidden="true" className="size-5" />
-                Encaisser une vente
-              </Button>
-            }
-          />
-          <OperationDialog
-            bundles={bundles}
-            characters={characters}
-            initialKind="purchase"
-            products={products}
-            trigger={
-              <Button
-                className="h-20 w-full flex-col gap-1.5 border-[#6a5436]/40 bg-background/35 px-3 text-center text-sm whitespace-normal"
-                size="lg"
-                variant="outline"
-              >
-                <ArrowDownToLine aria-hidden="true" className="size-5" />
-                Recevoir un achat
+                <ArrowLeftRight aria-hidden="true" className="size-5" />
+                Enregistrer un échange
               </Button>
             }
           />
@@ -141,23 +123,7 @@ function DashboardPage() {
                 variant="outline"
               >
                 <Hammer aria-hidden="true" className="size-5" />
-                Ajouter une production
-              </Button>
-            }
-          />
-          <OperationDialog
-            bundles={bundles}
-            characters={characters}
-            initialKind="service"
-            products={products}
-            trigger={
-              <Button
-                className="h-20 w-full flex-col gap-1.5 border-[#6a5436]/40 bg-background/35 px-3 text-center text-sm whitespace-normal"
-                size="lg"
-                variant="outline"
-              >
-                <ReceiptText aria-hidden="true" className="size-5" />
-                Facturer un service
+                Enregistrer une production
               </Button>
             }
           />
@@ -353,7 +319,7 @@ function DashboardPage() {
                           positive ? "text-[#456044]" : "text-[#8a3e2f]"
                         )}
                       >
-                        {positive ? "+" : ""}
+                        {transaction.total > 0 ? "+" : ""}
                         {formatSeptims(transaction.total)}
                       </TableCell>
                     </TableRow>

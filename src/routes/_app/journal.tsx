@@ -5,6 +5,7 @@ import { type FunctionReturnType } from "convex/server"
 import { useMutation } from "convex/react"
 import {
   ChevronDown,
+  Hammer,
   LoaderCircle,
   Pencil,
   ScrollText,
@@ -96,6 +97,7 @@ const operationToneClasses: Readonly<
 > = {
   adjustment: "border-[#1E374F]/25 bg-[#1E374F]/[0.08] text-[#1E374F]",
   bundle: "border-[#6c5738]/25 bg-[#6c5738]/[0.08] text-[#6c5738]",
+  exchange: "border-[#1E374F]/25 bg-[#1E374F]/[0.08] text-[#1E374F]",
   order: "border-[#6c5738]/25 bg-[#6c5738]/[0.08] text-[#6c5738]",
   production: "border-[#5d5276]/25 bg-[#5d5276]/[0.07] text-[#5d5276]",
   purchase: "border-[#83513b]/25 bg-[#83513b]/[0.07] text-[#83513b]",
@@ -124,11 +126,25 @@ function JournalPage() {
     <div className="animate-in duration-300 fade-in slide-in-from-bottom-1 motion-reduce:animate-none">
       <PageHeader
         action={
-          <OperationDialog
-            bundles={bundles}
-            characters={characters}
-            products={products}
-          />
+          <div className="flex flex-wrap gap-2">
+            <OperationDialog
+              bundles={bundles}
+              characters={characters}
+              products={products}
+            />
+            <OperationDialog
+              bundles={bundles}
+              characters={characters}
+              initialKind="production"
+              products={products}
+              trigger={
+                <Button size="lg" variant="outline">
+                  <Hammer aria-hidden="true" />
+                  Production
+                </Button>
+              }
+            />
+          </div>
         }
         eyebrow="Journal de boutique"
         title="Activité"
@@ -198,6 +214,7 @@ function JournalPage() {
 function isEditableTransaction(transaction: Transaction): boolean {
   return (
     transaction.kind === "production" ||
+    transaction.kind === "exchange" ||
     transaction.kind === "purchase" ||
     transaction.kind === "sale" ||
     transaction.kind === "service"
@@ -261,7 +278,7 @@ function JournalRow({
           transaction.total >= 0 ? "text-[#456044]" : "text-[#8a3e2f]"
         )}
       >
-        {transaction.total >= 0 ? "+" : ""}
+        {transaction.total > 0 ? "+" : ""}
         {formatSeptims(transaction.total)}
       </TableCell>
       {showActions ? (
@@ -321,7 +338,7 @@ function JournalCard({
               transaction.total >= 0 ? "text-[#456044]" : "text-[#8a3e2f]"
             )}
           >
-            {transaction.total >= 0 ? "+" : ""}
+            {transaction.total > 0 ? "+" : ""}
             {formatSeptims(transaction.total)}
           </p>
         </div>
@@ -487,10 +504,19 @@ function TransactionLines({
         <ul className="grid gap-1 border-l border-primary/30 pl-2 text-xs text-muted-foreground">
           {lines.map((line) => (
             <li className="flex flex-wrap justify-between gap-2" key={line._id}>
-              <span>
+              <span className="flex flex-wrap items-center gap-1.5">
+                {line.direction ? (
+                  <Badge
+                    className="px-1.5 py-0 text-[0.58rem]"
+                    variant="outline"
+                  >
+                    {line.direction === "incoming" ? "Acheté" : "Vendu"}
+                  </Badge>
+                ) : null}
                 {line.productName} · {formatQuantity(line.quantity)}
               </span>
               <span className="font-semibold text-foreground tabular-nums">
+                {line.direction === "incoming" ? "−" : ""}
                 {formatSeptims(line.total)}
               </span>
             </li>

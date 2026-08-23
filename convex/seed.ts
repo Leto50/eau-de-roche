@@ -4,6 +4,7 @@ import seedData from "../data/inventaire.seed.json"
 import { type Doc, type Id } from "./_generated/dataModel"
 import { mutation } from "./_generated/server"
 import { normalizeName } from "./lib/text"
+import { convertLegacyOperationsData } from "./migrations"
 
 const SEED_KEY = "workbook-seed-version"
 
@@ -237,6 +238,8 @@ export const importWorkbook = mutation({
       }
     }
 
+    const migration = await convertLegacyOperationsData(ctx)
+
     const updatedAt = Date.parse(seedData.metadata.sourceModifiedAt)
     await ctx.db.insert("systemSettings", {
       key: SEED_KEY,
@@ -247,6 +250,7 @@ export const importWorkbook = mutation({
     return {
       imported: true,
       message: "Les données ont été initialisées depuis le classeur.",
+      migration,
       stats: seedData.metadata.stats,
     }
   },

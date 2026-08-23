@@ -445,7 +445,11 @@ export function OrderDialog({
                   <Label>Produit {index + 1}</Label>
                   <ProductPicker
                     onChange={(value) => selectProduct(line.key, value)}
-                    products={products}
+                    products={
+                      kind === "supplier"
+                        ? products.filter((product) => product.tracksStock)
+                        : products
+                    }
                     selectedProductId={line.productId}
                   />
                 </div>
