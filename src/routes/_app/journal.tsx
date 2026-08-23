@@ -8,9 +8,10 @@ import {
   LoaderCircle,
   Pencil,
   ScrollText,
+  Trash2,
   Undo2,
 } from "lucide-react"
-import { useState, type FormEvent } from "react"
+import { useState, type FormEvent, type MouseEvent } from "react"
 import { toast } from "sonner"
 
 import { OperationDialog } from "@/components/operation-dialog"
@@ -54,6 +55,11 @@ import {
 } from "@/components/ui/table"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip"
 import { api } from "../../../convex/_generated/api"
 import { type Doc } from "../../../convex/_generated/dataModel"
 import {
@@ -113,7 +119,9 @@ function JournalPage() {
   const { data: bundles } = useSuspenseQuery(
     convexQuery(api.recipes.listBundles, {})
   )
-  const showActions = transactions.some((transaction) => transaction.canManage)
+  const showActions = transactions.some(
+    (transaction) => transaction.canManage || transaction.canDelete
+  )
 
   return (
     <div className="animate-in duration-300 fade-in slide-in-from-bottom-1 motion-reduce:animate-none">
@@ -276,7 +284,7 @@ function JournalRow({
       </TableCell>
       {showActions ? (
         <TableCell className="pr-2 text-right">
-          {transaction.canManage ? (
+          {transaction.canManage || transaction.canDelete ? (
             <TransactionActions
               bundles={bundles}
               characters={characters}
@@ -352,7 +360,7 @@ function JournalCard({
             {transaction.cancellationReason}
           </p>
         ) : null}
-        {transaction.canManage ? (
+        {transaction.canManage || transaction.canDelete ? (
           <TransactionActions
             bundles={bundles}
             characters={characters}
@@ -377,23 +385,117 @@ function TransactionActions({
   transaction: Transaction
 }>) {
   return (
-    <div className="flex flex-wrap justify-end gap-1">
-      {isEditableTransaction(transaction) ? (
-        <OperationDialog
-          bundles={bundles}
-          characters={characters}
-          products={products}
-          transaction={transaction}
-          trigger={
-            <Button size="sm" type="button" variant="ghost">
-              <Pencil aria-hidden="true" />
-              Modifier
-            </Button>
-          }
-        />
+    <div className="flex flex-nowrap justify-end gap-1">
+      {transaction.canManage && isEditableTransaction(transaction) ? (
+        <Tooltip>
+          <OperationDialog
+            bundles={bundles}
+            characters={characters}
+            products={products}
+            transaction={transaction}
+            trigger={
+              <TooltipTrigger asChild>
+                <Button
+                  className="md:size-6 md:px-0"
+                  size="sm"
+                  type="button"
+                  variant="ghost"
+                >
+                  <Pencil aria-hidden="true" />
+                  <span className="md:sr-only">Modifier</span>
+                </Button>
+              </TooltipTrigger>
+            }
+          />
+          <TooltipContent>Modifier</TooltipContent>
+        </Tooltip>
       ) : null}
-      <TransactionCancellation transaction={transaction} />
+      {transaction.canManage ? (
+        <TransactionCancellation transaction={transaction} />
+      ) : null}
+      {transaction.canDelete ? (
+        <TransactionDeletion transaction={transaction} />
+      ) : null}
     </div>
+  )
+}
+
+function TransactionDeletion({
+  transaction,
+}: Readonly<{ transaction: Transaction }>) {
+  const removeTransaction = useMutation(api.transactions.remove)
+  const [open, setOpen] = useState(false)
+  const [isSubmitting, setIsSubmitting] = useState(false)
+
+  async function handleDelete(event: MouseEvent<HTMLButtonElement>) {
+    event.preventDefault()
+    setIsSubmitting(true)
+    try {
+      await removeTransaction({ transactionId: transaction._id })
+      toast.success("Opération supprimée et stock corrigé.")
+      setOpen(false)
+    } catch (error) {
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : "Impossible de supprimer cette opération."
+      )
+    } finally {
+      setIsSubmitting(false)
+    }
+  }
+
+  return (
+    <AlertDialog onOpenChange={setOpen} open={open}>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <AlertDialogTrigger asChild>
+            <Button
+              aria-label={`Supprimer ${operationLabels[transaction.kind]} — ${transaction.productName}`}
+              className="md:size-6 md:px-0"
+              size="sm"
+              type="button"
+              variant="destructive"
+            >
+              <Trash2 aria-hidden="true" />
+              <span className="md:sr-only">Supprimer</span>
+            </Button>
+          </AlertDialogTrigger>
+        </TooltipTrigger>
+        <TooltipContent>Supprimer</TooltipContent>
+      </Tooltip>
+      <AlertDialogContent className="rounded-[0.2rem] border-[#6a5436] bg-[#eee1c7]">
+        <AlertDialogHeader>
+          <AlertDialogTitle>
+            Supprimer définitivement cette opération ?
+          </AlertDialogTitle>
+          <AlertDialogDescription>
+            Elle disparaîtra du journal avec ses lignes et ses mouvements. Le
+            stock sera corrigé et seule une trace d’audit sera conservée. Cette
+            action est irréversible.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel type="button">Conserver</AlertDialogCancel>
+          <AlertDialogAction
+            disabled={isSubmitting}
+            onClick={handleDelete}
+            type="button"
+            variant="destructive"
+          >
+            {isSubmitting ? (
+              <LoaderCircle
+                aria-hidden="true"
+                className="animate-spin motion-reduce:animate-none"
+              />
+            ) : (
+              <Trash2 aria-hidden="true" />
+            )}
+            Supprimer définitivement
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
   )
 }
 
@@ -437,17 +539,23 @@ function TransactionCancellation({
 
   return (
     <AlertDialog onOpenChange={handleOpenChange} open={open}>
-      <AlertDialogTrigger asChild>
-        <Button
-          aria-label={`Annuler ${operationLabels[transaction.kind]} — ${transaction.productName}`}
-          size="sm"
-          type="button"
-          variant="ghost"
-        >
-          <Undo2 aria-hidden="true" />
-          Annuler
-        </Button>
-      </AlertDialogTrigger>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <AlertDialogTrigger asChild>
+            <Button
+              aria-label={`Annuler ${operationLabels[transaction.kind]} — ${transaction.productName}`}
+              className="md:size-6 md:px-0"
+              size="sm"
+              type="button"
+              variant="ghost"
+            >
+              <Undo2 aria-hidden="true" />
+              <span className="md:sr-only">Annuler</span>
+            </Button>
+          </AlertDialogTrigger>
+        </TooltipTrigger>
+        <TooltipContent>Annuler</TooltipContent>
+      </Tooltip>
       <AlertDialogContent className="rounded-[0.2rem] border-[#6a5436] bg-[#eee1c7]">
         <form onSubmit={handleSubmit}>
           <AlertDialogHeader>

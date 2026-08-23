@@ -551,6 +551,133 @@ describe("transactions.cancel", () => {
   })
 })
 
+describe("transactions.remove", () => {
+  it("supprime réellement une vente, ses lignes et ses mouvements", async () => {
+    const backend = createTestBackend()
+    const member = await asAuthenticatedUser(backend)
+    const { characterId, productId } = await seedStock(backend)
+    const recorded = await member.mutation(api.transactions.recordTrade, {
+      characterId,
+      kind: "sale",
+      lines: [{ kind: "product", productId, quantity: 3 }],
+      occurredAt: Date.now(),
+    })
+    const visibleTransactions = await member.query(api.transactions.list, {})
+    expect(visibleTransactions[0]?.canDelete).toBe(true)
+
+    await member.mutation(api.transactions.remove, {
+      transactionId: recorded.transactionId,
+    })
+
+    const state = await backend.run(async (ctx) => ({
+      audits: await ctx.db.query("auditLogs").collect(),
+      lines: await ctx.db.query("transactionLines").collect(),
+      movements: await ctx.db.query("stockMovements").collect(),
+      product: await ctx.db.get(productId),
+      transaction: await ctx.db.get(recorded.transactionId),
+    }))
+    expect(state.product?.currentStock).toBe(10)
+    expect(state.transaction).toBeNull()
+    expect(state.lines).toHaveLength(0)
+    expect(state.movements).toHaveLength(0)
+    expect(state.audits.at(-1)).toMatchObject({
+      action: "transaction.deleted",
+      entityId: recorded.transactionId,
+    })
+  })
+
+  it("supprime une opération déjà annulée sans modifier une seconde fois le stock", async () => {
+    const backend = createTestBackend()
+    const member = await asAuthenticatedUser(backend)
+    const { characterId, productId } = await seedStock(backend)
+    const recorded = await member.mutation(api.transactions.record, {
+      characterId,
+      kind: "sale",
+      occurredAt: Date.now(),
+      productId,
+      quantity: 3,
+    })
+    await member.mutation(api.transactions.cancel, {
+      reason: "Vente non réalisée",
+      transactionId: recorded.transactionId,
+    })
+    const visibleTransactions = await member.query(api.transactions.list, {})
+    expect(visibleTransactions[0]).toMatchObject({
+      canDelete: true,
+      canManage: false,
+    })
+
+    await member.mutation(api.transactions.remove, {
+      transactionId: recorded.transactionId,
+    })
+
+    const state = await backend.run(async (ctx) => ({
+      movements: await ctx.db.query("stockMovements").collect(),
+      product: await ctx.db.get(productId),
+      transaction: await ctx.db.get(recorded.transactionId),
+    }))
+    expect(state.product?.currentStock).toBe(10)
+    expect(state.transaction).toBeNull()
+    expect(state.movements).toHaveLength(0)
+  })
+
+  it("refuse de supprimer un achat déjà consommé sans écriture partielle", async () => {
+    const backend = createTestBackend()
+    const member = await asAuthenticatedUser(backend)
+    const { characterId, productId } = await seedStock(backend)
+    const recorded = await member.mutation(api.transactions.recordTrade, {
+      characterId,
+      kind: "purchase",
+      lines: [{ kind: "product", productId, quantity: 3 }],
+      occurredAt: Date.now(),
+    })
+    await backend.run((ctx) => ctx.db.patch(productId, { currentStock: 2 }))
+
+    await expect(
+      member.mutation(api.transactions.remove, {
+        transactionId: recorded.transactionId,
+      })
+    ).rejects.toThrowError("stock")
+
+    const state = await backend.run(async (ctx) => ({
+      audits: await ctx.db.query("auditLogs").collect(),
+      lines: await ctx.db.query("transactionLines").collect(),
+      movements: await ctx.db.query("stockMovements").collect(),
+      product: await ctx.db.get(productId),
+      transaction: await ctx.db.get(recorded.transactionId),
+    }))
+    expect(state.product?.currentStock).toBe(2)
+    expect(state.transaction).not.toBeNull()
+    expect(state.lines).toHaveLength(1)
+    expect(state.movements).toHaveLength(1)
+    expect(state.audits).toHaveLength(1)
+  })
+
+  it("refuse à un employé de supprimer la saisie d’un autre compte", async () => {
+    const backend = createTestBackend()
+    const employee = await asAuthenticatedUser(backend)
+    const transactionId = await backend.run((ctx) =>
+      ctx.db.insert("transactions", {
+        actorName: "Autre employé",
+        actorUserId: "autre-compte",
+        kind: "service",
+        occurredAt: Date.now(),
+        productName: "Conseil alchimique",
+        quantity: 1,
+        source: "web",
+        total: 5,
+      })
+    )
+    const visibleTransactions = await employee.query(api.transactions.list, {})
+    expect(visibleTransactions[0]?.canDelete).toBe(false)
+
+    await expect(
+      employee.mutation(api.transactions.remove, { transactionId })
+    ).rejects.toThrowError("uniquement les opérations que vous avez saisies")
+    expect(await backend.run((ctx) => ctx.db.get(transactionId))).not.toBeNull()
+  })
+})
+
 describe("transactions.update", () => {
   it("permet à un employé de corriger sa vente et recalcule le stock", async () => {
     const backend = createTestBackend()

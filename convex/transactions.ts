@@ -125,6 +125,7 @@ export const list = query({
           canManage:
             transaction.cancelledAt === undefined &&
             canManageTransaction(user, transaction),
+          canDelete: canManageTransaction(user, transaction),
           lines,
           stockDeltas: [...deltas].map(([productId, delta]) => ({
             delta,
@@ -637,6 +638,61 @@ async function loadStockBeforeTransaction(
   )
   return { movements, states }
 }
+
+export const remove = mutation({
+  args: {
+    transactionId: v.id("transactions"),
+  },
+  handler: async (ctx, args) => {
+    const user = await requireUser(ctx)
+    const transaction = await ctx.db.get(args.transactionId)
+    if (!transaction) {
+      throw new ConvexError({
+        code: "NOT_FOUND",
+        message: "Opération introuvable.",
+      })
+    }
+    requireTransactionManager(user, transaction)
+
+    const { movements, states } = await loadStockBeforeTransaction(
+      ctx,
+      transaction._id
+    )
+    for (const state of states.values()) {
+      if (state.baseStock < 0) {
+        throw new ConvexError({
+          code: "INSUFFICIENT_STOCK",
+          message: `Impossible de supprimer : le stock de « ${state.product.name} » est insuffisant.`,
+        })
+      }
+    }
+
+    const lines = await ctx.db
+      .query("transactionLines")
+      .withIndex("by_transaction", (index) =>
+        index.eq("transactionId", transaction._id)
+      )
+      .collect()
+    await Promise.all([
+      ...lines.map((line) => ctx.db.delete(line._id)),
+      ...movements.map((movement) => ctx.db.delete(movement._id)),
+    ])
+    await Promise.all(
+      [...states.values()].map((state) =>
+        ctx.db.patch(state.product._id, { currentStock: state.baseStock })
+      )
+    )
+    await ctx.db.delete(transaction._id)
+    await ctx.db.insert("auditLogs", {
+      action: "transaction.deleted",
+      actorUserId: String(user._id),
+      createdAt: Date.now(),
+      detail: `${transaction.kind}:${transaction.productName}:${transaction.quantity}:${transaction.total}`,
+      entityId: transaction._id,
+      entityType: "transaction",
+    })
+  },
+})
 
 export const update = mutation({
   args: {
