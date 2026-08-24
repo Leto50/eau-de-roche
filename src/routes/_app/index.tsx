@@ -145,66 +145,61 @@ function DashboardPage() {
             </CardDescription>
           </CardHeader>
           <CardContent className="grid gap-3 md:grid-cols-2 lg:grid-cols-1 xl:grid-cols-2">
-            <Alert
-              className={cn(
-                "min-h-24 border-[#6a5436]/30 bg-background/35 p-4 pr-14",
-                data.lowStock.length > 0 &&
-                  "border-[#9a4b32]/30 bg-[#9a4b32]/[0.04]"
-              )}
+            <Link
+              className="group block h-full rounded-lg outline-none focus-visible:ring-2 focus-visible:ring-ring/30"
+              to="/inventaire"
             >
-              <AlertTriangle
-                aria-hidden="true"
+              <Alert
                 className={cn(
-                  "size-5 text-primary",
-                  data.lowStock.length > 0 && "text-[#9a4b32]"
+                  "h-full min-h-24 border-[#6a5436]/30 bg-background/35 p-4 pr-14 transition-colors group-hover:border-primary/45 group-hover:bg-accent/60 group-focus-visible:border-primary/50 group-focus-visible:bg-accent/60",
+                  data.lowStock.length > 0 &&
+                    "border-[#9a4b32]/30 bg-[#9a4b32]/[0.04]"
                 )}
-              />
-              <AlertTitle className="text-sm font-semibold text-foreground">
-                {data.lowStock.length > 0
-                  ? `${formatNumber(data.lowStock.length)} stocks faibles`
-                  : "Stocks à jour"}
-              </AlertTitle>
-              <AlertDescription>
-                {data.lowStock.length > 0
-                  ? "Réapprovisionnement nécessaire"
-                  : "Aucune référence sous son seuil"}
-              </AlertDescription>
-              <AlertAction className="top-3 right-3">
-                <Button
-                  aria-label="Voir l’inventaire"
-                  asChild
-                  size="icon-lg"
-                  variant="ghost"
-                >
-                  <Link to="/inventaire">
-                    <ChevronRight aria-hidden="true" />
-                  </Link>
-                </Button>
-              </AlertAction>
-            </Alert>
+              >
+                <AlertTriangle
+                  aria-hidden="true"
+                  className={cn(
+                    "size-5 text-primary",
+                    data.lowStock.length > 0 && "text-[#9a4b32]"
+                  )}
+                />
+                <AlertTitle className="text-sm font-semibold text-foreground">
+                  {data.lowStock.length > 0
+                    ? `${formatNumber(data.lowStock.length)} stocks faibles`
+                    : "Stocks à jour"}
+                </AlertTitle>
+                <AlertDescription>
+                  {data.lowStock.length > 0
+                    ? "Réapprovisionnement nécessaire"
+                    : "Aucune référence sous son seuil"}
+                </AlertDescription>
+                <AlertAction aria-hidden="true" className="top-3 right-3">
+                  <ChevronRight className="size-5 text-muted-foreground transition-[color,transform] group-hover:translate-x-0.5 group-hover:text-primary group-focus-visible:translate-x-0.5 group-focus-visible:text-primary motion-reduce:transform-none" />
+                </AlertAction>
+              </Alert>
+            </Link>
 
-            <Alert className="min-h-24 border-primary/20 bg-primary/[0.035] p-4 pr-14">
-              <ScrollText aria-hidden="true" className="size-5 text-primary" />
-              <AlertTitle className="text-sm font-semibold text-foreground">
-                {formatNumber(data.openOrders)}{" "}
-                {data.openOrders === 1
-                  ? "commande ouverte"
-                  : "commandes ouvertes"}
-              </AlertTitle>
-              <AlertDescription>Clients et fournisseurs</AlertDescription>
-              <AlertAction className="top-3 right-3">
-                <Button
-                  aria-label="Voir les commandes"
-                  asChild
-                  size="icon-lg"
-                  variant="ghost"
-                >
-                  <Link to="/commandes">
-                    <ChevronRight aria-hidden="true" />
-                  </Link>
-                </Button>
-              </AlertAction>
-            </Alert>
+            <Link
+              className="group block h-full rounded-lg outline-none focus-visible:ring-2 focus-visible:ring-ring/30"
+              to="/commandes"
+            >
+              <Alert className="h-full min-h-24 border-primary/20 bg-primary/[0.035] p-4 pr-14 transition-colors group-hover:border-primary/45 group-hover:bg-accent/60 group-focus-visible:border-primary/50 group-focus-visible:bg-accent/60">
+                <ScrollText
+                  aria-hidden="true"
+                  className="size-5 text-primary"
+                />
+                <AlertTitle className="text-sm font-semibold text-foreground">
+                  {formatNumber(data.openOrders)}{" "}
+                  {data.openOrders === 1
+                    ? "commande ouverte"
+                    : "commandes ouvertes"}
+                </AlertTitle>
+                <AlertDescription>Clients et fournisseurs</AlertDescription>
+                <AlertAction aria-hidden="true" className="top-3 right-3">
+                  <ChevronRight className="size-5 text-muted-foreground transition-[color,transform] group-hover:translate-x-0.5 group-hover:text-primary group-focus-visible:translate-x-0.5 group-focus-visible:text-primary motion-reduce:transform-none" />
+                </AlertAction>
+              </Alert>
+            </Link>
           </CardContent>
         </Card>
 
