@@ -6,6 +6,7 @@ import { BookMarked, PackageOpen, Pencil, Search, Sparkles } from "lucide-react"
 import { useState } from "react"
 
 import { BundleArchivesDialog, BundleDialog } from "@/components/bundle-dialog"
+import { IngredientManagerSheet } from "@/components/ingredient-manager-sheet"
 import { PageError } from "@/components/page-error"
 import { PageHeader } from "@/components/page-header"
 import { PageSkeleton } from "@/components/page-skeleton"
@@ -82,7 +83,13 @@ function RecipesPage() {
   )
   return (
     <div className="animate-in duration-300 fade-in slide-in-from-bottom-1 motion-reduce:animate-none">
-      <PageHeader eyebrow="Production" title="Recettes & lots">
+      <PageHeader
+        action={
+          isAdmin ? <IngredientManagerSheet products={products} /> : undefined
+        }
+        eyebrow="Production"
+        title="Recettes & lots"
+      >
         Les ingrédients nécessaires aux recettes et les lots vendus en boutique.
       </PageHeader>
 

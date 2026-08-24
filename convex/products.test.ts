@@ -127,6 +127,67 @@ describe("products.save", () => {
     ])
   })
 
+  it("répercute le renommage d’un ingrédient dans les recettes et les lots", async () => {
+    const backend = createTestBackend()
+    const admin = await asAuthenticatedUser(backend, "admin")
+    const productId = await backend.run(async (ctx) => {
+      const ingredientId = await ctx.db.insert("products", {
+        active: true,
+        category: "ingredient",
+        currentStock: 5,
+        minimumStock: 1,
+        name: "Fleur pâle",
+        normalizedName: "fleur pale",
+        purchasePrice: 2,
+        tracksStock: true,
+      })
+      const recipeId = await ctx.db.insert("recipes", {
+        active: true,
+        family: "Essais",
+        name: "Décoction claire",
+      })
+      await ctx.db.insert("recipeIngredients", {
+        ingredientName: "Fleur pâle",
+        productId: ingredientId,
+        quantity: 3,
+        raw: "3 Fleur pâle",
+        recipeId,
+      })
+      const bundleId = await ctx.db.insert("bundles", {
+        active: true,
+        name: "Nécessaire d’alchimiste",
+      })
+      await ctx.db.insert("bundleItems", {
+        bundleId,
+        productId: ingredientId,
+        productName: "Fleur pâle",
+        quantity: 2,
+      })
+      return ingredientId
+    })
+
+    await admin.mutation(api.products.save, {
+      active: true,
+      category: "ingredient",
+      minimumStock: 1,
+      name: "Fleur des brumes",
+      productId,
+      purchasePrice: 2,
+      salePrice: null,
+      targetStock: 5,
+    })
+
+    const state = await backend.run(async (ctx) => ({
+      bundleItems: await ctx.db.query("bundleItems").collect(),
+      recipeIngredients: await ctx.db.query("recipeIngredients").collect(),
+    }))
+    expect(state.recipeIngredients[0]).toMatchObject({
+      ingredientName: "Fleur des brumes",
+      raw: "3 Fleur des brumes",
+    })
+    expect(state.bundleItems[0]?.productName).toBe("Fleur des brumes")
+  })
+
   it("refuse une correction de stock sans motif sans écriture partielle", async () => {
     const backend = createTestBackend()
     const admin = await asAuthenticatedUser(backend, "admin")
@@ -185,5 +246,96 @@ describe("products.save", () => {
       ctx.db.query("products").collect()
     )
     expect(products).toHaveLength(0)
+  })
+})
+
+describe("products.removeIngredient", () => {
+  it("supprime définitivement un ingrédient inutilisé et trace l’action", async () => {
+    const backend = createTestBackend()
+    const admin = await asAuthenticatedUser(backend, "admin")
+    const productId = await admin.mutation(api.products.save, {
+      active: true,
+      category: "ingredient",
+      minimumStock: 0,
+      name: "Pétale de nirnroot séché",
+      purchasePrice: 1,
+      salePrice: null,
+      targetStock: 0,
+    })
+
+    await admin.mutation(api.products.removeIngredient, { productId })
+
+    const state = await backend.run(async (ctx) => ({
+      audits: await ctx.db.query("auditLogs").collect(),
+      product: await ctx.db.get(productId),
+    }))
+    expect(state.product).toBeNull()
+    expect(state.audits.map((audit) => audit.action)).toEqual([
+      "product.created",
+      "product.deleted",
+    ])
+  })
+
+  it("refuse de supprimer un ingrédient utilisé sans écriture partielle", async () => {
+    const backend = createTestBackend()
+    const admin = await asAuthenticatedUser(backend, "admin")
+    const { productId } = await backend.run(async (ctx) => {
+      const ingredientId = await ctx.db.insert("products", {
+        active: true,
+        category: "ingredient",
+        currentStock: 5,
+        minimumStock: 1,
+        name: "Pétale de nirnroot séché",
+        normalizedName: "petale de nirnroot seche",
+        tracksStock: true,
+      })
+      const recipeId = await ctx.db.insert("recipes", {
+        active: true,
+        family: "Essais",
+        name: "Décoction des profondeurs",
+      })
+      await ctx.db.insert("recipeIngredients", {
+        ingredientName: "Pétale de nirnroot séché",
+        productId: ingredientId,
+        quantity: 1,
+        raw: "1 Pétale de nirnroot séché",
+        recipeId,
+      })
+      return { productId: ingredientId }
+    })
+
+    await expect(
+      admin.mutation(api.products.removeIngredient, { productId })
+    ).rejects.toThrowError("utilisé dans une recette")
+
+    const state = await backend.run(async (ctx) => ({
+      audits: await ctx.db.query("auditLogs").collect(),
+      product: await ctx.db.get(productId),
+    }))
+    expect(state.product).not.toBeNull()
+    expect(state.audits).toHaveLength(0)
+  })
+
+  it("réserve la suppression des ingrédients aux administrateurs", async () => {
+    const backend = createTestBackend()
+    const employee = await asAuthenticatedUser(backend)
+    const productId = await backend.run((ctx) =>
+      ctx.db.insert("products", {
+        active: true,
+        category: "ingredient",
+        currentStock: 0,
+        minimumStock: 0,
+        name: "Pétale de nirnroot séché",
+        normalizedName: "petale de nirnroot seche",
+        tracksStock: true,
+      })
+    )
+
+    await expect(
+      employee.mutation(api.products.removeIngredient, { productId })
+    ).rejects.toThrowError("réservée aux administrateurs")
+
+    const product = await backend.run((ctx) => ctx.db.get(productId))
+    expect(product).not.toBeNull()
   })
 })

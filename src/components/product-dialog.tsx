@@ -67,10 +67,14 @@ function isProductCategory(value: string): value is ProductCategory {
 }
 
 export function ProductDialog({
+  fixedCategory,
   product,
+  showArchive = true,
   trigger,
 }: Readonly<{
+  fixedCategory?: ProductCategory
   product?: Doc<"products">
+  showArchive?: boolean
   trigger?: ReactElement
 }>) {
   const saveProduct = useMutation(api.products.save)
@@ -90,14 +94,16 @@ export function ProductDialog({
   const [adjustmentReason, setAdjustmentReason] = useState("")
   const [isSubmitting, setIsSubmitting] = useState(false)
 
-  const tracksStock = category !== "service"
+  const selectedCategory = fixedCategory ?? category
+  const isIngredient = fixedCategory === "ingredient"
+  const tracksStock = selectedCategory !== "service"
   const effectiveTargetStock = tracksStock ? Number(targetStock) : 0
   const stockChanged =
     product !== undefined && effectiveTargetStock !== product.currentStock
 
   function resetForm() {
     setName(product?.name ?? "")
-    setCategory(product?.category ?? "potion")
+    setCategory(fixedCategory ?? product?.category ?? "potion")
     setPurchasePrice(priceDraftFromValue(product?.purchasePrice))
     setSalePrice(priceDraftFromValue(product?.salePrice))
     setMinimumStock(product?.minimumStock.toString() ?? "0")
@@ -151,7 +157,7 @@ export function ProductDialog({
       await saveProduct({
         active,
         ...(adjustmentReason.trim() ? { adjustmentReason } : {}),
-        category,
+        category: selectedCategory,
         minimumStock: submittedMinimum,
         name: name.trim(),
         ...(product ? { productId: product._id } : {}),
@@ -160,11 +166,15 @@ export function ProductDialog({
         targetStock: submittedStock,
       })
       toast.success(
-        active
+        isIngredient
           ? product
-            ? "Référence mise à jour."
-            : "Référence créée."
-          : "Référence archivée."
+            ? "Ingrédient mis à jour."
+            : "Ingrédient créé."
+          : active
+            ? product
+              ? "Référence mise à jour."
+              : "Référence créée."
+            : "Référence archivée."
       )
       setOpen(false)
       return true
@@ -172,7 +182,9 @@ export function ProductDialog({
       toast.error(
         getUserFacingErrorMessage(
           error,
-          "Impossible d’enregistrer la référence."
+          isIngredient
+            ? "Impossible d’enregistrer l’ingrédient."
+            : "Impossible d’enregistrer la référence."
         )
       )
       return false
@@ -208,17 +220,25 @@ export function ProductDialog({
         {trigger ?? (
           <Button>
             <PackagePlus aria-hidden="true" />
-            Nouvelle référence
+            {isIngredient ? "Nouvel ingrédient" : "Nouvelle référence"}
           </Button>
         )}
       </DialogTrigger>
       <DialogContent className="max-h-[94svh] overflow-y-auto rounded-[0.2rem] border-[#6a5436] bg-[#eee1c7] ring-0 sm:max-w-xl">
         <DialogHeader className="pr-8">
           <p className="text-[0.66rem] font-bold tracking-[0.2em] text-primary uppercase">
-            Catalogue de la boutique
+            {isIngredient
+              ? "Réserve d’ingrédients"
+              : "Catalogue de la boutique"}
           </p>
           <DialogTitle className="font-display text-2xl">
-            {product ? "Modifier la référence" : "Créer une référence"}
+            {isIngredient
+              ? product
+                ? "Modifier l’ingrédient"
+                : "Créer un ingrédient"
+              : product
+                ? "Modifier la référence"
+                : "Créer une référence"}
           </DialogTitle>
           <DialogDescription>
             Renseignez ses prix et, si nécessaire, son niveau de stock.
@@ -232,32 +252,34 @@ export function ProductDialog({
               id={`${fieldId}-name`}
               maxLength={100}
               onChange={(event) => setName(event.target.value)}
-              placeholder="Potion de vigueur"
+              placeholder={isIngredient ? "Ail" : "Potion de vigueur"}
               required
               value={name}
             />
           </div>
 
-          <div className="grid gap-2">
-            <Label htmlFor={`${fieldId}-category`}>Famille</Label>
-            <Select
-              onValueChange={(value) => {
-                if (isProductCategory(value)) setCategory(value)
-              }}
-              value={category}
-            >
-              <SelectTrigger className="w-full" id={`${fieldId}-category`}>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {categories.map((entry) => (
-                  <SelectItem key={entry} value={entry}>
-                    {categoryLabels[entry]}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
+          {fixedCategory === undefined ? (
+            <div className="grid gap-2">
+              <Label htmlFor={`${fieldId}-category`}>Famille</Label>
+              <Select
+                onValueChange={(value) => {
+                  if (isProductCategory(value)) setCategory(value)
+                }}
+                value={category}
+              >
+                <SelectTrigger className="w-full" id={`${fieldId}-category`}>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {categories.map((entry) => (
+                    <SelectItem key={entry} value={entry}>
+                      {categoryLabels[entry]}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          ) : null}
 
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="grid gap-2">
@@ -335,7 +357,7 @@ export function ProductDialog({
 
           <DialogFooter className="gap-2 sm:justify-between">
             <div>
-              {product ? (
+              {product && showArchive ? (
                 <AlertDialog>
                   <AlertDialogTrigger asChild>
                     <Button type="button" variant="ghost">
@@ -386,7 +408,11 @@ export function ProductDialog({
                 ) : (
                   <PackagePlus aria-hidden="true" />
                 )}
-                {product ? "Enregistrer" : "Créer la référence"}
+                {product
+                  ? "Enregistrer"
+                  : isIngredient
+                    ? "Créer l’ingrédient"
+                    : "Créer la référence"}
               </Button>
             </div>
           </DialogFooter>
