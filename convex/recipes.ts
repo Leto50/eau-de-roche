@@ -193,33 +193,30 @@ export const save = mutation({
         })
       }
     } else {
-      if (productsWithName.length > 1) {
+      if (productsWithName.length > 0) {
         throw new ConvexError({
           code: "ALREADY_EXISTS",
-          message: `Plusieurs articles existent déjà sous le nom « ${name} ».`,
+          message: `Un article existe déjà sous le nom « ${name} ».`,
         })
       }
-      linkedProduct = productsWithName[0] ?? null
-      if (!linkedProduct) {
-        const productId = await ctx.db.insert("products", {
-          active: true,
-          category: "potion",
-          currentStock: 0,
-          minimumStock: 0,
-          name,
-          normalizedName,
-          tracksStock: true,
-        })
-        linkedProduct = await ctx.db.get(productId)
-        await ctx.db.insert("auditLogs", {
-          action: "product.created",
-          actorUserId: String(user._id),
-          createdAt: Date.now(),
-          detail: name,
-          entityId: productId,
-          entityType: "product",
-        })
-      }
+      const productId = await ctx.db.insert("products", {
+        active: true,
+        category: "potion",
+        currentStock: 0,
+        minimumStock: 0,
+        name,
+        normalizedName,
+        tracksStock: true,
+      })
+      linkedProduct = await ctx.db.get(productId)
+      await ctx.db.insert("auditLogs", {
+        action: "product.created",
+        actorUserId: String(user._id),
+        createdAt: Date.now(),
+        detail: name,
+        entityId: productId,
+        entityType: "product",
+      })
     }
 
     if (!linkedProduct?.active || !linkedProduct.tracksStock) {
