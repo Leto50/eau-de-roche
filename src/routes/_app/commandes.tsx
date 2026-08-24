@@ -58,6 +58,7 @@ import { api } from "../../../convex/_generated/api"
 import { type Doc } from "../../../convex/_generated/dataModel"
 import { useHydrated } from "@/hooks/use-hydrated"
 import { authClient } from "@/lib/auth-client"
+import { getUserFacingErrorMessage } from "@/lib/errors"
 import {
   formatDate,
   formatNumber,
@@ -145,9 +146,10 @@ function OrdersPage() {
       toast.success("L'état de la commande a été mis à jour.")
     } catch (error) {
       toast.error(
-        error instanceof Error
-          ? error.message
-          : "Impossible de modifier cette commande."
+        getUserFacingErrorMessage(
+          error,
+          "Impossible de modifier cette commande."
+        )
       )
     }
   }
@@ -461,9 +463,10 @@ function OrderProcessingDialog({
       setOpen(false)
     } catch (error) {
       toast.error(
-        error instanceof Error
-          ? error.message
-          : "Impossible de traiter cette commande."
+        getUserFacingErrorMessage(
+          error,
+          "Impossible de traiter cette commande."
+        )
       )
     } finally {
       setIsSubmitting(false)

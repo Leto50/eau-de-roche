@@ -63,6 +63,7 @@ import { api } from "../../../convex/_generated/api"
 import { type Doc } from "../../../convex/_generated/dataModel"
 import { useHydrated } from "@/hooks/use-hydrated"
 import { authClient } from "@/lib/auth-client"
+import { getUserFacingErrorMessage } from "@/lib/errors"
 import {
   formatDate,
   formatNumber,
@@ -499,9 +500,10 @@ function TransactionDeletion({
       setOpen(false)
     } catch (error) {
       toast.error(
-        error instanceof Error
-          ? error.message
-          : "Impossible de supprimer cette opération."
+        getUserFacingErrorMessage(
+          error,
+          "Impossible de supprimer cette opération."
+        )
       )
     } finally {
       setIsSubmitting(false)

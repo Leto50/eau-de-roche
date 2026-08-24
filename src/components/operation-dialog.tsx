@@ -65,6 +65,7 @@ import {
 } from "@/components/ui/select"
 import { Separator } from "@/components/ui/separator"
 import { Textarea } from "@/components/ui/textarea"
+import { getUserFacingErrorMessage } from "@/lib/errors"
 import { categoryLabels, formatNumber, formatSeptims } from "@/lib/format"
 import {
   priceDraftFromValue,
@@ -892,9 +893,10 @@ export function OperationDialog({
       setOpen(false)
     } catch (error) {
       toast.error(
-        error instanceof Error
-          ? error.message
-          : "Impossible d’enregistrer cette opération."
+        getUserFacingErrorMessage(
+          error,
+          "Impossible d’enregistrer cette opération."
+        )
       )
     } finally {
       setIsSubmitting(false)

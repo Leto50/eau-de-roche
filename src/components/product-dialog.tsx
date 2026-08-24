@@ -45,6 +45,7 @@ import {
 import { Textarea } from "@/components/ui/textarea"
 import { api } from "../../convex/_generated/api"
 import { type Doc } from "../../convex/_generated/dataModel"
+import { getUserFacingErrorMessage } from "@/lib/errors"
 import { categoryLabels } from "@/lib/format"
 import {
   priceDraftFromValue,
@@ -169,9 +170,10 @@ export function ProductDialog({
       return true
     } catch (error) {
       toast.error(
-        error instanceof Error
-          ? error.message
-          : "Impossible d’enregistrer la référence."
+        getUserFacingErrorMessage(
+          error,
+          "Impossible d’enregistrer la référence."
+        )
       )
       return false
     } finally {
@@ -193,9 +195,7 @@ export function ProductDialog({
       setOpen(false)
     } catch (error) {
       toast.error(
-        error instanceof Error
-          ? error.message
-          : "Impossible d’archiver la référence."
+        getUserFacingErrorMessage(error, "Impossible d’archiver la référence.")
       )
     } finally {
       setIsSubmitting(false)
@@ -408,9 +408,10 @@ export function ProductArchivesDialog() {
       toast.success(`« ${product.name} » est de nouveau disponible.`)
     } catch (error) {
       toast.error(
-        error instanceof Error
-          ? error.message
-          : "Impossible de réactiver la référence."
+        getUserFacingErrorMessage(
+          error,
+          "Impossible de réactiver la référence."
+        )
       )
     } finally {
       setRestoringId(undefined)

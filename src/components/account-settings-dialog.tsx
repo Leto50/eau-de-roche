@@ -23,6 +23,7 @@ import {
   InputGroupText,
 } from "@/components/ui/input-group"
 import { Label } from "@/components/ui/label"
+import { getUserFacingErrorMessage } from "@/lib/errors"
 import { api } from "../../convex/_generated/api"
 
 type Settings = FunctionReturnType<typeof api.accounts.overview>["settings"]
@@ -93,9 +94,10 @@ export function AccountSettingsDialog({
       setOpen(false)
     } catch (error) {
       toast.error(
-        error instanceof Error
-          ? error.message
-          : "Impossible de modifier les paramètres du compte."
+        getUserFacingErrorMessage(
+          error,
+          "Impossible de modifier les paramètres du compte."
+        )
       )
     } finally {
       setIsSubmitting(false)

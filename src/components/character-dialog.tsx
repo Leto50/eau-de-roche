@@ -34,6 +34,7 @@ import {
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { ScrollArea } from "@/components/ui/scroll-area"
+import { getUserFacingErrorMessage } from "@/lib/errors"
 import { api } from "../../convex/_generated/api"
 import { type Doc } from "../../convex/_generated/dataModel"
 
@@ -73,9 +74,10 @@ export function CharacterDialog({
       setOpen(false)
     } catch (error) {
       toast.error(
-        error instanceof Error
-          ? error.message
-          : "Impossible d’enregistrer le personnage."
+        getUserFacingErrorMessage(
+          error,
+          "Impossible d’enregistrer le personnage."
+        )
       )
     } finally {
       setIsSubmitting(false)
@@ -94,9 +96,7 @@ export function CharacterDialog({
       setOpen(false)
     } catch (error) {
       toast.error(
-        error instanceof Error
-          ? error.message
-          : "Impossible d’archiver le personnage."
+        getUserFacingErrorMessage(error, "Impossible d’archiver le personnage.")
       )
     } finally {
       setIsSubmitting(false)
@@ -218,9 +218,10 @@ export function CharacterArchivesDialog() {
       toast.success(`« ${character.name} » est de nouveau disponible.`)
     } catch (error) {
       toast.error(
-        error instanceof Error
-          ? error.message
-          : "Impossible de réactiver le personnage."
+        getUserFacingErrorMessage(
+          error,
+          "Impossible de réactiver le personnage."
+        )
       )
     } finally {
       setRestoringId(undefined)

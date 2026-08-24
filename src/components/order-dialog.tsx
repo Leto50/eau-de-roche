@@ -62,6 +62,7 @@ import { Separator } from "@/components/ui/separator"
 import { Textarea } from "@/components/ui/textarea"
 import { api } from "../../convex/_generated/api"
 import { type Doc } from "../../convex/_generated/dataModel"
+import { getUserFacingErrorMessage } from "@/lib/errors"
 import { formatSeptims, orderStatusLabels } from "@/lib/format"
 import { calculateOrderPreparation } from "@/lib/order-preparation"
 import {
@@ -372,9 +373,10 @@ export function OrderDialog({
       setOpen(false)
     } catch (error) {
       toast.error(
-        error instanceof Error
-          ? error.message
-          : "Impossible d’enregistrer la commande."
+        getUserFacingErrorMessage(
+          error,
+          "Impossible d’enregistrer la commande."
+        )
       )
     } finally {
       setIsSubmitting(false)
@@ -390,9 +392,7 @@ export function OrderDialog({
       setOpen(false)
     } catch (error) {
       toast.error(
-        error instanceof Error
-          ? error.message
-          : "Impossible de supprimer la commande."
+        getUserFacingErrorMessage(error, "Impossible de supprimer la commande.")
       )
     } finally {
       setIsSubmitting(false)

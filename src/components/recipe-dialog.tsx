@@ -52,6 +52,7 @@ import { Separator } from "@/components/ui/separator"
 import { Textarea } from "@/components/ui/textarea"
 import { api } from "../../convex/_generated/api"
 import { type Doc } from "../../convex/_generated/dataModel"
+import { getUserFacingErrorMessage } from "@/lib/errors"
 import { formatDecimalSeptims } from "@/lib/format"
 
 type Recipe = FunctionReturnType<typeof api.recipes.list>[number]
@@ -232,9 +233,7 @@ export function RecipeDialog({
       setOpen(false)
     } catch (error) {
       toast.error(
-        error instanceof Error
-          ? error.message
-          : "Impossible d’enregistrer la recette."
+        getUserFacingErrorMessage(error, "Impossible d’enregistrer la recette.")
       )
     } finally {
       setIsSubmitting(false)
@@ -250,9 +249,7 @@ export function RecipeDialog({
       setOpen(false)
     } catch (error) {
       toast.error(
-        error instanceof Error
-          ? error.message
-          : "Impossible d’archiver la recette."
+        getUserFacingErrorMessage(error, "Impossible d’archiver la recette.")
       )
     } finally {
       setIsSubmitting(false)
@@ -497,9 +494,7 @@ export function RecipeArchivesDialog() {
       toast.success(`« ${recipe.name} » est de nouveau disponible.`)
     } catch (error) {
       toast.error(
-        error instanceof Error
-          ? error.message
-          : "Impossible de réactiver la recette."
+        getUserFacingErrorMessage(error, "Impossible de réactiver la recette.")
       )
     } finally {
       setRestoringId(undefined)
