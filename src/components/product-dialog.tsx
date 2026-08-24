@@ -338,11 +338,7 @@ export function ProductDialog({
               {product ? (
                 <AlertDialog>
                   <AlertDialogTrigger asChild>
-                    <Button
-                      className="cursor-pointer hover:bg-accent hover:text-accent-foreground"
-                      type="button"
-                      variant="ghost"
-                    >
+                    <Button type="button" variant="ghost">
                       <Archive aria-hidden="true" />
                       Archiver
                     </Button>
@@ -373,7 +369,6 @@ export function ProductDialog({
             </div>
             <div className="flex justify-end gap-2">
               <Button
-                className="cursor-pointer hover:bg-accent hover:text-accent-foreground"
                 onClick={() => setOpen(false)}
                 type="button"
                 variant="ghost"
