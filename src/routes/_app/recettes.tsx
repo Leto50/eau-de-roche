@@ -9,6 +9,7 @@ import { BundleArchivesDialog, BundleDialog } from "@/components/bundle-dialog"
 import { PageError } from "@/components/page-error"
 import { PageHeader } from "@/components/page-header"
 import { PageSkeleton } from "@/components/page-skeleton"
+import { ProductDialog } from "@/components/product-dialog"
 import { RecipeArchivesDialog, RecipeDialog } from "@/components/recipe-dialog"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
@@ -258,16 +259,47 @@ function RecipeEntry({
         ) : null}
 
         <div className="mt-4 flex flex-wrap gap-1.5">
-          {recipe.ingredients.map((ingredient) => (
-            <Badge
-              className="border-[#614b2c]/20 bg-[#6b5939]/[0.07] text-[#5a4b37]"
-              key={ingredient._id}
-              variant="outline"
-            >
-              <strong>{formatNumber(ingredient.quantity)}</strong>{" "}
-              {ingredient.ingredientName}
-            </Badge>
-          ))}
+          {recipe.ingredients.map((ingredient) => {
+            const product = ingredient.productId
+              ? products.find((entry) => entry._id === ingredient.productId)
+              : undefined
+            const content = (
+              <>
+                <strong>{formatNumber(ingredient.quantity)}</strong>{" "}
+                {ingredient.ingredientName}
+              </>
+            )
+
+            return isAdmin && product ? (
+              <ProductDialog
+                key={ingredient._id}
+                product={product}
+                trigger={
+                  <Badge
+                    asChild
+                    className="border-[#614b2c]/20 bg-[#6b5939]/[0.07] text-[#5a4b37] hover:border-primary/35 hover:bg-primary/[0.09] hover:text-[#443522]"
+                    variant="outline"
+                  >
+                    <button
+                      aria-label={`Modifier l’ingrédient ${ingredient.ingredientName}`}
+                      type="button"
+                    >
+                      {content}
+                      <Pencil aria-hidden="true" data-icon="inline-end" />
+                    </button>
+                  </Badge>
+                }
+              />
+            ) : (
+              <Badge
+                className="border-[#614b2c]/20 bg-[#6b5939]/[0.07] text-[#5a4b37]"
+                key={ingredient._id}
+                variant="outline"
+              >
+                {content}
+              </Badge>
+            )
+          })}
         </div>
       </CardContent>
     </Card>
