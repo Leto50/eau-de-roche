@@ -295,10 +295,6 @@ export function RecipeDialog({
                 required
                 value={name}
               />
-              <p className="text-xs text-muted-foreground">
-                L’article fabriqué portera automatiquement ce même nom dans le
-                stock.
-              </p>
             </div>
             <div className="grid gap-2">
               <Label htmlFor={`${fieldId}-family`}>Famille</Label>
