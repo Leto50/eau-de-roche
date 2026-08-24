@@ -277,7 +277,7 @@ function RecipeEntry({
                 trigger={
                   <Badge
                     asChild
-                    className="border-[#614b2c]/20 bg-[#6b5939]/[0.07] text-[#5a4b37] hover:border-primary/35 hover:bg-primary/[0.09] hover:text-[#443522]"
+                    className="cursor-pointer touch-manipulation border-[#614b2c]/20 bg-[#6b5939]/[0.07] text-[#5a4b37] hover:border-primary/35 hover:bg-primary/[0.09] hover:text-[#443522] active:bg-primary/[0.14]"
                     variant="outline"
                   >
                     <button
@@ -285,7 +285,6 @@ function RecipeEntry({
                       type="button"
                     >
                       {content}
-                      <Pencil aria-hidden="true" data-icon="inline-end" />
                     </button>
                   </Badge>
                 }
