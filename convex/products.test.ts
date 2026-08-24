@@ -52,8 +52,8 @@ describe("products.save", () => {
   it("permet à un administrateur de modifier les prix et trace un ajustement de stock", async () => {
     const backend = createTestBackend()
     const admin = await asAuthenticatedUser(backend, "admin")
-    const productId = await backend.run((ctx) =>
-      ctx.db.insert("products", {
+    const productId = await backend.run(async (ctx) => {
+      const id = await ctx.db.insert("products", {
         active: true,
         category: "potion",
         currentStock: 8,
@@ -64,7 +64,14 @@ describe("products.save", () => {
         salePrice: 11,
         tracksStock: true,
       })
-    )
+      await ctx.db.insert("recipes", {
+        active: true,
+        family: "Vigueur",
+        name: "Potion de vigueur",
+        productId: id,
+      })
+      return id
+    })
 
     await admin.mutation(api.products.save, {
       active: true,
@@ -90,6 +97,7 @@ describe("products.save", () => {
       audits: await ctx.db.query("auditLogs").collect(),
       movements: await ctx.db.query("stockMovements").collect(),
       product: await ctx.db.get(productId),
+      recipes: await ctx.db.query("recipes").collect(),
       transactions: await ctx.db.query("transactions").collect(),
     }))
     expect(state.product).toMatchObject({
@@ -99,6 +107,7 @@ describe("products.save", () => {
       purchasePrice: 6,
       salePrice: 15,
     })
+    expect(state.recipes[0]?.name).toBe("Potion de vigueur supérieure")
     expect(state.transactions).toHaveLength(1)
     expect(state.transactions[0]).toMatchObject({
       kind: "adjustment",

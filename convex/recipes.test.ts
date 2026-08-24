@@ -40,13 +40,13 @@ describe("recipes", () => {
       effect: "Aide à tenir pendant une longue garde.",
       family: "Fortifiants",
       ingredients: [{ productId: ingredientId, quantity: 2 }],
-      productId: outputId,
+      name: "Élixir du veilleur",
     })
     await admin.mutation(api.recipes.save, {
       effect: "Soutient l’effort prolongé.",
       family: "Fortifiants",
       ingredients: [{ productId: ingredientId, quantity: 3 }],
-      productId: outputId,
+      name: "Élixir du veilleur renforcé",
       recipeId,
     })
     await admin.mutation(api.recipes.setActive, {
@@ -60,13 +60,16 @@ describe("recipes", () => {
         .query("recipeIngredients")
         .withIndex("by_recipe", (index) => index.eq("recipeId", recipeId))
         .collect(),
+      product: await ctx.db.get(outputId),
       recipe: await ctx.db.get(recipeId),
     }))
     expect(state.recipe).toMatchObject({
       active: false,
       cost: 3.75,
-      name: "Élixir du veilleur",
+      name: "Élixir du veilleur renforcé",
+      productId: outputId,
     })
+    expect(state.product?.name).toBe("Élixir du veilleur renforcé")
     expect(state.ingredients).toHaveLength(1)
     expect(state.ingredients[0]).toMatchObject({
       ingredientName: "Poudre minérale",
@@ -74,6 +77,7 @@ describe("recipes", () => {
     })
     expect(state.audits.map((audit) => audit.action)).toEqual([
       "recipe.created",
+      "product.updated",
       "recipe.updated",
       "recipe.archived",
     ])
@@ -82,29 +86,34 @@ describe("recipes", () => {
   it("refuse les quantités d’ingrédients fractionnaires", async () => {
     const backend = createTestBackend()
     const admin = await asAuthenticatedUser(backend, "admin")
-    const { ingredientId, outputId } = await seedRecipeProducts(backend)
+    const { ingredientId } = await seedRecipeProducts(backend)
 
     await expect(
       admin.mutation(api.recipes.save, {
         effect: "",
         family: "Essais",
         ingredients: [{ productId: ingredientId, quantity: 1.5 }],
-        productId: outputId,
+        name: "Préparation incomplète",
       })
     ).rejects.toThrowError("nombre entier")
+
+    const products = await backend.run((ctx) =>
+      ctx.db.query("products").collect()
+    )
+    expect(products).toHaveLength(2)
   })
 
   it("réserve la gestion des recettes aux administrateurs", async () => {
     const backend = createTestBackend()
     const employee = await asAuthenticatedUser(backend)
-    const { ingredientId, outputId } = await seedRecipeProducts(backend)
+    const { ingredientId } = await seedRecipeProducts(backend)
 
     await expect(
       employee.mutation(api.recipes.save, {
         effect: "",
         family: "Essais",
         ingredients: [{ productId: ingredientId, quantity: 1 }],
-        productId: outputId,
+        name: "Élixir du veilleur",
       })
     ).rejects.toThrowError("réservée aux administrateurs")
   })
@@ -118,7 +127,7 @@ describe("recipes", () => {
       effect: "",
       family: "Fortifiants",
       ingredients: [{ productId: ingredientId, quantity: 2 }],
-      productId: outputId,
+      name: "Élixir du veilleur",
     })
     await backend.run((ctx) => ctx.db.patch(ingredientId, { purchasePrice: 2 }))
 
@@ -133,8 +142,44 @@ describe("recipes", () => {
         effect: "",
         family: "Doublon",
         ingredients: [{ productId: ingredientId, quantity: 1 }],
-        productId: outputId,
+        name: "élixir DU veilleur",
       })
     ).rejects.toThrowError("existe déjà")
+  })
+
+  it("crée automatiquement l’article portant le nom de la recette", async () => {
+    const backend = createTestBackend()
+    const admin = await asAuthenticatedUser(backend, "admin")
+    const { ingredientId } = await seedRecipeProducts(backend)
+
+    const recipeId = await admin.mutation(api.recipes.save, {
+      effect: "Éclaire les galeries les plus sombres.",
+      family: "Utilitaires",
+      ingredients: [{ productId: ingredientId, quantity: 2 }],
+      name: "Philtre du guetteur",
+    })
+
+    const state = await backend.run(async (ctx) => ({
+      audits: await ctx.db.query("auditLogs").collect(),
+      products: await ctx.db.query("products").collect(),
+      recipe: await ctx.db.get(recipeId),
+    }))
+    const product = state.products.find(
+      (entry) => entry.name === "Philtre du guetteur"
+    )
+    expect(product).toMatchObject({
+      category: "potion",
+      currentStock: 0,
+      minimumStock: 0,
+      tracksStock: true,
+    })
+    expect(state.recipe).toMatchObject({
+      name: "Philtre du guetteur",
+      productId: product?._id,
+    })
+    expect(state.audits.map((audit) => audit.action)).toEqual([
+      "product.created",
+      "recipe.created",
+    ])
   })
 })

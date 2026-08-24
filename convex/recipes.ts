@@ -5,10 +5,12 @@ import { mutation, query, type QueryCtx } from "./_generated/server"
 import { requireAdmin, requireUser } from "./lib/auth"
 import { assertWholeNumberRange } from "./lib/numbers"
 import { calculateRecipeCost } from "./lib/recipeCost"
+import { normalizeName } from "./lib/text"
 
 const MAX_EFFECT_LENGTH = 500
 const MAX_FAMILY_LENGTH = 60
 const MAX_INGREDIENTS = 50
+const MAX_NAME_LENGTH = 100
 const MAX_QUANTITY = 1_000_000
 
 async function completeRecipe(
@@ -92,13 +94,20 @@ export const save = mutation({
         quantity: v.number(),
       })
     ),
-    productId: v.id("products"),
+    name: v.string(),
     recipeId: v.optional(v.id("recipes")),
   },
   handler: async (ctx, args) => {
     const user = await requireAdmin(ctx)
+    const name = args.name.trim()
     const family = args.family.trim()
     const effect = args.effect.trim()
+    if (!name || name.length > MAX_NAME_LENGTH) {
+      throw new ConvexError({
+        code: "INVALID_INPUT",
+        message: `Le nom doit contenir entre 1 et ${MAX_NAME_LENGTH} caractères.`,
+      })
+    }
     if (!family || family.length > MAX_FAMILY_LENGTH) {
       throw new ConvexError({
         code: "INVALID_INPUT",
@@ -127,14 +136,98 @@ export const save = mutation({
         message: "Recette introuvable.",
       })
     }
-    const linkedProduct = await ctx.db.get(args.productId)
+
+    const normalizedName = normalizeName(name)
+    const recipes = await ctx.db.query("recipes").collect()
+    if (
+      recipes.some(
+        (recipe) =>
+          recipe._id !== args.recipeId &&
+          normalizeName(recipe.name) === normalizedName
+      )
+    ) {
+      throw new ConvexError({
+        code: "ALREADY_EXISTS",
+        message: `Une recette existe déjà sous le nom « ${name} ».`,
+      })
+    }
+
+    const productsWithName = await ctx.db
+      .query("products")
+      .withIndex("by_normalized_name", (index) =>
+        index.eq("normalizedName", normalizedName)
+      )
+      .collect()
+    let linkedProduct: Doc<"products"> | null
+    if (existing) {
+      linkedProduct = existing.productId
+        ? await ctx.db.get(existing.productId)
+        : null
+      if (!linkedProduct) {
+        throw new ConvexError({
+          code: "NOT_FOUND",
+          message: "L’article fabriqué lié à cette recette est introuvable.",
+        })
+      }
+      if (
+        productsWithName.some((product) => product._id !== linkedProduct?._id)
+      ) {
+        throw new ConvexError({
+          code: "ALREADY_EXISTS",
+          message: `Un article existe déjà sous le nom « ${name} ».`,
+        })
+      }
+      if (
+        linkedProduct.name !== name ||
+        linkedProduct.normalizedName !== normalizedName
+      ) {
+        await ctx.db.patch(linkedProduct._id, { name, normalizedName })
+        linkedProduct = { ...linkedProduct, name, normalizedName }
+        await ctx.db.insert("auditLogs", {
+          action: "product.updated",
+          actorUserId: String(user._id),
+          createdAt: Date.now(),
+          detail: name,
+          entityId: linkedProduct._id,
+          entityType: "product",
+        })
+      }
+    } else {
+      if (productsWithName.length > 1) {
+        throw new ConvexError({
+          code: "ALREADY_EXISTS",
+          message: `Plusieurs articles existent déjà sous le nom « ${name} ».`,
+        })
+      }
+      linkedProduct = productsWithName[0] ?? null
+      if (!linkedProduct) {
+        const productId = await ctx.db.insert("products", {
+          active: true,
+          category: "potion",
+          currentStock: 0,
+          minimumStock: 0,
+          name,
+          normalizedName,
+          tracksStock: true,
+        })
+        linkedProduct = await ctx.db.get(productId)
+        await ctx.db.insert("auditLogs", {
+          action: "product.created",
+          actorUserId: String(user._id),
+          createdAt: Date.now(),
+          detail: name,
+          entityId: productId,
+          entityType: "product",
+        })
+      }
+    }
+
     if (!linkedProduct?.active || !linkedProduct.tracksStock) {
       throw new ConvexError({
         code: "NOT_FOUND",
         message: "L’article fabriqué est introuvable ou indisponible.",
       })
     }
-    const recipes = await ctx.db.query("recipes").collect()
     if (
       recipes.some(
         (recipe) =>
@@ -198,7 +291,7 @@ export const save = mutation({
       ...(effect ? { effect } : {}),
       family,
       ...(existing?.legacyKey ? { legacyKey: existing.legacyKey } : {}),
-      name: linkedProduct.name,
+      name,
       productId: linkedProduct._id,
     }
     let recipeId: Id<"recipes">
@@ -225,7 +318,7 @@ export const save = mutation({
       action: existing ? "recipe.updated" : "recipe.created",
       actorUserId: String(user._id),
       createdAt: Date.now(),
-      detail: `${linkedProduct.name}:${preparedIngredients.length}`,
+      detail: `${name}:${preparedIngredients.length}`,
       entityId: recipeId,
       entityType: "recipe",
     })

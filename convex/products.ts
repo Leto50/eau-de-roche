@@ -177,6 +177,14 @@ export const save = mutation({
     if (existing) {
       await ctx.db.replace(existing._id, details)
       productId = existing._id
+      if (existing.name !== name) {
+        const linkedRecipes = (await ctx.db.query("recipes").collect()).filter(
+          (recipe) => recipe.productId === productId
+        )
+        await Promise.all(
+          linkedRecipes.map((recipe) => ctx.db.patch(recipe._id, { name }))
+        )
+      }
     } else {
       productId = await ctx.db.insert("products", details)
     }

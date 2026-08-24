@@ -66,21 +66,19 @@ export function RecipeDialog({
   products,
   recipe,
   trigger,
-  usedProductIds,
 }: Readonly<{
   products: readonly Doc<"products">[]
   recipe?: Recipe
   trigger?: ReactElement
-  usedProductIds?: ReadonlySet<string>
 }>) {
   const saveRecipe = useMutation(api.recipes.save)
   const setRecipeActive = useMutation(api.recipes.setActive)
   const fieldId = useId()
   const nextLineKey = useRef(1)
   const [open, setOpen] = useState(false)
+  const [name, setName] = useState("")
   const [family, setFamily] = useState("")
   const [effect, setEffect] = useState("")
-  const [productId, setProductId] = useState("")
   const [ingredients, setIngredients] = useState<IngredientDraft[]>([
     { key: 0, productId: "", quantity: "1" },
   ])
@@ -88,14 +86,6 @@ export function RecipeDialog({
   const ingredientProducts = useMemo(
     () => products.filter((product) => product.tracksStock),
     [products]
-  )
-  const outputProducts = useMemo(
-    () =>
-      ingredientProducts.filter(
-        (product) =>
-          product._id === recipe?.productId || !usedProductIds?.has(product._id)
-      ),
-    [ingredientProducts, recipe?.productId, usedProductIds]
   )
   const costCalculation = useMemo(() => {
     const missingPrices = new Set<string>()
@@ -135,9 +125,9 @@ export function RecipeDialog({
   }, [ingredientProducts, ingredients])
 
   function resetForm() {
+    setName(recipe?.name ?? "")
     setFamily(recipe?.family ?? "")
     setEffect(recipe?.effect ?? "")
-    setProductId(recipe?.productId ?? "")
     if (recipe?.ingredients.length) {
       setIngredients(
         recipe.ingredients.map((ingredient, index) => ({
@@ -189,12 +179,8 @@ export function RecipeDialog({
       )?._id,
       quantity: Number(ingredient.quantity),
     }))
-    const linkedProductId = products.find(
-      (product) => product._id === productId
-    )?._id
-
-    if (!linkedProductId || !family.trim()) {
-      toast.error("L’article fabriqué et la famille sont obligatoires.")
+    if (!name.trim() || !family.trim()) {
+      toast.error("Le nom et la famille de la recette sont obligatoires.")
       return
     }
     if (
@@ -219,7 +205,7 @@ export function RecipeDialog({
       toast.error("Un ingrédient ne peut apparaître qu’une fois.")
       return
     }
-    if (ingredientIds.includes(linkedProductId)) {
+    if (recipe?.productId && ingredientIds.includes(recipe.productId)) {
       toast.error("Un article ne peut pas être son propre ingrédient.")
       return
     }
@@ -239,7 +225,7 @@ export function RecipeDialog({
               ]
             : []
         ),
-        productId: linkedProductId,
+        name: name.trim(),
         ...(recipe ? { recipeId: recipe._id } : {}),
       })
       toast.success(recipe ? "Recette mise à jour." : "Recette créée.")
@@ -292,7 +278,7 @@ export function RecipeDialog({
             {recipe ? "Modifier la recette" : "Créer une recette"}
           </DialogTitle>
           <DialogDescription>
-            Choisissez l’article obtenu et les ingrédients consommés pour le
+            Nommez la préparation et indiquez les ingrédients consommés pour la
             fabriquer.
           </DialogDescription>
         </DialogHeader>
@@ -300,16 +286,17 @@ export function RecipeDialog({
         <form className="grid gap-5" onSubmit={handleSubmit}>
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="grid gap-2">
-              <Label>Article fabriqué</Label>
-              <ProductPicker
-                onChange={(value) => setProductId(value ?? "")}
-                placeholder="Choisir l’article obtenu…"
-                products={outputProducts}
-                selectedProductId={productId}
-                showStock={false}
+              <Label htmlFor={`${fieldId}-name`}>Nom de la recette</Label>
+              <Input
+                id={`${fieldId}-name`}
+                maxLength={100}
+                onChange={(event) => setName(event.target.value)}
+                placeholder="Élixir du veilleur"
+                required
+                value={name}
               />
               <p className="text-xs text-muted-foreground">
-                Son nom devient celui de la recette et relie la fabrication au
+                L’article fabriqué portera automatiquement ce même nom dans le
                 stock.
               </p>
             </div>
