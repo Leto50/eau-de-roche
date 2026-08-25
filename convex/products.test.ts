@@ -233,7 +233,7 @@ describe("products.save", () => {
     await expect(
       employee.mutation(api.products.save, {
         active: true,
-        category: "annexe",
+        category: "ingredient",
         minimumStock: 0,
         name: "Flacon vide",
         purchasePrice: 1,

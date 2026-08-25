@@ -48,22 +48,18 @@ import { type Doc } from "../../convex/_generated/dataModel"
 import { getUserFacingErrorMessage } from "@/lib/errors"
 import { categoryLabels } from "@/lib/format"
 import {
+  canonicalProductCategory,
+  productCategories,
+  type ProductCategory,
+} from "@/lib/product-categories"
+import {
   priceDraftFromValue,
   priceDraftToValue,
   type PriceDraft,
 } from "@/lib/prices"
 
-type ProductCategory = Doc<"products">["category"]
-
-const categories: readonly ProductCategory[] = [
-  "potion",
-  "ingredient",
-  "annexe",
-  "service",
-]
-
 function isProductCategory(value: string): value is ProductCategory {
-  return categories.some((category) => category === value)
+  return productCategories.some((category) => category === value)
 }
 
 export function ProductDialog({
@@ -97,7 +93,7 @@ export function ProductDialog({
 
   function resetForm() {
     setName(product?.name ?? "")
-    setCategory(product?.category ?? "potion")
+    setCategory(product ? canonicalProductCategory(product.category) : "potion")
     setPurchasePrice(priceDraftFromValue(product?.purchasePrice))
     setSalePrice(priceDraftFromValue(product?.salePrice))
     setMinimumStock(product?.minimumStock.toString() ?? "0")
@@ -250,7 +246,7 @@ export function ProductDialog({
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                {categories.map((entry) => (
+                {productCategories.map((entry) => (
                   <SelectItem key={entry} value={entry}>
                     {categoryLabels[entry]}
                   </SelectItem>

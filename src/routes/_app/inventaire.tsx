@@ -29,10 +29,14 @@ import { api } from "../../../convex/_generated/api"
 import { type Doc } from "../../../convex/_generated/dataModel"
 import { useHydrated } from "@/hooks/use-hydrated"
 import { categoryLabels, formatNumber, formatUnitPrice } from "@/lib/format"
+import {
+  canonicalProductCategory,
+  type ProductCategory,
+} from "@/lib/product-categories"
 import { authClient } from "@/lib/auth-client"
 import { cn } from "@/lib/utils"
 
-type CategoryFilter = "all" | Doc<"products">["category"]
+type CategoryFilter = "all" | ProductCategory
 
 const categoryFilters: readonly {
   label: string
@@ -41,7 +45,6 @@ const categoryFilters: readonly {
   { label: "Tout", value: "all" },
   { label: "Potions", value: "potion" },
   { label: "Ingrédients", value: "ingredient" },
-  { label: "Annexes", value: "annexe" },
   { label: "Services", value: "service" },
 ]
 
@@ -73,7 +76,8 @@ function InventoryPage() {
   const normalizedSearch = search.trim().toLocaleLowerCase("fr")
   const filteredProducts = products.filter(
     (product) =>
-      (category === "all" || product.category === category) &&
+      (category === "all" ||
+        canonicalProductCategory(product.category) === category) &&
       (!normalizedSearch ||
         product.name.toLocaleLowerCase("fr").includes(normalizedSearch))
   )

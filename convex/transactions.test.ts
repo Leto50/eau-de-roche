@@ -25,6 +25,41 @@ async function seedStock(backend: ReturnType<typeof createTestBackend>) {
 }
 
 describe("transactions.record", () => {
+  it("réserve la production aux produits qui possèdent une recette active", async () => {
+    const backend = createTestBackend()
+    const member = await asAuthenticatedUser(backend)
+    const { characterId, productId } = await seedStock(backend)
+
+    await expect(
+      member.mutation(api.transactions.record, {
+        characterId,
+        kind: "production",
+        occurredAt: Date.now(),
+        productId,
+        quantity: 2,
+      })
+    ).rejects.toThrowError("aucune recette active")
+
+    await backend.run((ctx) =>
+      ctx.db.insert("recipes", {
+        active: true,
+        family: "Soins",
+        name: "Potion de soin",
+        productId,
+      })
+    )
+    await member.mutation(api.transactions.record, {
+      characterId,
+      kind: "production",
+      occurredAt: Date.now(),
+      productId,
+      quantity: 2,
+    })
+
+    const product = await backend.run((ctx) => ctx.db.get(productId))
+    expect(product?.currentStock).toBe(12)
+  })
+
   it("écrit atomiquement la vente, le mouvement, l'audit et le nouveau stock", async () => {
     const backend = createTestBackend()
     const member = await asAuthenticatedUser(backend)
@@ -359,7 +394,7 @@ describe("transactions.recordTrade", () => {
     const { bundleId, secondProductId } = await backend.run(async (ctx) => {
       const secondProductId = await ctx.db.insert("products", {
         active: true,
-        category: "annexe",
+        category: "ingredient",
         currentStock: 5,
         minimumStock: 1,
         name: "Sacoche d’apothicaire",

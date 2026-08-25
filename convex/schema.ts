@@ -154,6 +154,7 @@ export default defineSchema({
   })
     .index("by_family", ["family"])
     .index("by_legacy_key", ["legacyKey"])
+    .index("by_product", ["productId"])
     .searchIndex("search_name", { searchField: "name" }),
 
   recipeIngredients: defineTable({

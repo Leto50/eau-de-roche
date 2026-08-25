@@ -91,6 +91,22 @@ function cleanOptionalText(value: string | undefined): string | undefined {
   return cleaned
 }
 
+async function requireCraftableProduct(
+  ctx: QueryCtx,
+  productId: Id<"products">
+): Promise<void> {
+  const recipes = await ctx.db
+    .query("recipes")
+    .withIndex("by_product", (index) => index.eq("productId", productId))
+    .collect()
+  if (recipes.some((recipe) => recipe.active !== false)) return
+
+  throw new ConvexError({
+    code: "INVALID_OPERATION",
+    message: "Ce produit ne possède aucune recette active.",
+  })
+}
+
 async function withTransactionDetails(
   ctx: QueryCtx,
   user: AuthenticatedUser,
@@ -564,6 +580,9 @@ export const record = mutation({
         code: "NOT_FOUND",
         message: "Personnage introuvable ou archivé.",
       })
+    }
+    if (args.kind === "production") {
+      await requireCraftableProduct(ctx, product._id)
     }
 
     assertWholeNumberRange(args.quantity, 1, MAX_QUANTITY, "La quantité")
@@ -1205,6 +1224,13 @@ export const update = mutation({
           code: "NOT_FOUND",
           message: "Produit introuvable ou archivé.",
         })
+      }
+      if (
+        args.kind === "production" &&
+        (transaction.kind !== "production" ||
+          transaction.productId !== product._id)
+      ) {
+        await requireCraftableProduct(ctx, product._id)
       }
       assertWholeNumberRange(args.quantity, 1, MAX_QUANTITY, "La quantité")
       const fallbackPrice = product.salePrice

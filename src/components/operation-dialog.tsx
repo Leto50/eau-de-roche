@@ -68,6 +68,10 @@ import { Textarea } from "@/components/ui/textarea"
 import { getUserFacingErrorMessage } from "@/lib/errors"
 import { categoryLabels, formatNumber, formatSeptims } from "@/lib/format"
 import {
+  canonicalProductCategory,
+  productCategories,
+} from "@/lib/product-categories"
+import {
   priceDraftFromValue,
   priceDraftToValue,
   roundSeptimsDown,
@@ -110,13 +114,6 @@ type TradeMutationLine =
       quantity: number
       unitPrice?: number
     }
-
-const categoryOrder: readonly Doc<"products">["category"][] = [
-  "potion",
-  "ingredient",
-  "annexe",
-  "service",
-]
 
 function todayInputValue(): string {
   const today = new Date()
@@ -258,9 +255,10 @@ function ProductPicker({
             <CommandInput placeholder="Nom du produit…" />
             <CommandList>
               <CommandEmpty>Aucun produit trouvé.</CommandEmpty>
-              {categoryOrder.map((category) => {
+              {productCategories.map((category) => {
                 const entries = products.filter(
-                  (product) => product.category === category
+                  (product) =>
+                    canonicalProductCategory(product.category) === category
                 )
                 if (entries.length === 0) return null
 
@@ -375,9 +373,10 @@ function TradeReferencePicker({
           />
           <CommandList>
             <CommandEmpty>Aucune autre référence disponible.</CommandEmpty>
-            {categoryOrder.map((category) => {
+            {productCategories.map((category) => {
               const entries = availableProducts.filter(
-                (product) => product.category === category
+                (product) =>
+                  canonicalProductCategory(product.category) === category
               )
               if (entries.length === 0) return null
 
@@ -592,6 +591,7 @@ function TradeCart({
 export function OperationDialog({
   bundles = [],
   characters,
+  craftableProductIds = [],
   initialKind = "exchange",
   onOpenChange,
   open: controlledOpen,
@@ -601,6 +601,7 @@ export function OperationDialog({
 }: Readonly<{
   bundles?: readonly Bundle[]
   characters: readonly Doc<"characters">[]
+  craftableProductIds?: readonly Id<"products">[]
   initialKind?: OperationKind
   onOpenChange?: (open: boolean) => void
   open?: boolean
@@ -656,8 +657,12 @@ export function OperationDialog({
       ? product
       : { ...product, currentStock: product.currentStock - previousDelta }
   })
+  const craftableProducts = new Set(craftableProductIds)
   const productionProducts = correctedProducts.filter(
-    (product) => product.tracksStock
+    (product) =>
+      product.tracksStock &&
+      (craftableProducts.has(product._id) ||
+        transaction?.productId === product._id)
   )
   const selectedProduct = productionProducts.find(
     (product) => product._id === productId

@@ -66,6 +66,9 @@ export const Route = createFileRoute("/_app/")({
       context.queryClient.ensureQueryData(
         convexQuery(api.recipes.listBundles, {})
       ),
+      context.queryClient.ensureQueryData(
+        convexQuery(api.recipes.listCraftableProductIds, {})
+      ),
     ])
   },
   pendingComponent: PageSkeleton,
@@ -81,6 +84,9 @@ function DashboardPage() {
   )
   const { data: bundles } = useSuspenseQuery(
     convexQuery(api.recipes.listBundles, {})
+  )
+  const { data: craftableProductIds } = useSuspenseQuery(
+    convexQuery(api.recipes.listCraftableProductIds, {})
   )
 
   return (
@@ -115,6 +121,7 @@ function DashboardPage() {
           <OperationDialog
             bundles={bundles}
             characters={characters}
+            craftableProductIds={craftableProductIds}
             initialKind="production"
             products={products}
             trigger={

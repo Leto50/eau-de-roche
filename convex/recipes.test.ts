@@ -31,6 +31,51 @@ async function seedRecipeProducts(
 }
 
 describe("recipes", () => {
+  it("ne propose à la fabrication que les articles liés à une recette active", async () => {
+    const backend = createTestBackend()
+    const member = await asAuthenticatedUser(backend)
+    const [activeProductId, archivedProductId] = await backend.run(
+      async (ctx) => {
+        const activeProductId = await ctx.db.insert("products", {
+          active: true,
+          category: "potion",
+          currentStock: 0,
+          minimumStock: 0,
+          name: "Potion réalisable",
+          normalizedName: "potion realisable",
+          tracksStock: true,
+        })
+        const archivedProductId = await ctx.db.insert("products", {
+          active: true,
+          category: "potion",
+          currentStock: 1,
+          minimumStock: 0,
+          name: "Potion trouvée",
+          normalizedName: "potion trouvee",
+          tracksStock: true,
+        })
+        await ctx.db.insert("recipes", {
+          active: true,
+          family: "Soins",
+          name: "Potion réalisable",
+          productId: activeProductId,
+        })
+        await ctx.db.insert("recipes", {
+          active: false,
+          family: "Trouvailles",
+          name: "Potion trouvée",
+          productId: archivedProductId,
+        })
+        return [activeProductId, archivedProductId] as const
+      }
+    )
+
+    const result = await member.query(api.recipes.listCraftableProductIds, {})
+
+    expect(result).toEqual([activeProductId])
+    expect(result).not.toContain(archivedProductId)
+  })
+
   it("crée, modifie et archive une recette avec ses ingrédients", async () => {
     const backend = createTestBackend()
     const admin = await asAuthenticatedUser(backend, "admin")

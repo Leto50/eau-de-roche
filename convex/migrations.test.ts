@@ -87,3 +87,37 @@ describe("migrations.repairRecipeReferences", () => {
     ).toMatchObject({ currentStock: 0, tracksStock: true })
   })
 })
+
+describe("migrations.reclassifyAnnexePotions", () => {
+  it("reclasse les anciennes annexes en potions de façon idempotente", async () => {
+    const backend = convexTest(schema, modules)
+    const productId = await backend.run((ctx) =>
+      ctx.db.insert("products", {
+        active: true,
+        category: "annexe",
+        currentStock: 2,
+        minimumStock: 2,
+        name: "Potion trouvée",
+        normalizedName: "potion trouvee",
+        tracksStock: true,
+      })
+    )
+
+    const result = await backend.mutation(
+      internal.migrations.reclassifyAnnexePotions,
+      {}
+    )
+    const second = await backend.mutation(
+      internal.migrations.reclassifyAnnexePotions,
+      {}
+    )
+    const product = await backend.run((ctx) => ctx.db.get(productId))
+
+    expect(result).toMatchObject({
+      reclassified: true,
+      reclassifiedProducts: 1,
+    })
+    expect(second).toMatchObject({ reclassified: false })
+    expect(product?.category).toBe("potion")
+  })
+})

@@ -4,7 +4,7 @@ import { basename, dirname, resolve } from "node:path"
 
 import ExcelJS, { type Cell, type Worksheet } from "exceljs"
 
-type ProductCategory = "annexe" | "ingredient" | "potion" | "service"
+type ProductCategory = "ingredient" | "potion" | "service"
 type TransactionKind =
   "bundle" | "order" | "production" | "purchase" | "sale" | "service"
 
@@ -262,11 +262,10 @@ function extractProducts(workbook: ExcelJS.Workbook): ProductSeed[] {
     const ingredientName = readString(row.getCell(5))
 
     if (potionName && potionName !== "Potions annexe") {
-      const category: ProductCategory = rowNumber >= 36 ? "annexe" : "potion"
       addProduct(products, {
-        category,
+        category: "potion",
         currentStock: readNumber(row.getCell(2)) ?? 0,
-        minimumStock: category === "annexe" ? 2 : 5,
+        minimumStock: rowNumber >= 36 ? 2 : 5,
         name: potionName.trim(),
         salePrice: readNumber(row.getCell(3)),
         tracksStock: true,

@@ -4,6 +4,7 @@ import { type Id } from "./_generated/dataModel"
 import { mutation, query } from "./_generated/server"
 import { requireAdmin, requireUser } from "./lib/auth"
 import { assertFiniteRange, assertWholeNumberRange } from "./lib/numbers"
+import { canonicalProductCategory } from "./lib/products"
 import { normalizeName } from "./lib/text"
 import { productCategory } from "./lib/validators"
 
@@ -129,7 +130,8 @@ export const save = mutation({
 
     const purchasePrice = optionalPrice(args.purchasePrice)
     const salePrice = optionalPrice(args.salePrice)
-    const tracksStock = args.category !== "service"
+    const category = canonicalProductCategory(args.category)
+    const tracksStock = category !== "service"
     const minimumStock = tracksStock ? args.minimumStock : 0
     const targetStock = tracksStock ? args.targetStock : 0
     assertWholeNumberRange(minimumStock, 0, MAX_STOCK, "Le seuil minimum")
@@ -163,7 +165,7 @@ export const save = mutation({
 
     const details = {
       active: args.active,
-      category: args.category,
+      category,
       currentStock: targetStock,
       ...(existing?.legacyKey ? { legacyKey: existing.legacyKey } : {}),
       minimumStock,

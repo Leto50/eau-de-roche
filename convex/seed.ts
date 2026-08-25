@@ -28,6 +28,7 @@ type TransactionKind = Doc<"transactions">["kind"]
 function parseProductCategory(value: string): ProductCategory {
   switch (value) {
     case "annexe":
+      return "potion"
     case "ingredient":
     case "potion":
     case "service":

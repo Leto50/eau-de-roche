@@ -20,7 +20,7 @@ describe("bundles.save", () => {
         })
         const secondProductId = await ctx.db.insert("products", {
           active: true,
-          category: "annexe",
+          category: "potion",
           currentStock: 20,
           minimumStock: 2,
           name: "Étui de voyage",

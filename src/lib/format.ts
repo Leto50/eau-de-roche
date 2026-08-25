@@ -52,7 +52,7 @@ export function formatDate(value: number): string {
 }
 
 export const categoryLabels = {
-  annexe: "Annexe",
+  annexe: "Potion",
   ingredient: "Ingrédient",
   potion: "Potion",
   service: "Service",

@@ -26,7 +26,7 @@ describe("orders", () => {
     const secondProductId = await backend.run((ctx) =>
       ctx.db.insert("products", {
         active: true,
-        category: "annexe",
+        category: "potion",
         currentStock: 5,
         minimumStock: 1,
         name: "Flacon de transport",

@@ -8,6 +8,7 @@ import { calculateRecipeCost } from "./lib/recipeCost"
 import { normalizeName } from "./lib/text"
 
 const EXCHANGE_MIGRATION_KEY = "exchange-model-v5"
+const PRODUCT_CATEGORY_MIGRATION_KEY = "product-categories-v1"
 const RECIPE_REFERENCE_MIGRATION_KEY = "recipe-references-v1"
 
 const productAliases: Readonly<Record<string, string>> = {
@@ -435,6 +436,42 @@ export async function repairRecipeReferencesData(ctx: MutationCtx) {
   return result
 }
 
+export async function reclassifyAnnexePotionsData(ctx: MutationCtx) {
+  const existingMigration = await ctx.db
+    .query("systemSettings")
+    .withIndex("by_key", (index) =>
+      index.eq("key", PRODUCT_CATEGORY_MIGRATION_KEY)
+    )
+    .unique()
+  if (existingMigration) {
+    return {
+      reclassified: false,
+      message: "Les catégories des potions sont déjà normalisées.",
+    }
+  }
+
+  const products = await ctx.db
+    .query("products")
+    .withIndex("by_category", (index) => index.eq("category", "annexe"))
+    .collect()
+  await Promise.all(
+    products.map((product) =>
+      ctx.db.patch(product._id, { category: "potion" as const })
+    )
+  )
+
+  const result = {
+    reclassified: true,
+    reclassifiedProducts: products.length,
+  }
+  await ctx.db.insert("systemSettings", {
+    key: PRODUCT_CATEGORY_MIGRATION_KEY,
+    updatedAt: Date.now(),
+    value: JSON.stringify(result),
+  })
+  return result
+}
+
 export async function convertLegacyOperationsData(ctx: MutationCtx) {
   const existingMigration = await ctx.db
     .query("systemSettings")
@@ -730,4 +767,9 @@ export const convertLegacyOperations = internalMutation({
 export const repairRecipeReferences = internalMutation({
   args: {},
   handler: repairRecipeReferencesData,
+})
+
+export const reclassifyAnnexePotions = internalMutation({
+  args: {},
+  handler: reclassifyAnnexePotionsData,
 })

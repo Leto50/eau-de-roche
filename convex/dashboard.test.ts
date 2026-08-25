@@ -133,7 +133,7 @@ describe("dashboard.overview", () => {
       })
       await ctx.db.insert("products", {
         active: false,
-        category: "annexe",
+        category: "potion",
         currentStock: 5,
         minimumStock: 0,
         name: "Ancienne référence",
