@@ -4,11 +4,18 @@ import { type Doc, type Id } from "./_generated/dataModel"
 import { internalMutation, type MutationCtx } from "./_generated/server"
 import { roundSeptimsDown } from "./lib/numbers"
 import { orderTransactionLabel } from "./lib/order"
+import {
+  canonicalProductCategory,
+  isLootOnlyLegacyProduct,
+} from "./lib/products"
 import { calculateRecipeCost } from "./lib/recipeCost"
+import { canonicalRecipeFamily } from "./lib/recipeFamilies"
 import { normalizeName } from "./lib/text"
 
 const EXCHANGE_MIGRATION_KEY = "exchange-model-v5"
 const PRODUCT_CATEGORY_MIGRATION_KEY = "product-categories-v1"
+const PRODUCT_CRAFTABILITY_MIGRATION_KEY = "product-craftability-v1"
+const RECIPE_FAMILY_MIGRATION_KEY = "recipe-families-v1"
 const RECIPE_REFERENCE_MIGRATION_KEY = "recipe-references-v1"
 
 const productAliases: Readonly<Record<string, string>> = {
@@ -472,6 +479,94 @@ export async function reclassifyAnnexePotionsData(ctx: MutationCtx) {
   return result
 }
 
+export async function classifyPotionCraftabilityData(ctx: MutationCtx) {
+  const existingMigration = await ctx.db
+    .query("systemSettings")
+    .withIndex("by_key", (index) =>
+      index.eq("key", PRODUCT_CRAFTABILITY_MIGRATION_KEY)
+    )
+    .unique()
+  if (existingMigration) {
+    return {
+      classified: false,
+      message: "Le mode d’obtention des potions est déjà renseigné.",
+    }
+  }
+
+  const products = await ctx.db.query("products").collect()
+  const potions = products.filter(
+    (product) => canonicalProductCategory(product.category) === "potion"
+  )
+  let lootOnlyProducts = 0
+  for (const product of potions) {
+    const craftable =
+      product.category !== "annexe" &&
+      !isLootOnlyLegacyProduct(product.legacyKey)
+    await ctx.db.patch(product._id, { craftable })
+    if (!craftable) lootOnlyProducts += 1
+  }
+
+  const result = {
+    classified: true,
+    craftableProducts: potions.length - lootOnlyProducts,
+    lootOnlyProducts,
+  }
+  await ctx.db.insert("systemSettings", {
+    key: PRODUCT_CRAFTABILITY_MIGRATION_KEY,
+    updatedAt: Date.now(),
+    value: JSON.stringify(result),
+  })
+  return result
+}
+
+export async function normalizeRecipeFamiliesData(ctx: MutationCtx) {
+  const existingMigration = await ctx.db
+    .query("systemSettings")
+    .withIndex("by_key", (index) =>
+      index.eq("key", RECIPE_FAMILY_MIGRATION_KEY)
+    )
+    .unique()
+  if (existingMigration) {
+    return {
+      normalized: false,
+      message: "Les catégories des recettes sont déjà normalisées.",
+    }
+  }
+
+  const recipes = await ctx.db.query("recipes").collect()
+  const prepared = recipes.map((recipe) => ({
+    family: canonicalRecipeFamily(recipe.family),
+    recipe,
+  }))
+  const unknownFamilies = [
+    ...new Set(
+      prepared.flatMap(({ family, recipe }) => (family ? [] : [recipe.family]))
+    ),
+  ].sort((left, right) => left.localeCompare(right, "fr"))
+  if (unknownFamilies.length > 0) {
+    throw new ConvexError({
+      code: "MIGRATION_REFERENCE_MISSING",
+      message: `Catégories de recettes inconnues : ${unknownFamilies.join(", ")}.`,
+    })
+  }
+
+  let normalizedRecipes = 0
+  for (const { family, recipe } of prepared) {
+    if (family && family !== recipe.family) {
+      await ctx.db.patch(recipe._id, { family })
+      normalizedRecipes += 1
+    }
+  }
+
+  const result = { normalized: true, normalizedRecipes }
+  await ctx.db.insert("systemSettings", {
+    key: RECIPE_FAMILY_MIGRATION_KEY,
+    updatedAt: Date.now(),
+    value: JSON.stringify(result),
+  })
+  return result
+}
+
 export async function convertLegacyOperationsData(ctx: MutationCtx) {
   const existingMigration = await ctx.db
     .query("systemSettings")
@@ -772,4 +867,14 @@ export const repairRecipeReferences = internalMutation({
 export const reclassifyAnnexePotions = internalMutation({
   args: {},
   handler: reclassifyAnnexePotionsData,
+})
+
+export const classifyPotionCraftability = internalMutation({
+  args: {},
+  handler: classifyPotionCraftabilityData,
+})
+
+export const normalizeRecipeFamilies = internalMutation({
+  args: {},
+  handler: normalizeRecipeFamiliesData,
 })

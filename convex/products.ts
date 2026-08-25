@@ -97,6 +97,7 @@ export const save = mutation({
     active: v.boolean(),
     adjustmentReason: v.optional(v.string()),
     category: productCategory,
+    craftable: v.optional(v.boolean()),
     minimumStock: v.number(),
     name: v.string(),
     productId: v.optional(v.id("products")),
@@ -146,6 +147,23 @@ export const save = mutation({
         message: "Référence introuvable.",
       })
     }
+    const craftable =
+      category === "potion"
+        ? (args.craftable ?? existing?.craftable ?? true)
+        : undefined
+    if (existing && (category !== "potion" || craftable === false)) {
+      const linkedRecipes = await ctx.db
+        .query("recipes")
+        .withIndex("by_product", (index) => index.eq("productId", existing._id))
+        .collect()
+      if (linkedRecipes.some((recipe) => recipe.active !== false)) {
+        throw new ConvexError({
+          code: "INVALID_OPERATION",
+          message:
+            "Archivez d’abord la recette active avant de rendre cette potion non fabricable.",
+        })
+      }
+    }
 
     const previousStock = existing?.currentStock ?? 0
     const stockDelta = targetStock - previousStock
@@ -166,6 +184,7 @@ export const save = mutation({
     const details = {
       active: args.active,
       category,
+      ...(craftable === undefined ? {} : { craftable }),
       currentStock: targetStock,
       ...(existing?.legacyKey ? { legacyKey: existing.legacyKey } : {}),
       minimumStock,

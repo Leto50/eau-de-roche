@@ -121,3 +121,79 @@ describe("migrations.reclassifyAnnexePotions", () => {
     expect(product?.category).toBe("potion")
   })
 })
+
+describe("migrations.classifyPotionCraftability", () => {
+  it("distingue les potions fabricables des potions trouvées uniquement", async () => {
+    const backend = convexTest(schema, modules)
+    const [lootOnlyId, craftableId] = await backend.run(async (ctx) => {
+      const lootOnlyId = await ctx.db.insert("products", {
+        active: true,
+        category: "potion",
+        currentStock: 1,
+        legacyKey: "product:chevalier",
+        minimumStock: 2,
+        name: "Chevalier",
+        normalizedName: "chevalier",
+        tracksStock: true,
+      })
+      const craftableId = await ctx.db.insert("products", {
+        active: true,
+        category: "potion",
+        currentStock: 0,
+        legacyKey: "product:soin mineur",
+        minimumStock: 5,
+        name: "Soin Mineur",
+        normalizedName: "soin mineur",
+        tracksStock: true,
+      })
+      return [lootOnlyId, craftableId] as const
+    })
+
+    const result = await backend.mutation(
+      internal.migrations.classifyPotionCraftability,
+      {}
+    )
+    const products = await backend.run(async (ctx) => ({
+      craftable: await ctx.db.get(craftableId),
+      lootOnly: await ctx.db.get(lootOnlyId),
+    }))
+
+    expect(result).toMatchObject({
+      classified: true,
+      craftableProducts: 1,
+      lootOnlyProducts: 1,
+    })
+    expect(products.craftable?.craftable).toBe(true)
+    expect(products.lootOnly?.craftable).toBe(false)
+  })
+})
+
+describe("migrations.normalizeRecipeFamilies", () => {
+  it("remplace les variantes libres par les catégories canoniques", async () => {
+    const backend = convexTest(schema, modules)
+    const recipeIds = await backend.run(async (ctx) => [
+      await ctx.db.insert("recipes", {
+        family: "Resistance magie",
+        name: "Résistance",
+      }),
+      await ctx.db.insert("recipes", {
+        family: "Vigueur accru",
+        name: "Vigueur",
+      }),
+    ])
+
+    const result = await backend.mutation(
+      internal.migrations.normalizeRecipeFamilies,
+      {}
+    )
+    const recipes = await backend.run((ctx) =>
+      Promise.all(recipeIds.map((recipeId) => ctx.db.get(recipeId)))
+    )
+
+    expect(result).toMatchObject({ normalized: true, normalizedRecipes: 2 })
+    expect(recipes.map((recipe) => recipe?.family)).toEqual([
+      "Résistance magique",
+      "Vigueur améliorée",
+    ])
+  })
+})

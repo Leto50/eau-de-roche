@@ -4,6 +4,8 @@ import seedData from "../data/inventaire.seed.json"
 import { type Doc, type Id } from "./_generated/dataModel"
 import { mutation } from "./_generated/server"
 import { normalizeName } from "./lib/text"
+import { isLootOnlyLegacyProduct } from "./lib/products"
+import { canonicalRecipeFamily } from "./lib/recipeFamilies"
 import {
   canonicalProductName,
   convertLegacyOperationsData,
@@ -83,9 +85,13 @@ export const importWorkbook = mutation({
       { id: Id<"products">; name: string; tracksStock: boolean }
     >()
     for (const product of seedData.products) {
+      const category = parseProductCategory(product.category)
       const id = await ctx.db.insert("products", {
         active: true,
-        category: parseProductCategory(product.category),
+        category,
+        ...(category === "potion"
+          ? { craftable: !isLootOnlyLegacyProduct(product.legacyKey) }
+          : {}),
         currentStock: product.currentStock,
         legacyKey: product.legacyKey,
         minimumStock: product.minimumStock,
@@ -207,14 +213,18 @@ export const importWorkbook = mutation({
           message: `La recette « ${recipe.name} » ne correspond à aucun article fabriqué.`,
         })
       }
+      const family = canonicalRecipeFamily(recipe.family)
+      if (!family) {
+        throw new ConvexError({
+          code: "SEED_REFERENCE_MISSING",
+          message: `La catégorie « ${recipe.family} » de la recette « ${recipe.name} » est inconnue.`,
+        })
+      }
       const recipeId = await ctx.db.insert("recipes", {
         active: true,
         ...(recipe.cost === undefined ? {} : { cost: recipe.cost }),
         ...(recipe.effect ? { effect: recipe.effect } : {}),
-        family:
-          normalizeName(recipe.family) === normalizeName(recipe.name)
-            ? product.name
-            : recipe.family,
+        family,
         legacyKey: recipe.legacyKey,
         name: product.name,
         productId: product.id,

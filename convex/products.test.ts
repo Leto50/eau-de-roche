@@ -20,6 +20,7 @@ describe("products.save", () => {
 
     const product = await backend.run((ctx) => ctx.db.get(productId))
     expect(product).toMatchObject({
+      craftable: true,
       currentStock: 12,
       minimumStock: 2,
       purchasePrice: 1 / 8,
@@ -224,6 +225,47 @@ describe("products.save", () => {
     expect(state.product?.currentStock).toBe(5)
     expect(state.transactions).toHaveLength(0)
     expect(state.audits).toHaveLength(0)
+  })
+
+  it("refuse de rendre non fabricable une potion qui possède une recette active", async () => {
+    const backend = createTestBackend()
+    const admin = await asAuthenticatedUser(backend, "admin")
+    const productId = await backend.run(async (ctx) => {
+      const id = await ctx.db.insert("products", {
+        active: true,
+        category: "potion",
+        craftable: true,
+        currentStock: 2,
+        minimumStock: 1,
+        name: "Potion liée",
+        normalizedName: "potion liee",
+        tracksStock: true,
+      })
+      await ctx.db.insert("recipes", {
+        active: true,
+        family: "Soin",
+        name: "Potion liée",
+        productId: id,
+      })
+      return id
+    })
+
+    await expect(
+      admin.mutation(api.products.save, {
+        active: true,
+        category: "potion",
+        craftable: false,
+        minimumStock: 1,
+        name: "Potion liée",
+        productId,
+        purchasePrice: null,
+        salePrice: null,
+        targetStock: 2,
+      })
+    ).rejects.toThrowError("Archivez d’abord la recette active")
+
+    const product = await backend.run((ctx) => ctx.db.get(productId))
+    expect(product?.craftable).toBe(true)
   })
 
   it("refuse la gestion du catalogue à un employé", async () => {

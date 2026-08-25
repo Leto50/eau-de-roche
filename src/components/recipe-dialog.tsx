@@ -48,12 +48,27 @@ import {
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { ScrollArea } from "@/components/ui/scroll-area"
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectLabel,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
 import { Separator } from "@/components/ui/separator"
 import { Textarea } from "@/components/ui/textarea"
 import { api } from "../../convex/_generated/api"
-import { type Doc } from "../../convex/_generated/dataModel"
+import { type Doc, type Id } from "../../convex/_generated/dataModel"
 import { getUserFacingErrorMessage } from "@/lib/errors"
 import { formatDecimalSeptims } from "@/lib/format"
+import { canonicalProductCategory } from "@/lib/product-categories"
+import {
+  isRecipeFamily,
+  recipeFamilies,
+  type RecipeFamily,
+} from "@/lib/recipe-families"
 
 type Recipe = FunctionReturnType<typeof api.recipes.list>[number]
 
@@ -64,22 +79,36 @@ interface IngredientDraft {
 }
 
 export function RecipeDialog({
+  initialProduct,
+  linkedProductIds = [],
+  onOpenChange,
+  open: controlledOpen,
   products,
   recipe,
   trigger,
 }: Readonly<{
+  initialProduct?: Doc<"products">
+  linkedProductIds?: readonly Id<"products">[]
+  onOpenChange?: (open: boolean) => void
+  open?: boolean
   products: readonly Doc<"products">[]
   recipe?: Recipe
-  trigger?: ReactElement
+  trigger?: ReactElement | null
 }>) {
   const saveRecipe = useMutation(api.recipes.save)
   const setRecipeActive = useMutation(api.recipes.setActive)
   const fieldId = useId()
   const nextLineKey = useRef(1)
-  const [open, setOpen] = useState(false)
-  const [name, setName] = useState("")
-  const [family, setFamily] = useState("")
-  const [effect, setEffect] = useState("")
+  const [internalOpen, setInternalOpen] = useState(false)
+  const open = controlledOpen ?? internalOpen
+  const [name, setName] = useState(recipe?.name ?? initialProduct?.name ?? "")
+  const [family, setFamily] = useState<RecipeFamily | "">(
+    recipe && isRecipeFamily(recipe.family) ? recipe.family : ""
+  )
+  const [outputProductId, setOutputProductId] = useState<string>(
+    initialProduct?._id ?? "new"
+  )
+  const [effect, setEffect] = useState(recipe?.effect ?? "")
   const [ingredients, setIngredients] = useState<IngredientDraft[]>([
     { key: 0, productId: "", quantity: "1" },
   ])
@@ -87,6 +116,26 @@ export function RecipeDialog({
   const ingredientProducts = useMemo(
     () => products.filter((product) => product.tracksStock),
     [products]
+  )
+  const linkedProducts = useMemo(
+    () => new Set(linkedProductIds),
+    [linkedProductIds]
+  )
+  const outputProducts = useMemo(
+    () =>
+      products.filter(
+        (product) =>
+          product.tracksStock &&
+          canonicalProductCategory(product.category) === "potion" &&
+          product.craftable !== false &&
+          (!linkedProducts.has(product._id) ||
+            recipe?.productId === product._id ||
+            initialProduct?._id === product._id)
+      ),
+    [initialProduct, linkedProducts, products, recipe]
+  )
+  const selectedOutputProduct = outputProducts.find(
+    (product) => product._id === outputProductId
   )
   const costCalculation = useMemo(() => {
     const missingPrices = new Set<string>()
@@ -126,8 +175,9 @@ export function RecipeDialog({
   }, [ingredientProducts, ingredients])
 
   function resetForm() {
-    setName(recipe?.name ?? "")
-    setFamily(recipe?.family ?? "")
+    setName(recipe?.name ?? initialProduct?.name ?? "")
+    setFamily(recipe && isRecipeFamily(recipe.family) ? recipe.family : "")
+    setOutputProductId(initialProduct?._id ?? "new")
     setEffect(recipe?.effect ?? "")
     if (recipe?.ingredients.length) {
       setIngredients(
@@ -146,7 +196,8 @@ export function RecipeDialog({
 
   function handleOpenChange(nextOpen: boolean) {
     if (nextOpen && !open) resetForm()
-    setOpen(nextOpen)
+    if (controlledOpen === undefined) setInternalOpen(nextOpen)
+    onOpenChange?.(nextOpen)
   }
 
   function updateIngredient(key: number, patch: Partial<IngredientDraft>) {
@@ -180,8 +231,9 @@ export function RecipeDialog({
       )?._id,
       quantity: Number(ingredient.quantity),
     }))
-    if (!name.trim() || !family.trim()) {
-      toast.error("Le nom et la famille de la recette sont obligatoires.")
+    const submittedName = selectedOutputProduct?.name ?? name.trim()
+    if (!submittedName || !family) {
+      toast.error("Le nom et la catégorie de la recette sont obligatoires.")
       return
     }
     if (
@@ -206,7 +258,8 @@ export function RecipeDialog({
       toast.error("Un ingrédient ne peut apparaître qu’une fois.")
       return
     }
-    if (recipe?.productId && ingredientIds.includes(recipe.productId)) {
+    const producedProductId = recipe?.productId ?? selectedOutputProduct?._id
+    if (producedProductId && ingredientIds.includes(producedProductId)) {
       toast.error("Un article ne peut pas être son propre ingrédient.")
       return
     }
@@ -215,7 +268,7 @@ export function RecipeDialog({
     try {
       await saveRecipe({
         effect: effect.trim(),
-        family: family.trim(),
+        family,
         ingredients: preparedIngredients.flatMap((ingredient) =>
           ingredient.productId
             ? [
@@ -226,11 +279,14 @@ export function RecipeDialog({
               ]
             : []
         ),
-        name: name.trim(),
+        name: submittedName,
+        ...(!recipe && selectedOutputProduct
+          ? { outputProductId: selectedOutputProduct._id }
+          : {}),
         ...(recipe ? { recipeId: recipe._id } : {}),
       })
       toast.success(recipe ? "Recette mise à jour." : "Recette créée.")
-      setOpen(false)
+      handleOpenChange(false)
     } catch (error) {
       toast.error(
         getUserFacingErrorMessage(error, "Impossible d’enregistrer la recette.")
@@ -246,7 +302,7 @@ export function RecipeDialog({
     try {
       await setRecipeActive({ active: false, recipeId: recipe._id })
       toast.success("Recette archivée.")
-      setOpen(false)
+      handleOpenChange(false)
     } catch (error) {
       toast.error(
         getUserFacingErrorMessage(error, "Impossible d’archiver la recette.")
@@ -258,21 +314,27 @@ export function RecipeDialog({
 
   return (
     <Dialog onOpenChange={handleOpenChange} open={open}>
-      <DialogTrigger asChild>
-        {trigger ?? (
-          <Button>
-            <BookPlus aria-hidden="true" />
-            Nouvelle recette
-          </Button>
-        )}
-      </DialogTrigger>
+      {trigger === null ? null : (
+        <DialogTrigger asChild>
+          {trigger ?? (
+            <Button>
+              <BookPlus aria-hidden="true" />
+              Nouvelle recette
+            </Button>
+          )}
+        </DialogTrigger>
+      )}
       <DialogContent className="max-h-[94svh] overflow-y-auto rounded-[0.2rem] border-[#6a5436] bg-[#eee1c7] ring-0 sm:max-w-2xl">
         <DialogHeader className="pr-8">
           <p className="text-[0.66rem] font-bold tracking-[0.2em] text-primary uppercase">
             Registre de fabrication
           </p>
           <DialogTitle className="font-display text-2xl">
-            {recipe ? "Modifier la recette" : "Créer une recette"}
+            {recipe
+              ? "Modifier la recette"
+              : initialProduct
+                ? `Recette de ${initialProduct.name}`
+                : "Créer une recette"}
           </DialogTitle>
           <DialogDescription>
             Nommez la préparation et indiquez les ingrédients consommés pour la
@@ -282,28 +344,84 @@ export function RecipeDialog({
 
         <form className="grid gap-5" onSubmit={handleSubmit}>
           <div className="grid gap-4 sm:grid-cols-2">
+            {recipe ? (
+              <div className="grid gap-2">
+                <Label htmlFor={`${fieldId}-name`}>Nom de la potion</Label>
+                <Input
+                  id={`${fieldId}-name`}
+                  maxLength={100}
+                  onChange={(event) => setName(event.target.value)}
+                  placeholder="Élixir du veilleur"
+                  required
+                  value={name}
+                />
+              </div>
+            ) : (
+              <div className="grid gap-2">
+                <Label htmlFor={`${fieldId}-output`}>Potion obtenue</Label>
+                <Select
+                  disabled={initialProduct !== undefined}
+                  onValueChange={(value) => {
+                    setOutputProductId(value)
+                    const product = outputProducts.find(
+                      (entry) => entry._id === value
+                    )
+                    setName(product?.name ?? "")
+                  }}
+                  value={outputProductId}
+                >
+                  <SelectTrigger className="w-full" id={`${fieldId}-output`}>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="new">Nouvelle potion</SelectItem>
+                    {outputProducts.length > 0 ? (
+                      <SelectGroup>
+                        <SelectLabel>Potions sans recette</SelectLabel>
+                        {outputProducts.map((product) => (
+                          <SelectItem key={product._id} value={product._id}>
+                            {product.name}
+                          </SelectItem>
+                        ))}
+                      </SelectGroup>
+                    ) : null}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
             <div className="grid gap-2">
-              <Label htmlFor={`${fieldId}-name`}>Nom de la recette</Label>
-              <Input
-                id={`${fieldId}-name`}
-                maxLength={100}
-                onChange={(event) => setName(event.target.value)}
-                placeholder="Élixir du veilleur"
-                required
-                value={name}
-              />
-            </div>
-            <div className="grid gap-2">
-              <Label htmlFor={`${fieldId}-family`}>Famille</Label>
-              <Input
-                id={`${fieldId}-family`}
-                maxLength={60}
-                onChange={(event) => setFamily(event.target.value)}
-                placeholder="Poisons, soins, fortifiants…"
-                required
+              <Label htmlFor={`${fieldId}-family`}>Catégorie</Label>
+              <Select
+                onValueChange={(value) => {
+                  if (isRecipeFamily(value)) setFamily(value)
+                }}
                 value={family}
-              />
+              >
+                <SelectTrigger className="w-full" id={`${fieldId}-family`}>
+                  <SelectValue placeholder="Choisir une catégorie…" />
+                </SelectTrigger>
+                <SelectContent>
+                  {recipeFamilies.map((entry) => (
+                    <SelectItem key={entry} value={entry}>
+                      {entry}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
+            {!recipe && outputProductId === "new" ? (
+              <div className="grid gap-2 sm:col-span-2">
+                <Label htmlFor={`${fieldId}-name`}>Nom de la potion</Label>
+                <Input
+                  id={`${fieldId}-name`}
+                  maxLength={100}
+                  onChange={(event) => setName(event.target.value)}
+                  placeholder="Élixir du veilleur"
+                  required
+                  value={name}
+                />
+              </div>
+            ) : null}
           </div>
 
           <div className="grid gap-2">
@@ -455,7 +573,7 @@ export function RecipeDialog({
             </div>
             <div className="flex justify-end gap-2">
               <Button
-                onClick={() => setOpen(false)}
+                onClick={() => handleOpenChange(false)}
                 type="button"
                 variant="ghost"
               >

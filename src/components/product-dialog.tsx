@@ -2,6 +2,7 @@ import { useMutation, useQuery } from "convex/react"
 import {
   Archive,
   ArchiveRestore,
+  BookPlus,
   LoaderCircle,
   PackagePlus,
   Pencil,
@@ -63,9 +64,13 @@ function isProductCategory(value: string): value is ProductCategory {
 }
 
 export function ProductDialog({
+  canWriteRecipe = false,
+  onWriteRecipe,
   product,
   trigger,
 }: Readonly<{
+  canWriteRecipe?: boolean
+  onWriteRecipe?: (productId: Doc<"products">["_id"]) => void
   product?: Doc<"products">
   trigger?: ReactElement
 }>) {
@@ -75,6 +80,7 @@ export function ProductDialog({
   const [open, setOpen] = useState(false)
   const [name, setName] = useState("")
   const [category, setCategory] = useState<ProductCategory>("potion")
+  const [craftable, setCraftable] = useState(true)
   const [purchasePrice, setPurchasePrice] = useState<PriceDraft>(() =>
     priceDraftFromValue(undefined)
   )
@@ -94,6 +100,7 @@ export function ProductDialog({
   function resetForm() {
     setName(product?.name ?? "")
     setCategory(product ? canonicalProductCategory(product.category) : "potion")
+    setCraftable(product?.craftable !== false)
     setPurchasePrice(priceDraftFromValue(product?.purchasePrice))
     setSalePrice(priceDraftFromValue(product?.salePrice))
     setMinimumStock(product?.minimumStock.toString() ?? "0")
@@ -114,7 +121,7 @@ export function ProductDialog({
 
     if (!name.trim()) {
       toast.error("Le nom de la référence est obligatoire.")
-      return false
+      return undefined
     }
     if (
       !Number.isFinite(submittedMinimum) ||
@@ -125,7 +132,7 @@ export function ProductDialog({
       submittedStock < 0
     ) {
       toast.error("Les stocks doivent être des nombres entiers positifs.")
-      return false
+      return undefined
     }
     if (
       (submittedPurchasePrice !== null &&
@@ -135,19 +142,20 @@ export function ProductDialog({
       toast.error(
         "Indiquez un nombre entier de septims pour un nombre entier d’unités."
       )
-      return false
+      return undefined
     }
     if (stockChanged && !adjustmentReason.trim()) {
       toast.error("Indiquez pourquoi le stock est corrigé.")
-      return false
+      return undefined
     }
 
     setIsSubmitting(true)
     try {
-      await saveProduct({
+      const productId = await saveProduct({
         active,
         ...(adjustmentReason.trim() ? { adjustmentReason } : {}),
         category,
+        ...(category === "potion" ? { craftable } : {}),
         minimumStock: submittedMinimum,
         name: name.trim(),
         ...(product ? { productId: product._id } : {}),
@@ -163,7 +171,7 @@ export function ProductDialog({
           : "Référence archivée."
       )
       setOpen(false)
-      return true
+      return productId
     } catch (error) {
       toast.error(
         getUserFacingErrorMessage(
@@ -171,7 +179,7 @@ export function ProductDialog({
           "Impossible d’enregistrer la référence."
         )
       )
-      return false
+      return undefined
     } finally {
       setIsSubmitting(false)
     }
@@ -180,6 +188,11 @@ export function ProductDialog({
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     await persist(true)
+  }
+
+  async function writeRecipe() {
+    const productId = await persist(true)
+    if (productId) onWriteRecipe?.(productId)
   }
 
   async function archiveProduct() {
@@ -234,25 +247,44 @@ export function ProductDialog({
             />
           </div>
 
-          <div className="grid gap-2">
-            <Label htmlFor={`${fieldId}-category`}>Famille</Label>
-            <Select
-              onValueChange={(value) => {
-                if (isProductCategory(value)) setCategory(value)
-              }}
-              value={category}
-            >
-              <SelectTrigger className="w-full" id={`${fieldId}-category`}>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {productCategories.map((entry) => (
-                  <SelectItem key={entry} value={entry}>
-                    {categoryLabels[entry]}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div className="grid gap-2">
+              <Label htmlFor={`${fieldId}-category`}>Catégorie</Label>
+              <Select
+                onValueChange={(value) => {
+                  if (isProductCategory(value)) setCategory(value)
+                }}
+                value={category}
+              >
+                <SelectTrigger className="w-full" id={`${fieldId}-category`}>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {productCategories.map((entry) => (
+                    <SelectItem key={entry} value={entry}>
+                      {categoryLabels[entry]}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            {category === "potion" ? (
+              <div className="grid gap-2">
+                <Label htmlFor={`${fieldId}-craftable`}>Mode d’obtention</Label>
+                <Select
+                  onValueChange={(value) => setCraftable(value === "recipe")}
+                  value={craftable ? "recipe" : "loot"}
+                >
+                  <SelectTrigger className="w-full" id={`${fieldId}-craftable`}>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="recipe">Fabricable</SelectItem>
+                    <SelectItem value="loot">Trouvée uniquement</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            ) : null}
           </div>
 
           <div className="grid gap-4 sm:grid-cols-2">
@@ -363,7 +395,7 @@ export function ProductDialog({
                 </AlertDialog>
               ) : null}
             </div>
-            <div className="flex justify-end gap-2">
+            <div className="grid w-full gap-2 sm:flex sm:w-auto sm:justify-end">
               <Button
                 onClick={() => setOpen(false)}
                 type="button"
@@ -371,6 +403,22 @@ export function ProductDialog({
               >
                 Annuler
               </Button>
+              {category === "potion" &&
+              craftable &&
+              onWriteRecipe &&
+              (!product || canWriteRecipe) ? (
+                <Button
+                  disabled={isSubmitting}
+                  onClick={() => {
+                    void writeRecipe()
+                  }}
+                  type="button"
+                  variant="outline"
+                >
+                  <BookPlus aria-hidden="true" />
+                  {product ? "Écrire la recette" : "Créer puis écrire"}
+                </Button>
+              ) : null}
               <Button disabled={isSubmitting} type="submit">
                 {isSubmitting ? (
                   <LoaderCircle

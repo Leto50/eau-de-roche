@@ -17,7 +17,7 @@ async function seedRecipeProducts(
       purchasePrice: 1.25,
       tracksStock: true,
     })
-    await ctx.db.insert("products", {
+    const existingPotionId = await ctx.db.insert("products", {
       active: true,
       category: "potion",
       currentStock: 4,
@@ -26,7 +26,7 @@ async function seedRecipeProducts(
       normalizedName: "preparation deja enregistree",
       tracksStock: true,
     })
-    return { ingredientId }
+    return { existingPotionId, ingredientId }
   })
 }
 
@@ -83,13 +83,13 @@ describe("recipes", () => {
 
     const recipeId = await admin.mutation(api.recipes.save, {
       effect: "Aide à tenir pendant une longue garde.",
-      family: "Fortifiants",
+      family: "Fortifiant",
       ingredients: [{ productId: ingredientId, quantity: 2 }],
       name: "Élixir du veilleur",
     })
     await admin.mutation(api.recipes.save, {
       effect: "Soutient l’effort prolongé.",
-      family: "Fortifiants",
+      family: "Fortifiant",
       ingredients: [{ productId: ingredientId, quantity: 3 }],
       name: "Élixir du veilleur renforcé",
       recipeId,
@@ -140,7 +140,7 @@ describe("recipes", () => {
     await expect(
       admin.mutation(api.recipes.save, {
         effect: "",
-        family: "Essais",
+        family: "Utilitaire",
         ingredients: [{ productId: ingredientId, quantity: 1.5 }],
         name: "Préparation incomplète",
       })
@@ -160,7 +160,7 @@ describe("recipes", () => {
     await expect(
       employee.mutation(api.recipes.save, {
         effect: "",
-        family: "Essais",
+        family: "Utilitaire",
         ingredients: [{ productId: ingredientId, quantity: 1 }],
         name: "Élixir du veilleur",
       })
@@ -175,11 +175,11 @@ describe("recipes", () => {
     await expect(
       admin.mutation(api.recipes.save, {
         effect: "",
-        family: "Essais",
+        family: "Utilitaire",
         ingredients: [{ productId: ingredientId, quantity: 1 }],
         name: "Préparation déjà enregistrée",
       })
-    ).rejects.toThrowError("Un article existe déjà")
+    ).rejects.toThrowError("Choisissez l’article existant")
 
     const state = await backend.run(async (ctx) => ({
       audits: await ctx.db.query("auditLogs").collect(),
@@ -191,6 +191,67 @@ describe("recipes", () => {
     expect(state.audits).toHaveLength(0)
   })
 
+  it("relie explicitement une recette à une potion fabricable existante", async () => {
+    const backend = createTestBackend()
+    const admin = await asAuthenticatedUser(backend, "admin")
+    const { existingPotionId, ingredientId } = await seedRecipeProducts(backend)
+
+    const recipeId = await admin.mutation(api.recipes.save, {
+      effect: "",
+      family: "Utilitaire",
+      ingredients: [{ productId: ingredientId, quantity: 1 }],
+      name: "Préparation déjà enregistrée",
+      outputProductId: existingPotionId,
+    })
+
+    const state = await backend.run(async (ctx) => ({
+      products: await ctx.db.query("products").collect(),
+      recipe: await ctx.db.get(recipeId),
+    }))
+    expect(state.products).toHaveLength(2)
+    expect(state.recipe?.productId).toBe(existingPotionId)
+  })
+
+  it("refuse de fabriquer une potion déclarée comme trouvée uniquement", async () => {
+    const backend = createTestBackend()
+    const admin = await asAuthenticatedUser(backend, "admin")
+    const { existingPotionId, ingredientId } = await seedRecipeProducts(backend)
+    await backend.run((ctx) =>
+      ctx.db.patch(existingPotionId, { craftable: false })
+    )
+
+    await expect(
+      admin.mutation(api.recipes.save, {
+        effect: "",
+        family: "Utilitaire",
+        ingredients: [{ productId: ingredientId, quantity: 1 }],
+        name: "Préparation déjà enregistrée",
+        outputProductId: existingPotionId,
+      })
+    ).rejects.toThrowError("non fabricable")
+  })
+
+  it("refuse de réactiver la recette d’une potion trouvée uniquement", async () => {
+    const backend = createTestBackend()
+    const admin = await asAuthenticatedUser(backend, "admin")
+    const { existingPotionId } = await seedRecipeProducts(backend)
+    const recipeId = await backend.run((ctx) =>
+      ctx.db.insert("recipes", {
+        active: false,
+        family: "Utilitaire",
+        name: "Préparation déjà enregistrée",
+        productId: existingPotionId,
+      })
+    )
+    await backend.run((ctx) =>
+      ctx.db.patch(existingPotionId, { craftable: false })
+    )
+
+    await expect(
+      admin.mutation(api.recipes.setActive, { active: true, recipeId })
+    ).rejects.toThrowError("Rendez d’abord la potion fabricable")
+  })
+
   it("calcule le coût courant et interdit deux recettes pour le même article", async () => {
     const backend = createTestBackend()
     const admin = await asAuthenticatedUser(backend, "admin")
@@ -198,7 +259,7 @@ describe("recipes", () => {
 
     await admin.mutation(api.recipes.save, {
       effect: "",
-      family: "Fortifiants",
+      family: "Fortifiant",
       ingredients: [{ productId: ingredientId, quantity: 2 }],
       name: "Élixir du veilleur",
     })
@@ -213,7 +274,7 @@ describe("recipes", () => {
     await expect(
       admin.mutation(api.recipes.save, {
         effect: "",
-        family: "Doublon",
+        family: "Utilitaire",
         ingredients: [{ productId: ingredientId, quantity: 1 }],
         name: "élixir DU veilleur",
       })
@@ -227,7 +288,7 @@ describe("recipes", () => {
 
     const recipeId = await admin.mutation(api.recipes.save, {
       effect: "Éclaire les galeries les plus sombres.",
-      family: "Utilitaires",
+      family: "Utilitaire",
       ingredients: [{ productId: ingredientId, quantity: 2 }],
       name: "Philtre du guetteur",
     })

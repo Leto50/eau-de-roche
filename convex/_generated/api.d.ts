@@ -20,6 +20,7 @@ import type * as lib_numbers from "../lib/numbers.js";
 import type * as lib_order from "../lib/order.js";
 import type * as lib_products from "../lib/products.js";
 import type * as lib_recipeCost from "../lib/recipeCost.js";
+import type * as lib_recipeFamilies from "../lib/recipeFamilies.js";
 import type * as lib_text from "../lib/text.js";
 import type * as lib_validators from "../lib/validators.js";
 import type * as migrations from "../migrations.js";
@@ -48,6 +49,7 @@ declare const fullApi: ApiFromModules<{
   "lib/order": typeof lib_order;
   "lib/products": typeof lib_products;
   "lib/recipeCost": typeof lib_recipeCost;
+  "lib/recipeFamilies": typeof lib_recipeFamilies;
   "lib/text": typeof lib_text;
   "lib/validators": typeof lib_validators;
   migrations: typeof migrations;

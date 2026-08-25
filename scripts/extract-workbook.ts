@@ -10,6 +10,7 @@ type TransactionKind =
 
 interface ProductSeed {
   category: ProductCategory
+  craftable?: boolean
   currentStock: number
   legacyKey: string
   minimumStock: number
@@ -264,6 +265,7 @@ function extractProducts(workbook: ExcelJS.Workbook): ProductSeed[] {
     if (potionName && potionName !== "Potions annexe") {
       addProduct(products, {
         category: "potion",
+        craftable: rowNumber < 36,
         currentStock: readNumber(row.getCell(2)) ?? 0,
         minimumStock: rowNumber >= 36 ? 2 : 5,
         name: potionName.trim(),
@@ -494,12 +496,29 @@ function parseRecipeIngredient(
 }
 
 function recipeName(family: string, variant: string): string {
-  if (normalizeName(family) === normalizeName(variant)) return family
+  if (
+    normalizeName(family) === normalizeName(variant) ||
+    (family === "Médicinale" && normalizeName(variant) === "medicinal")
+  ) {
+    return family
+  }
   if (family === "Alcool") return variant
   if (variant === "Potion" || variant === "Breuvage") {
     return `${variant} ${family}`
   }
   return `${family} ${variant}`
+}
+
+const recipeFamilyAliases: Readonly<Record<string, string>> = {
+  "mana accru": "Magie accrue",
+  medicinal: "Médicinale",
+  "puissance durable": "Puissance durable",
+  "resistance magie": "Résistance magique",
+  "vigueur accru": "Vigueur améliorée",
+}
+
+function canonicalRecipeFamily(value: string): string {
+  return recipeFamilyAliases[normalizeName(value)] ?? value.trim()
 }
 
 function extractRecipes(workbook: ExcelJS.Workbook): RecipeSeed[] {
@@ -508,9 +527,10 @@ function extractRecipes(workbook: ExcelJS.Workbook): RecipeSeed[] {
 
   for (let rowNumber = 5; rowNumber <= 80; rowNumber += 1) {
     const row = sheet.getRow(rowNumber)
-    const family = readString(row.getCell(1))
+    const rawFamily = readString(row.getCell(1))
     const variant = readString(row.getCell(2))
-    if (!family || !variant) continue
+    if (!rawFamily || !variant) continue
+    const family = canonicalRecipeFamily(rawFamily)
 
     const ingredients = [3, 4, 5, 6]
       .map((columnNumber) => ({

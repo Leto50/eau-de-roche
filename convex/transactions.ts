@@ -581,6 +581,13 @@ export const record = mutation({
         message: "Personnage introuvable ou archivé.",
       })
     }
+    if (args.kind === "production" && product.craftable === false) {
+      throw new ConvexError({
+        code: "INVALID_OPERATION",
+        message:
+          "Cette potion est trouvée uniquement et ne peut pas être fabriquée.",
+      })
+    }
     if (args.kind === "production") {
       await requireCraftableProduct(ctx, product._id)
     }
@@ -1230,6 +1237,13 @@ export const update = mutation({
         (transaction.kind !== "production" ||
           transaction.productId !== product._id)
       ) {
+        if (product.craftable === false) {
+          throw new ConvexError({
+            code: "INVALID_OPERATION",
+            message:
+              "Cette potion est trouvée uniquement et ne peut pas être fabriquée.",
+          })
+        }
         await requireCraftableProduct(ctx, product._id)
       }
       assertWholeNumberRange(args.quantity, 1, MAX_QUANTITY, "La quantité")

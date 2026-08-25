@@ -151,11 +151,17 @@ seule fois, après le déploiement des fonctions :
 ```bash
 pnpm convex run --prod migrations:convertLegacyOperations
 pnpm convex run --prod migrations:repairRecipeReferences
+pnpm convex run --prod migrations:reclassifyAnnexePotions
+pnpm convex run --prod migrations:classifyPotionCraftability
+pnpm convex run --prod migrations:normalizeRecipeFamilies
 ```
 
 Ces migrations sont idempotentes. La première ne rejoue aucun mouvement sur le
 stock courant ; la seconde rattache les recettes et leurs ingrédients aux
-articles canoniques, puis recalcule les coûts matière disponibles.
+articles canoniques, puis recalcule les coûts matière disponibles. Les trois
+dernières réunissent toutes les potions dans la même catégorie, distinguent les
+potions fabricables de celles trouvées uniquement et normalisent les catégories
+de recettes proposées dans l’interface.
 
 Après la première connexion, l’administrateur crée les comptes employés depuis
 le menu « Administration ». Il n’existe aucune page d’inscription publique.
@@ -167,15 +173,18 @@ sont isolées de la production.
 
 ## Commandes utiles
 
-| Commande                                                    | Rôle                                            |
-| ----------------------------------------------------------- | ----------------------------------------------- |
-| `pnpm dev`                                                  | Convex et site local en parallèle               |
-| `pnpm extract:workbook`                                     | Régénère `data/inventaire.seed.json`            |
-| `pnpm seed -- '{…}'`                                        | Importe le seed avec le secret du déploiement   |
-| `pnpm convex run --prod migrations:convertLegacyOperations` | Convertit les anciennes opérations              |
-| `pnpm convex run --prod migrations:repairRecipeReferences`  | Répare les références et les coûts des recettes |
-| `pnpm lint`                                                 | ESLint strict, zéro avertissement               |
-| `pnpm typecheck`                                            | Vérification TypeScript sans émission           |
-| `pnpm test`                                                 | Tests métier Convex + Better Auth               |
-| `pnpm build`                                                | Build client, SSR et fonction Netlify           |
-| `pnpm build:netlify`                                        | Déploiement Convex puis build Netlify           |
+| Commande                                                       | Rôle                                                   |
+| -------------------------------------------------------------- | ------------------------------------------------------ |
+| `pnpm dev`                                                     | Convex et site local en parallèle                      |
+| `pnpm extract:workbook`                                        | Régénère `data/inventaire.seed.json`                   |
+| `pnpm seed -- '{…}'`                                           | Importe le seed avec le secret du déploiement          |
+| `pnpm convex run --prod migrations:convertLegacyOperations`    | Convertit les anciennes opérations                     |
+| `pnpm convex run --prod migrations:repairRecipeReferences`     | Répare les références et les coûts des recettes        |
+| `pnpm convex run --prod migrations:reclassifyAnnexePotions`    | Réunit toutes les potions dans la catégorie « Potion » |
+| `pnpm convex run --prod migrations:classifyPotionCraftability` | Renseigne le mode d’obtention des potions              |
+| `pnpm convex run --prod migrations:normalizeRecipeFamilies`    | Normalise les catégories de recettes                   |
+| `pnpm lint`                                                    | ESLint strict, zéro avertissement                      |
+| `pnpm typecheck`                                               | Vérification TypeScript sans émission                  |
+| `pnpm test`                                                    | Tests métier Convex + Better Auth                      |
+| `pnpm build`                                                   | Build client, SSR et fonction Netlify                  |
+| `pnpm build:netlify`                                           | Déploiement Convex puis build Netlify                  |

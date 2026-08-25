@@ -27,6 +27,7 @@ export default defineSchema({
   products: defineTable({
     active: v.boolean(),
     category: productCategory,
+    craftable: v.optional(v.boolean()),
     currentStock: v.number(),
     legacyKey: v.optional(v.string()),
     minimumStock: v.number(),

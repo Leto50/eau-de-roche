@@ -35,6 +35,7 @@ import { type Doc } from "../../../convex/_generated/dataModel"
 import { useHydrated } from "@/hooks/use-hydrated"
 import { authClient } from "@/lib/auth-client"
 import { formatDecimalSeptims, formatNumber, formatSeptims } from "@/lib/format"
+import { recipeFamilies } from "@/lib/recipe-families"
 
 type Recipe = FunctionReturnType<typeof api.recipes.list>[number]
 type Bundle = FunctionReturnType<typeof api.recipes.listBundles>[number]
@@ -51,6 +52,9 @@ export const Route = createFileRoute("/_app/recettes")({
       context.queryClient.ensureQueryData(
         convexQuery(api.products.selectable, {})
       ),
+      context.queryClient.ensureQueryData(
+        convexQuery(api.recipes.listLinkedProductIds, {})
+      ),
     ])
   },
   pendingComponent: PageSkeleton,
@@ -66,12 +70,15 @@ function RecipesPage() {
   const { data: products } = useSuspenseQuery(
     convexQuery(api.products.selectable, {})
   )
+  const { data: linkedProductIds } = useSuspenseQuery(
+    convexQuery(api.recipes.listLinkedProductIds, {})
+  )
   const isAdmin =
     isHydrated && (session?.user.role?.split(",").includes("admin") ?? false)
   const [search, setSearch] = useState("")
   const [family, setFamily] = useState("all")
-  const families = [...new Set(recipes.map((recipe) => recipe.family))].sort(
-    (left, right) => left.localeCompare(right, "fr")
+  const families = recipeFamilies.filter((entry) =>
+    recipes.some((recipe) => recipe.family === entry)
   )
   const normalizedSearch = search.trim().toLocaleLowerCase("fr")
   const visibleRecipes = recipes.filter(
@@ -137,7 +144,10 @@ function RecipesPage() {
             {isAdmin ? (
               <>
                 <RecipeArchivesDialog />
-                <RecipeDialog products={products} />
+                <RecipeDialog
+                  linkedProductIds={linkedProductIds}
+                  products={products}
+                />
               </>
             ) : null}
             <BookMarked aria-hidden="true" className="size-5 text-primary" />
@@ -149,6 +159,7 @@ function RecipesPage() {
               <RecipeEntry
                 isAdmin={isAdmin}
                 key={recipe._id}
+                linkedProductIds={linkedProductIds}
                 products={products}
                 recipe={recipe}
               />
@@ -206,10 +217,12 @@ function RecipesPage() {
 
 function RecipeEntry({
   isAdmin,
+  linkedProductIds,
   products,
   recipe,
 }: Readonly<{
   isAdmin: boolean
+  linkedProductIds: readonly Doc<"products">["_id"][]
   products: readonly Doc<"products">[]
   recipe: Recipe
 }>) {
@@ -232,6 +245,7 @@ function RecipeEntry({
           )}
           {isAdmin ? (
             <RecipeDialog
+              linkedProductIds={linkedProductIds}
               products={products}
               recipe={recipe}
               trigger={

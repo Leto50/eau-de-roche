@@ -5,10 +5,10 @@ import { mutation, query, type QueryCtx } from "./_generated/server"
 import { requireAdmin, requireUser } from "./lib/auth"
 import { assertWholeNumberRange } from "./lib/numbers"
 import { calculateRecipeCost } from "./lib/recipeCost"
+import { recipeFamily } from "./lib/recipeFamilies"
 import { normalizeName } from "./lib/text"
 
 const MAX_EFFECT_LENGTH = 500
-const MAX_FAMILY_LENGTH = 60
 const MAX_INGREDIENTS = 50
 const MAX_NAME_LENGTH = 100
 const MAX_QUANTITY = 1_000_000
@@ -67,11 +67,44 @@ export const listCraftableProductIds = query({
   args: {},
   handler: async (ctx) => {
     await requireUser(ctx)
+    const [recipes, products] = await Promise.all([
+      ctx.db.query("recipes").collect(),
+      ctx.db.query("products").collect(),
+    ])
+    const craftableProducts = new Set(
+      products
+        .filter(
+          (product) =>
+            product.active &&
+            product.tracksStock &&
+            product.category === "potion" &&
+            product.craftable !== false
+        )
+        .map((product) => product._id)
+    )
+    return [
+      ...new Set(
+        recipes.flatMap((recipe) =>
+          recipe.active !== false &&
+          recipe.productId &&
+          craftableProducts.has(recipe.productId)
+            ? [recipe.productId]
+            : []
+        )
+      ),
+    ]
+  },
+})
+
+export const listLinkedProductIds = query({
+  args: {},
+  handler: async (ctx) => {
+    await requireUser(ctx)
     const recipes = await ctx.db.query("recipes").collect()
     return [
       ...new Set(
         recipes.flatMap((recipe) =>
-          recipe.active !== false && recipe.productId ? [recipe.productId] : []
+          recipe.productId ? [recipe.productId] : []
         )
       ),
     ]
@@ -102,7 +135,7 @@ export const listArchived = query({
 export const save = mutation({
   args: {
     effect: v.string(),
-    family: v.string(),
+    family: recipeFamily,
     ingredients: v.array(
       v.object({
         productId: v.id("products"),
@@ -110,23 +143,18 @@ export const save = mutation({
       })
     ),
     name: v.string(),
+    outputProductId: v.optional(v.id("products")),
     recipeId: v.optional(v.id("recipes")),
   },
   handler: async (ctx, args) => {
     const user = await requireAdmin(ctx)
     const name = args.name.trim()
-    const family = args.family.trim()
+    const family = args.family
     const effect = args.effect.trim()
     if (!name || name.length > MAX_NAME_LENGTH) {
       throw new ConvexError({
         code: "INVALID_INPUT",
         message: `Le nom doit contenir entre 1 et ${MAX_NAME_LENGTH} caractères.`,
-      })
-    }
-    if (!family || family.length > MAX_FAMILY_LENGTH) {
-      throw new ConvexError({
-        code: "INVALID_INPUT",
-        message: `La famille doit contenir entre 1 et ${MAX_FAMILY_LENGTH} caractères.`,
       })
     }
     if (effect.length > MAX_EFFECT_LENGTH) {
@@ -207,16 +235,44 @@ export const save = mutation({
           entityType: "product",
         })
       }
+    } else if (args.outputProductId) {
+      linkedProduct = await ctx.db.get(args.outputProductId)
+      if (
+        !linkedProduct?.active ||
+        !linkedProduct.tracksStock ||
+        linkedProduct.category !== "potion" ||
+        linkedProduct.craftable === false
+      ) {
+        throw new ConvexError({
+          code: "NOT_FOUND",
+          message: "La potion choisie est introuvable ou non fabricable.",
+        })
+      }
+      if (linkedProduct.normalizedName !== normalizedName) {
+        throw new ConvexError({
+          code: "INVALID_INPUT",
+          message: "La recette doit porter exactement le nom de la potion.",
+        })
+      }
+      if (
+        productsWithName.some((product) => product._id !== linkedProduct?._id)
+      ) {
+        throw new ConvexError({
+          code: "ALREADY_EXISTS",
+          message: `Un autre article existe déjà sous le nom « ${name} ».`,
+        })
+      }
     } else {
       if (productsWithName.length > 0) {
         throw new ConvexError({
           code: "ALREADY_EXISTS",
-          message: `Un article existe déjà sous le nom « ${name} ».`,
+          message: `Choisissez l’article existant « ${name} » comme potion obtenue.`,
         })
       }
       const productId = await ctx.db.insert("products", {
         active: true,
         category: "potion",
+        craftable: true,
         currentStock: 0,
         minimumStock: 0,
         name,
@@ -234,10 +290,15 @@ export const save = mutation({
       })
     }
 
-    if (!linkedProduct?.active || !linkedProduct.tracksStock) {
+    if (
+      !linkedProduct?.active ||
+      !linkedProduct.tracksStock ||
+      linkedProduct.category !== "potion" ||
+      linkedProduct.craftable === false
+    ) {
       throw new ConvexError({
         code: "NOT_FOUND",
-        message: "L’article fabriqué est introuvable ou indisponible.",
+        message: "La potion fabriquée est introuvable ou non fabricable.",
       })
     }
     if (
@@ -351,6 +412,23 @@ export const setActive = mutation({
         code: "NOT_FOUND",
         message: "Recette introuvable.",
       })
+    }
+    if (args.active) {
+      const product = recipe.productId
+        ? await ctx.db.get(recipe.productId)
+        : null
+      if (
+        !product?.active ||
+        !product.tracksStock ||
+        product.category !== "potion" ||
+        product.craftable === false
+      ) {
+        throw new ConvexError({
+          code: "INVALID_OPERATION",
+          message:
+            "Rendez d’abord la potion fabricable avant de réactiver sa recette.",
+        })
+      }
     }
     await ctx.db.patch(recipe._id, { active: args.active })
     await ctx.db.insert("auditLogs", {

@@ -1658,7 +1658,7 @@
       "cost": 4
     },
     {
-      "family": "Vigueur accru",
+      "family": "Vigueur améliorée",
       "ingredients": [
         {
           "ingredientName": "ail",
@@ -1679,7 +1679,7 @@
       "cost": 4
     },
     {
-      "family": "Vigueur accru",
+      "family": "Vigueur améliorée",
       "ingredients": [
         {
           "ingredientName": "ail",
@@ -1829,7 +1829,7 @@
       "cost": 11
     },
     {
-      "family": "Resistance magie",
+      "family": "Résistance magique",
       "ingredients": [
         {
           "ingredientName": "coton",
@@ -1850,7 +1850,7 @@
       "cost": 2
     },
     {
-      "family": "Resistance magie",
+      "family": "Résistance magique",
       "ingredients": [
         {
           "ingredientName": "coton",
@@ -1876,7 +1876,7 @@
       "effect": "15% pour 1min."
     },
     {
-      "family": "Puissance Durable",
+      "family": "Puissance durable",
       "ingredients": [
         {
           "ingredientName": "sel",
@@ -1897,7 +1897,7 @@
       "cost": 7
     },
     {
-      "family": "Puissance Durable",
+      "family": "Puissance durable",
       "ingredients": [
         {
           "ingredientName": "sel",
@@ -1924,7 +1924,7 @@
       "cost": 57
     },
     {
-      "family": "Mana accru",
+      "family": "Magie accrue",
       "ingredients": [
         {
           "ingredientName": "coton",
@@ -1944,7 +1944,7 @@
       "effect": "20 point pour 1 min."
     },
     {
-      "family": "Mana accru",
+      "family": "Magie accrue",
       "ingredients": [
         {
           "ingredientName": "coton",
@@ -2066,7 +2066,7 @@
       "cost": 47
     },
     {
-      "family": "Médicinal",
+      "family": "Médicinale",
       "ingredients": [
         {
           "ingredientName": "ail",

@@ -58,6 +58,17 @@ describe("transactions.record", () => {
 
     const product = await backend.run((ctx) => ctx.db.get(productId))
     expect(product?.currentStock).toBe(12)
+
+    await backend.run((ctx) => ctx.db.patch(productId, { craftable: false }))
+    await expect(
+      member.mutation(api.transactions.record, {
+        characterId,
+        kind: "production",
+        occurredAt: Date.now(),
+        productId,
+        quantity: 1,
+      })
+    ).rejects.toThrowError("trouvée uniquement")
   })
 
   it("écrit atomiquement la vente, le mouvement, l'audit et le nouveau stock", async () => {
