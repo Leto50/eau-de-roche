@@ -543,6 +543,67 @@ describe("transactions.recordTrade", () => {
   })
 })
 
+describe("transactions.listPage et getDetails", () => {
+  it("pagine les résumés sans charger les lignes de chaque opération", async () => {
+    const backend = createTestBackend()
+    const member = await asAuthenticatedUser(backend)
+    const { characterId, productId } = await seedStock(backend)
+    const now = Date.now()
+    for (const offset of [1, 2, 3]) {
+      await member.mutation(api.transactions.recordTrade, {
+        characterId,
+        kind: "sale",
+        lines: [{ kind: "product", productId, quantity: 1 }],
+        occurredAt: now - offset,
+      })
+    }
+
+    const firstPage = await member.query(api.transactions.listPage, {
+      paginationOpts: { cursor: null, numItems: 2 },
+    })
+    const secondPage = await member.query(api.transactions.listPage, {
+      paginationOpts: {
+        cursor: firstPage.continueCursor,
+        numItems: 2,
+      },
+    })
+
+    expect(firstPage.page).toHaveLength(2)
+    expect(firstPage.isDone).toBe(false)
+    expect(firstPage.page[0]).toMatchObject({
+      canDelete: true,
+      canManage: true,
+    })
+    expect(firstPage.page[0]).not.toHaveProperty("lines")
+    expect(firstPage.page[0]).not.toHaveProperty("stockDeltas")
+    expect(secondPage.page).toHaveLength(1)
+    expect(secondPage.isDone).toBe(true)
+  })
+
+  it("charge les lignes et variations de stock pour une seule opération", async () => {
+    const backend = createTestBackend()
+    const member = await asAuthenticatedUser(backend)
+    const { characterId, productId } = await seedStock(backend)
+    const recorded = await member.mutation(api.transactions.recordTrade, {
+      characterId,
+      kind: "sale",
+      lines: [{ kind: "product", productId, quantity: 3 }],
+      occurredAt: Date.now(),
+    })
+
+    const details = await member.query(api.transactions.getDetails, {
+      transactionId: recorded.transactionId,
+    })
+
+    expect(details?.lines).toHaveLength(1)
+    expect(details?.lines[0]).toMatchObject({
+      productId,
+      quantity: 3,
+    })
+    expect(details?.stockDeltas).toEqual([{ delta: -3, productId }])
+  })
+})
+
 describe("transactions.remove", () => {
   it("supprime réellement une vente, ses lignes et ses mouvements", async () => {
     const backend = createTestBackend()

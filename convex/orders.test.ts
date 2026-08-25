@@ -58,6 +58,8 @@ describe("orders", () => {
       total: null,
     })
 
+    const details = await employee.query(api.orders.getById, { orderId })
+
     const state = await backend.run(async (ctx) => ({
       audits: await ctx.db.query("auditLogs").collect(),
       contacts: await ctx.db.query("contacts").collect(),
@@ -69,6 +71,12 @@ describe("orders", () => {
       product: await ctx.db.get(firstProductId),
     }))
     expect(state.order).toMatchObject({ status: "ready", total: 1 })
+    expect(details).toMatchObject({
+      contactName: "Client de passage",
+      linkedTransaction: null,
+      status: "ready",
+    })
+    expect(details?.lines).toHaveLength(1)
     expect(state.lines).toHaveLength(1)
     expect(state.contacts).toHaveLength(1)
     expect(state.product?.currentStock).toBe(10)

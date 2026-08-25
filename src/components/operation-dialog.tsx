@@ -81,7 +81,9 @@ export type OperationKind =
   "exchange" | "production" | "purchase" | "sale" | "service"
 
 type Bundle = FunctionReturnType<typeof api.recipes.listBundles>[number]
-type Transaction = FunctionReturnType<typeof api.transactions.list>[number]
+type Transaction = NonNullable<
+  FunctionReturnType<typeof api.transactions.getDetails>
+>
 type TradeDirection = "incoming" | "outgoing"
 
 interface TradeLine {
@@ -166,6 +168,46 @@ function bundleMatches(bundle: Bundle, query: string): boolean {
 
 function getDefaultDirection(kind: OperationKind): TradeDirection {
   return kind === "purchase" ? "incoming" : "outgoing"
+}
+
+function initialTradeLines(
+  transaction: Transaction | undefined,
+  initialKind: OperationKind
+): TradeLine[] {
+  const fallbackDirection = getDefaultDirection(
+    transaction?.kind === "purchase" ? "purchase" : initialKind
+  )
+  const existingLines = transaction?.lines.flatMap<TradeLine>((line) => {
+    const id = line.kind === "bundle" ? line.bundleId : line.productId
+    if (!id) return []
+    return [
+      {
+        direction: line.direction ?? fallbackDirection,
+        id,
+        kind: line.kind,
+        name: line.productName,
+        quantity: line.quantity.toString(),
+        unitPrice: priceDraftFromValue(line.unitPrice),
+      },
+    ]
+  })
+  const legacyLine =
+    transaction &&
+    transaction.kind !== "production" &&
+    transaction.productId &&
+    existingLines?.length === 0
+      ? [
+          {
+            direction: fallbackDirection,
+            id: transaction.productId,
+            kind: "product" as const,
+            name: transaction.productName,
+            quantity: transaction.quantity.toString(),
+            unitPrice: priceDraftFromValue(transaction.unitPrice),
+          },
+        ]
+      : []
+  return existingLines?.length ? existingLines : legacyLine
 }
 
 interface ProductPickerProps {
@@ -551,6 +593,8 @@ export function OperationDialog({
   bundles = [],
   characters,
   initialKind = "exchange",
+  onOpenChange,
+  open: controlledOpen,
   products,
   transaction,
   trigger,
@@ -558,9 +602,11 @@ export function OperationDialog({
   bundles?: readonly Bundle[]
   characters: readonly Doc<"characters">[]
   initialKind?: OperationKind
+  onOpenChange?: (open: boolean) => void
+  open?: boolean
   products: readonly Doc<"products">[]
   transaction?: Transaction
-  trigger?: ReactElement
+  trigger?: ReactElement | null
 }>) {
   const recordProduction = useMutation(api.transactions.record)
   const recordExchange = useMutation(api.transactions.recordExchange)
@@ -570,17 +616,34 @@ export function OperationDialog({
   const productionMode =
     transaction?.kind === "production" || initialKind === "production"
   const linkedOrderMode = Boolean(transaction?.orderId)
-  const [open, setOpen] = useState(false)
-  const [productId, setProductId] = useState("")
-  const [characterId, setCharacterId] = useState("")
-  const [quantity, setQuantity] = useState("1")
-  const [tradeLines, setTradeLines] = useState<TradeLine[]>([])
-  const [agreedTotal, setAgreedTotal] = useState("")
-  const [discount, setDiscount] = useState("")
-  const [counterparty, setCounterparty] = useState("")
-  const [comment, setComment] = useState("")
-  const [occurredOn, setOccurredOn] = useState(todayInputValue)
-  const [detailsOpen, setDetailsOpen] = useState(false)
+  const [internalOpen, setInternalOpen] = useState(false)
+  const open = controlledOpen ?? internalOpen
+  const [productId, setProductId] = useState(transaction?.productId ?? "")
+  const [characterId, setCharacterId] = useState(
+    transaction?.actorCharacterId ?? ""
+  )
+  const [quantity, setQuantity] = useState(
+    transaction?.quantity.toString() ?? "1"
+  )
+  const [tradeLines, setTradeLines] = useState<TradeLine[]>(() =>
+    initialTradeLines(transaction, initialKind)
+  )
+  const [agreedTotal, setAgreedTotal] = useState(
+    transaction?.orderId ? Math.abs(transaction.total).toString() : ""
+  )
+  const [discount, setDiscount] = useState(
+    transaction?.discount?.toString() ?? ""
+  )
+  const [counterparty, setCounterparty] = useState(
+    transaction?.counterparty ?? ""
+  )
+  const [comment, setComment] = useState(transaction?.comment ?? "")
+  const [occurredOn, setOccurredOn] = useState(() =>
+    transaction
+      ? timestampToDateInput(transaction.occurredAt)
+      : todayInputValue()
+  )
+  const [detailsOpen, setDetailsOpen] = useState(Boolean(transaction))
   const [isSubmitting, setIsSubmitting] = useState(false)
 
   const previousDeltas = new Map(
@@ -695,40 +758,7 @@ export function OperationDialog({
     setProductId(transaction?.productId ?? "")
     setCharacterId(transaction?.actorCharacterId ?? "")
     setQuantity(transaction?.quantity.toString() ?? "1")
-    const fallbackDirection = getDefaultDirection(
-      transaction?.kind === "purchase" ? "purchase" : initialKind
-    )
-    const existingLines = transaction?.lines.flatMap<TradeLine>((line) => {
-      const id = line.kind === "bundle" ? line.bundleId : line.productId
-      if (!id) return []
-      return [
-        {
-          direction: line.direction ?? fallbackDirection,
-          id,
-          kind: line.kind,
-          name: line.productName,
-          quantity: line.quantity.toString(),
-          unitPrice: priceDraftFromValue(line.unitPrice),
-        },
-      ]
-    })
-    const legacyLine =
-      transaction &&
-      transaction.kind !== "production" &&
-      transaction.productId &&
-      existingLines?.length === 0
-        ? [
-            {
-              direction: fallbackDirection,
-              id: transaction.productId,
-              kind: "product" as const,
-              name: transaction.productName,
-              quantity: transaction.quantity.toString(),
-              unitPrice: priceDraftFromValue(transaction.unitPrice),
-            },
-          ]
-        : []
-    setTradeLines(existingLines?.length ? existingLines : legacyLine)
+    setTradeLines(initialTradeLines(transaction, initialKind))
     setAgreedTotal(
       transaction?.orderId ? Math.abs(transaction.total).toString() : ""
     )
@@ -768,7 +798,8 @@ export function OperationDialog({
 
   function handleOpenChange(nextOpen: boolean) {
     if (nextOpen && !open) resetForm()
-    setOpen(nextOpen)
+    if (controlledOpen === undefined) setInternalOpen(nextOpen)
+    onOpenChange?.(nextOpen)
   }
 
   function prepareTradeLines(): TradeMutationLine[] | undefined {
@@ -890,7 +921,8 @@ export function OperationDialog({
             ? "Production ajoutée au stock."
             : "Échange enregistré."
       )
-      setOpen(false)
+      if (controlledOpen === undefined) setInternalOpen(false)
+      onOpenChange?.(false)
     } catch (error) {
       toast.error(
         getUserFacingErrorMessage(
@@ -921,14 +953,16 @@ export function OperationDialog({
 
   return (
     <Dialog onOpenChange={handleOpenChange} open={open}>
-      <DialogTrigger asChild>
-        {trigger ?? (
-          <Button size="lg">
-            <Plus aria-hidden="true" />
-            {productionMode ? "Nouvelle production" : "Nouvel échange"}
-          </Button>
-        )}
-      </DialogTrigger>
+      {trigger === null ? null : (
+        <DialogTrigger asChild>
+          {trigger ?? (
+            <Button size="lg">
+              <Plus aria-hidden="true" />
+              {productionMode ? "Nouvelle production" : "Nouvel échange"}
+            </Button>
+          )}
+        </DialogTrigger>
+      )}
       <DialogContent className="max-h-[94svh] overflow-y-auto rounded-[0.2rem] border-[#6a5436] bg-[#eee1c7] ring-0 sm:max-w-3xl">
         <DialogHeader className="pr-8">
           <p className="text-[0.66rem] font-bold tracking-[0.2em] text-primary uppercase">
@@ -1190,7 +1224,7 @@ export function OperationDialog({
 
           <DialogFooter>
             <Button
-              onClick={() => setOpen(false)}
+              onClick={() => handleOpenChange(false)}
               type="button"
               variant="ghost"
             >

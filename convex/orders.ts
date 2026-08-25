@@ -1,7 +1,12 @@
 import { ConvexError, type Infer, v } from "convex/values"
 
 import { type Doc, type Id } from "./_generated/dataModel"
-import { mutation, query, type MutationCtx } from "./_generated/server"
+import {
+  mutation,
+  query,
+  type MutationCtx,
+  type QueryCtx,
+} from "./_generated/server"
 import { requireAdmin, requireUser } from "./lib/auth"
 import {
   type exchangeLineValidator,
@@ -189,22 +194,35 @@ async function synchronizeLinkedTransaction(
   return prepared
 }
 
+async function withOrderDetails(ctx: QueryCtx, order: Doc<"orders">) {
+  const [lines, linkedTransaction] = await Promise.all([
+    ctx.db
+      .query("orderLines")
+      .withIndex("by_order", (index) => index.eq("orderId", order._id))
+      .collect(),
+    order.transactionId ? ctx.db.get(order.transactionId) : null,
+  ])
+  return { ...order, lines, linkedTransaction }
+}
+
+export const getById = query({
+  args: {
+    orderId: v.id("orders"),
+  },
+  handler: async (ctx, args) => {
+    await requireUser(ctx)
+    const order = await ctx.db.get(args.orderId)
+    return order ? withOrderDetails(ctx, order) : null
+  },
+})
+
 export const list = query({
   args: {},
   handler: async (ctx) => {
     await requireUser(ctx)
     const orders = await ctx.db.query("orders").collect()
     const withLines = await Promise.all(
-      orders.map(async (order) => {
-        const [lines, linkedTransaction] = await Promise.all([
-          ctx.db
-            .query("orderLines")
-            .withIndex("by_order", (index) => index.eq("orderId", order._id))
-            .collect(),
-          order.transactionId ? ctx.db.get(order.transactionId) : null,
-        ])
-        return { ...order, lines, linkedTransaction }
-      })
+      orders.map((order) => withOrderDetails(ctx, order))
     )
 
     return withLines.sort((left, right) => {

@@ -110,10 +110,31 @@ function defaultPrice(product: Doc<"products">, kind: OrderKind) {
   return kind === "client" ? product.salePrice : product.purchasePrice
 }
 
+function initialOrderLines(order: Order | undefined): OrderLineDraft[] {
+  if (order?.lines.length) {
+    return order.lines.map((line, index) => ({
+      key: index,
+      productId: line.productId ?? "",
+      quantity: line.quantity.toString(),
+      unitPrice: priceDraftFromValue(line.unitPrice),
+    }))
+  }
+  return [
+    {
+      key: 0,
+      productId: "",
+      quantity: "1",
+      unitPrice: priceDraftFromValue(undefined),
+    },
+  ]
+}
+
 export function OrderDialog({
   characters,
   initialKind = "client",
   isAdmin,
+  onOpenChange,
+  open: controlledOpen,
   order,
   products,
   recipes,
@@ -122,33 +143,41 @@ export function OrderDialog({
   characters: readonly Doc<"characters">[]
   initialKind?: OrderKind
   isAdmin: boolean
+  onOpenChange?: (open: boolean) => void
+  open?: boolean
   order?: Order
   products: readonly Doc<"products">[]
   recipes: readonly Recipe[]
-  trigger?: ReactElement
+  trigger?: ReactElement | null
 }>) {
   const saveOrder = useMutation(api.orders.save)
   const removeOrder = useMutation(api.orders.remove)
   const fieldId = useId()
-  const nextLineKey = useRef(1)
-  const [open, setOpen] = useState(false)
-  const [kind, setKind] = useState<OrderKind>(initialKind)
-  const [contactName, setContactName] = useState("")
-  const [agreedTotal, setAgreedTotal] = useState("")
-  const [totalOverridden, setTotalOverridden] = useState(false)
-  const [dueDate, setDueDate] = useState("")
-  const [notes, setNotes] = useState("")
-  const [status, setStatus] = useState<OrderStatus>("open")
-  const [processedCharacterId, setProcessedCharacterId] = useState("")
-  const [processedDate, setProcessedDate] = useState("")
-  const [lines, setLines] = useState<OrderLineDraft[]>([
-    {
-      key: 0,
-      productId: "",
-      quantity: "1",
-      unitPrice: priceDraftFromValue(undefined),
-    },
-  ])
+  const nextLineKey = useRef(order?.lines.length ?? 1)
+  const [internalOpen, setInternalOpen] = useState(false)
+  const open = controlledOpen ?? internalOpen
+  const [kind, setKind] = useState<OrderKind>(order?.kind ?? initialKind)
+  const [contactName, setContactName] = useState(order?.contactName ?? "")
+  const [agreedTotal, setAgreedTotal] = useState(order?.total?.toString() ?? "")
+  const [totalOverridden, setTotalOverridden] = useState(
+    order?.total !== undefined
+  )
+  const [dueDate, setDueDate] = useState(() =>
+    dateInputFromTimestamp(order?.dueAt)
+  )
+  const [notes, setNotes] = useState(order?.notes ?? "")
+  const [status, setStatus] = useState<OrderStatus>(order?.status ?? "open")
+  const [processedCharacterId, setProcessedCharacterId] = useState(
+    order?.linkedTransaction?.actorCharacterId ?? ""
+  )
+  const [processedDate, setProcessedDate] = useState(() =>
+    dateInputFromTimestamp(
+      order?.processedAt ?? order?.linkedTransaction?.occurredAt
+    )
+  )
+  const [lines, setLines] = useState<OrderLineDraft[]>(() =>
+    initialOrderLines(order)
+  )
   const [isSubmitting, setIsSubmitting] = useState(false)
 
   function resetForm() {
@@ -166,14 +195,7 @@ export function OrderDialog({
       )
     )
     if (order?.lines.length) {
-      setLines(
-        order.lines.map((line, index) => ({
-          key: index,
-          productId: line.productId ?? "",
-          quantity: line.quantity.toString(),
-          unitPrice: priceDraftFromValue(line.unitPrice),
-        }))
-      )
+      setLines(initialOrderLines(order))
       nextLineKey.current = order.lines.length
       return
     }
@@ -190,7 +212,8 @@ export function OrderDialog({
 
   function handleOpenChange(nextOpen: boolean) {
     if (nextOpen && !open) resetForm()
-    setOpen(nextOpen)
+    if (controlledOpen === undefined) setInternalOpen(nextOpen)
+    onOpenChange?.(nextOpen)
   }
 
   function updateLine(key: number, patch: Partial<OrderLineDraft>) {
@@ -370,7 +393,8 @@ export function OrderDialog({
             ? "Commande mise à jour."
             : "Commande créée."
       )
-      setOpen(false)
+      if (controlledOpen === undefined) setInternalOpen(false)
+      onOpenChange?.(false)
     } catch (error) {
       toast.error(
         getUserFacingErrorMessage(
@@ -389,7 +413,8 @@ export function OrderDialog({
     try {
       await removeOrder({ orderId: order._id })
       toast.success("Commande supprimée.")
-      setOpen(false)
+      if (controlledOpen === undefined) setInternalOpen(false)
+      onOpenChange?.(false)
     } catch (error) {
       toast.error(
         getUserFacingErrorMessage(error, "Impossible de supprimer la commande.")
@@ -401,14 +426,16 @@ export function OrderDialog({
 
   return (
     <Dialog onOpenChange={handleOpenChange} open={open}>
-      <DialogTrigger asChild>
-        {trigger ?? (
-          <Button>
-            <ClipboardPlus aria-hidden="true" />
-            Nouvelle commande
-          </Button>
-        )}
-      </DialogTrigger>
+      {trigger === null ? null : (
+        <DialogTrigger asChild>
+          {trigger ?? (
+            <Button>
+              <ClipboardPlus aria-hidden="true" />
+              Nouvelle commande
+            </Button>
+          )}
+        </DialogTrigger>
+      )}
       <DialogContent className="max-h-[94svh] overflow-y-auto rounded-[0.2rem] border-[#6a5436] bg-[#eee1c7] ring-0 sm:max-w-3xl">
         <DialogHeader className="pr-8">
           <p className="text-[0.66rem] font-bold tracking-[0.2em] text-primary uppercase">
@@ -742,7 +769,7 @@ export function OrderDialog({
             </div>
             <div className="flex justify-end gap-2">
               <Button
-                onClick={() => setOpen(false)}
+                onClick={() => handleOpenChange(false)}
                 type="button"
                 variant="ghost"
               >

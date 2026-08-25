@@ -1,20 +1,26 @@
 import { convexQuery } from "@convex-dev/react-query"
 import { useSuspenseQuery } from "@tanstack/react-query"
 import { createFileRoute } from "@tanstack/react-router"
+import { useMutation, useQuery as useConvexQuery } from "convex/react"
 import { type FunctionReturnType } from "convex/server"
-import { useMutation } from "convex/react"
 import {
   ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   Hammer,
   LoaderCircle,
   Pencil,
+  Plus,
   ScrollText,
   Trash2,
 } from "lucide-react"
 import { useState, type MouseEvent } from "react"
 import { toast } from "sonner"
 
-import { OperationDialog } from "@/components/operation-dialog"
+import {
+  OperationDialog,
+  type OperationKind,
+} from "@/components/operation-dialog"
 import { OrderDialog } from "@/components/order-dialog"
 import { PageError } from "@/components/page-error"
 import { PageHeader } from "@/components/page-header"
@@ -33,19 +39,20 @@ import {
 } from "@/components/ui/alert-dialog"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import {
-  Card,
-  CardAction,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card"
+import { Card, CardContent } from "@/components/ui/card"
 import {
   Collapsible,
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/components/ui/collapsible"
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog"
+import { Skeleton } from "@/components/ui/skeleton"
 import {
   Table,
   TableBody,
@@ -59,8 +66,6 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from "@/components/ui/tooltip"
-import { api } from "../../../convex/_generated/api"
-import { type Doc } from "../../../convex/_generated/dataModel"
 import { useHydrated } from "@/hooks/use-hydrated"
 import { authClient } from "@/lib/auth-client"
 import { getUserFacingErrorMessage } from "@/lib/errors"
@@ -72,30 +77,36 @@ import {
   operationLabels,
 } from "@/lib/format"
 import { cn } from "@/lib/utils"
+import { api } from "../../../convex/_generated/api"
+import { type Doc, type Id } from "../../../convex/_generated/dataModel"
 
-type Transaction = FunctionReturnType<typeof api.transactions.list>[number]
-type Bundle = FunctionReturnType<typeof api.recipes.listBundles>[number]
-type Order = FunctionReturnType<typeof api.orders.list>[number]
-type Recipe = FunctionReturnType<typeof api.recipes.list>[number]
+const PAGE_SIZE = 30
+const initialPagination = { cursor: null, numItems: PAGE_SIZE } as const
+
+type Transaction = FunctionReturnType<
+  typeof api.transactions.listPage
+>["page"][number]
+
+type EditorRequest =
+  | {
+      initialKind: OperationKind
+      transactionId?: Id<"transactions">
+      type: "operation"
+    }
+  | {
+      orderId: Id<"orders">
+      type: "order"
+    }
 
 export const Route = createFileRoute("/_app/journal")({
   component: JournalPage,
   errorComponent: PageError,
   loader: async ({ context }) => {
-    await Promise.all([
-      context.queryClient.ensureQueryData(
-        convexQuery(api.transactions.list, { limit: 150 })
-      ),
-      context.queryClient.ensureQueryData(
-        convexQuery(api.products.selectable, {})
-      ),
-      context.queryClient.ensureQueryData(convexQuery(api.characters.list, {})),
-      context.queryClient.ensureQueryData(
-        convexQuery(api.recipes.listBundles, {})
-      ),
-      context.queryClient.ensureQueryData(convexQuery(api.orders.list, {})),
-      context.queryClient.ensureQueryData(convexQuery(api.recipes.list, {})),
-    ])
+    await context.queryClient.ensureQueryData(
+      convexQuery(api.transactions.listPage, {
+        paginationOpts: initialPagination,
+      })
+    )
   },
   pendingComponent: PageSkeleton,
 })
@@ -116,48 +127,65 @@ const operationToneClasses: Readonly<
 function JournalPage() {
   const { data: session } = authClient.useSession()
   const isHydrated = useHydrated()
-  const { data: transactions } = useSuspenseQuery(
-    convexQuery(api.transactions.list, { limit: 150 })
+  const [cursor, setCursor] = useState<string | null>(null)
+  const [previousCursors, setPreviousCursors] = useState<Array<string | null>>(
+    []
   )
-  const { data: products } = useSuspenseQuery(
-    convexQuery(api.products.selectable, {})
+  const [editor, setEditor] = useState<EditorRequest | null>(null)
+  const { data: initialPage } = useSuspenseQuery(
+    convexQuery(api.transactions.listPage, {
+      paginationOpts: initialPagination,
+    })
   )
-  const { data: characters } = useSuspenseQuery(
-    convexQuery(api.characters.list, {})
-  )
-  const { data: bundles } = useSuspenseQuery(
-    convexQuery(api.recipes.listBundles, {})
-  )
-  const { data: orders } = useSuspenseQuery(convexQuery(api.orders.list, {}))
-  const { data: recipes } = useSuspenseQuery(convexQuery(api.recipes.list, {}))
+  const livePage = useConvexQuery(api.transactions.listPage, {
+    paginationOpts: { cursor, numItems: PAGE_SIZE },
+  })
+  const page = livePage ?? (cursor === null ? initialPage : undefined)
+  const isFetchingPage = livePage === undefined
+  const transactions = page?.page ?? []
   const isAdmin =
     isHydrated && (session?.user.role?.split(",").includes("admin") ?? false)
   const showActions = transactions.some(
     (transaction) => transaction.canManage || transaction.canDelete
   )
 
+  function showPreviousPage() {
+    const previousCursor = previousCursors.at(-1)
+    if (previousCursor === undefined) return
+    setPreviousCursors((current) => current.slice(0, -1))
+    setCursor(previousCursor)
+  }
+
+  function showNextPage() {
+    if (!page || page.isDone) return
+    setPreviousCursors((current) => [...current, cursor])
+    setCursor(page.continueCursor)
+  }
+
   return (
     <div className="animate-in duration-300 fade-in slide-in-from-bottom-1 motion-reduce:animate-none">
       <PageHeader
         action={
           <div className="flex flex-wrap gap-2">
-            <OperationDialog
-              bundles={bundles}
-              characters={characters}
-              products={products}
-            />
-            <OperationDialog
-              bundles={bundles}
-              characters={characters}
-              initialKind="production"
-              products={products}
-              trigger={
-                <Button size="lg" variant="outline">
-                  <Hammer aria-hidden="true" />
-                  Production
-                </Button>
+            <Button
+              onClick={() =>
+                setEditor({ initialKind: "exchange", type: "operation" })
               }
-            />
+              size="lg"
+            >
+              <Plus aria-hidden="true" />
+              Nouvel échange
+            </Button>
+            <Button
+              onClick={() =>
+                setEditor({ initialKind: "production", type: "operation" })
+              }
+              size="lg"
+              variant="outline"
+            >
+              <Hammer aria-hidden="true" />
+              Production
+            </Button>
           </div>
         }
         eyebrow="Journal de boutique"
@@ -166,12 +194,20 @@ function JournalPage() {
         Retrouvez les ventes, achats, services et productions déjà enregistrés.
       </PageHeader>
 
-      {transactions.length > 0 ? (
+      {!page ? (
+        <PageSkeleton />
+      ) : transactions.length > 0 ? (
         <>
-          <Card className="mt-7 hidden rounded-none border-x-0 border-y border-t-2 border-[#5b462b]/35 bg-transparent py-0 ring-0 md:flex">
+          <Card
+            aria-busy={isFetchingPage}
+            className={cn(
+              "mt-7 rounded-none border-x-0 border-y border-t-2 border-[#5b462b]/35 bg-transparent py-0 ring-0 transition-opacity max-md:border-0",
+              isFetchingPage && "opacity-70"
+            )}
+          >
             <CardContent className="px-0">
-              <Table>
-                <TableHeader>
+              <Table className="max-md:block">
+                <TableHeader className="max-md:hidden">
                   <TableRow className="border-b-[#5b462b]/50 bg-[#684f2d]/10 hover:bg-[#684f2d]/10">
                     <TableHead className="pl-4">Date</TableHead>
                     <TableHead>Opération</TableHead>
@@ -184,16 +220,27 @@ function JournalPage() {
                     ) : null}
                   </TableRow>
                 </TableHeader>
-                <TableBody>
+                <TableBody className="max-md:grid max-md:gap-3">
                   {transactions.map((transaction) => (
                     <JournalRow
-                      bundles={bundles}
-                      characters={characters}
-                      isAdmin={isAdmin}
                       key={transaction._id}
-                      orders={orders}
-                      products={products}
-                      recipes={recipes}
+                      onEdit={(selectedTransaction) =>
+                        setEditor(
+                          selectedTransaction.orderId
+                            ? {
+                                orderId: selectedTransaction.orderId,
+                                type: "order",
+                              }
+                            : {
+                                initialKind:
+                                  selectedTransaction.kind === "production"
+                                    ? "production"
+                                    : "exchange",
+                                transactionId: selectedTransaction._id,
+                                type: "operation",
+                              }
+                        )
+                      }
                       showActions={showActions}
                       transaction={transaction}
                     />
@@ -203,19 +250,32 @@ function JournalPage() {
             </CardContent>
           </Card>
 
-          <div className="mt-6 grid gap-3 md:hidden">
-            {transactions.map((transaction) => (
-              <JournalCard
-                bundles={bundles}
-                characters={characters}
-                isAdmin={isAdmin}
-                key={transaction._id}
-                orders={orders}
-                products={products}
-                recipes={recipes}
-                transaction={transaction}
-              />
-            ))}
+          <div className="mt-4 flex items-center justify-between gap-3 border-t border-[#5b462b]/20 pt-4">
+            <p className="text-xs tracking-wide text-muted-foreground">
+              Page {previousCursors.length + 1}
+            </p>
+            <div className="flex gap-2">
+              <Button
+                disabled={previousCursors.length === 0 || isFetchingPage}
+                onClick={showPreviousPage}
+                size="sm"
+                type="button"
+                variant="outline"
+              >
+                <ChevronLeft aria-hidden="true" />
+                Précédente
+              </Button>
+              <Button
+                disabled={page.isDone || isFetchingPage}
+                onClick={showNextPage}
+                size="sm"
+                type="button"
+                variant="outline"
+              >
+                Suivante
+                <ChevronRight aria-hidden="true" />
+              </Button>
+            </div>
           </div>
         </>
       ) : (
@@ -227,6 +287,14 @@ function JournalPage() {
           </AlertDescription>
         </Alert>
       )}
+
+      {editor ? (
+        <ActivityEditor
+          isAdmin={isAdmin}
+          onClose={() => setEditor(null)}
+          request={editor}
+        />
+      ) : null}
     </div>
   )
 }
@@ -256,54 +324,58 @@ function OperationPill({
 }
 
 function JournalRow({
-  bundles,
-  characters,
-  isAdmin,
-  orders,
-  products,
-  recipes,
+  onEdit,
   showActions,
   transaction,
 }: Readonly<{
-  bundles: readonly Bundle[]
-  characters: readonly Doc<"characters">[]
-  isAdmin: boolean
-  orders: readonly Order[]
-  products: readonly Doc<"products">[]
-  recipes: readonly Recipe[]
+  onEdit: (transaction: Transaction) => void
   showActions: boolean
   transaction: Transaction
 }>) {
   return (
-    <TableRow className="border-[#5b462b]/20 hover:bg-[#fffdeb]/40">
-      <TableCell className="pl-4 text-muted-foreground">
-        {formatDate(transaction.occurredAt)}
+    <TableRow className="border-[#5b462b]/20 hover:bg-[#fffdeb]/40 max-md:relative max-md:grid max-md:grid-cols-[minmax(0,1fr)_auto] max-md:gap-x-3 max-md:gap-y-1 max-md:border max-md:border-[#5b462b]/35 max-md:bg-[#fff8e7]/30 max-md:p-4 max-md:shadow-[2px_3px_0_rgba(84,63,37,0.05)]">
+      <TableCell className="pl-4 text-muted-foreground max-md:col-start-1 max-md:row-start-2 max-md:p-0 max-md:pt-3">
+        <time className="text-xs">{formatDate(transaction.occurredAt)}</time>
+        {transaction.orderId ? null : (
+          <span className="mt-1 block text-xs md:hidden">
+            {formatQuantity(transaction.quantity)}
+          </span>
+        )}
       </TableCell>
-      <TableCell>
+      <TableCell className="max-md:absolute max-md:top-4 max-md:right-4 max-md:p-0">
         <OperationPill kind={transaction.kind} />
       </TableCell>
-      <TableCell className="max-w-72">
-        <span className="block truncate font-semibold">
+      <TableCell className="max-w-72 max-md:col-span-2 max-md:col-start-1 max-md:row-start-1 max-md:max-w-none max-md:p-0 max-md:pr-24 max-md:whitespace-normal">
+        <span className="block truncate font-semibold max-md:font-display max-md:text-base">
           {transaction.productName}
         </span>
+        <span className="mt-0.5 block truncate text-xs text-muted-foreground md:hidden">
+          {transaction.actorName}
+          {transaction.counterparty && !transaction.orderId
+            ? ` · ${transaction.counterparty}`
+            : ""}
+        </span>
         {transaction.counterparty && !transaction.orderId ? (
-          <span className="block truncate text-xs text-muted-foreground">
+          <span className="block truncate text-xs text-muted-foreground max-md:hidden">
             {transaction.counterparty}
           </span>
         ) : null}
         {transaction.orderId ? null : (
-          <TransactionLines lines={transaction.lines} />
+          <TransactionLines
+            lineCount={transaction.lineCount ?? 0}
+            transactionId={transaction._id}
+          />
         )}
       </TableCell>
-      <TableCell className="max-w-40 truncate text-muted-foreground">
+      <TableCell className="max-w-40 truncate text-muted-foreground max-md:hidden">
         {transaction.actorName}
       </TableCell>
-      <TableCell className="text-right">
+      <TableCell className="text-right max-md:hidden">
         {transaction.orderId ? "—" : formatNumber(transaction.quantity)}
       </TableCell>
       <TableCell
         className={cn(
-          "pr-4 text-right font-semibold tabular-nums",
+          "pr-4 text-right font-semibold tabular-nums max-md:col-start-2 max-md:row-start-2 max-md:self-end max-md:p-0 max-md:pt-3 max-md:font-display max-md:text-lg",
           transaction.total >= 0 ? "text-[#456044]" : "text-[#8a3e2f]"
         )}
       >
@@ -311,17 +383,9 @@ function JournalRow({
         {formatSeptims(transaction.total)}
       </TableCell>
       {showActions ? (
-        <TableCell className="pr-2 text-right">
+        <TableCell className="pr-2 text-right max-md:col-span-2 max-md:col-start-1 max-md:row-start-3 max-md:p-0 max-md:pt-2">
           {transaction.canManage || transaction.canDelete ? (
-            <TransactionActions
-              bundles={bundles}
-              characters={characters}
-              isAdmin={isAdmin}
-              orders={orders}
-              products={products}
-              recipes={recipes}
-              transaction={transaction}
-            />
+            <TransactionActions onEdit={onEdit} transaction={transaction} />
           ) : null}
         </TableCell>
       ) : null}
@@ -329,151 +393,32 @@ function JournalRow({
   )
 }
 
-function JournalCard({
-  bundles,
-  characters,
-  isAdmin,
-  orders,
-  products,
-  recipes,
-  transaction,
-}: Readonly<{
-  bundles: readonly Bundle[]
-  characters: readonly Doc<"characters">[]
-  isAdmin: boolean
-  orders: readonly Order[]
-  products: readonly Doc<"products">[]
-  recipes: readonly Recipe[]
-  transaction: Transaction
-}>) {
-  return (
-    <Card className="rounded-none border-[#5b462b]/35 bg-[#fff8e7]/30 shadow-[2px_3px_0_rgba(84,63,37,0.05)] ring-0">
-      <CardHeader>
-        <CardTitle className="font-display text-base">
-          {transaction.productName}
-        </CardTitle>
-        <CardDescription>
-          {transaction.actorName}
-          {transaction.counterparty && !transaction.orderId
-            ? ` · ${transaction.counterparty}`
-            : ""}
-        </CardDescription>
-        <CardAction className="flex items-center gap-1">
-          <OperationPill kind={transaction.kind} />
-        </CardAction>
-      </CardHeader>
-      <CardContent className="grid gap-3 border-t border-border/60 pt-4">
-        <div className="flex items-end justify-between gap-3">
-          <div>
-            <time className="text-xs text-muted-foreground">
-              {formatDate(transaction.occurredAt)}
-            </time>
-            {transaction.orderId ? null : (
-              <p className="mt-1 text-xs text-muted-foreground">
-                {formatQuantity(transaction.quantity)}
-              </p>
-            )}
-          </div>
-          <p
-            className={cn(
-              "font-display text-lg",
-              transaction.total >= 0 ? "text-[#456044]" : "text-[#8a3e2f]"
-            )}
-          >
-            {transaction.total > 0 ? "+" : ""}
-            {formatSeptims(transaction.total)}
-          </p>
-        </div>
-        {transaction.orderId ? null : (
-          <TransactionLines lines={transaction.lines} />
-        )}
-        {transaction.canManage || transaction.canDelete ? (
-          <TransactionActions
-            bundles={bundles}
-            characters={characters}
-            isAdmin={isAdmin}
-            orders={orders}
-            products={products}
-            recipes={recipes}
-            transaction={transaction}
-          />
-        ) : null}
-      </CardContent>
-    </Card>
-  )
-}
-
 function TransactionActions({
-  bundles,
-  characters,
-  isAdmin,
-  orders,
-  products,
-  recipes,
+  onEdit,
   transaction,
 }: Readonly<{
-  bundles: readonly Bundle[]
-  characters: readonly Doc<"characters">[]
-  isAdmin: boolean
-  orders: readonly Order[]
-  products: readonly Doc<"products">[]
-  recipes: readonly Recipe[]
+  onEdit: (transaction: Transaction) => void
   transaction: Transaction
 }>) {
-  const linkedOrder = transaction.orderId
-    ? orders.find((order) => order._id === transaction.orderId)
-    : undefined
-  const canEdit =
-    transaction.canManage &&
-    isEditableTransaction(transaction) &&
-    (!transaction.orderId || linkedOrder !== undefined)
+  const canEdit = transaction.canManage && isEditableTransaction(transaction)
 
   return (
     <div className="flex flex-nowrap justify-end gap-1">
       {canEdit ? (
         <Tooltip>
-          {linkedOrder ? (
-            <OrderDialog
-              characters={characters}
-              isAdmin={isAdmin}
-              order={linkedOrder}
-              products={products}
-              recipes={recipes}
-              trigger={
-                <TooltipTrigger asChild>
-                  <Button
-                    className="md:size-6 md:px-0"
-                    size="sm"
-                    type="button"
-                    variant="ghost"
-                  >
-                    <Pencil aria-hidden="true" />
-                    <span className="md:sr-only">Modifier</span>
-                  </Button>
-                </TooltipTrigger>
-              }
-            />
-          ) : (
-            <OperationDialog
-              bundles={bundles}
-              characters={characters}
-              products={products}
-              transaction={transaction}
-              trigger={
-                <TooltipTrigger asChild>
-                  <Button
-                    className="md:size-6 md:px-0"
-                    size="sm"
-                    type="button"
-                    variant="ghost"
-                  >
-                    <Pencil aria-hidden="true" />
-                    <span className="md:sr-only">Modifier</span>
-                  </Button>
-                </TooltipTrigger>
-              }
-            />
-          )}
+          <TooltipTrigger asChild>
+            <Button
+              aria-label={`Modifier ${operationLabels[transaction.kind]} — ${transaction.productName}`}
+              className="md:size-6 md:px-0"
+              onClick={() => onEdit(transaction)}
+              size="sm"
+              type="button"
+              variant="ghost"
+            >
+              <Pencil aria-hidden="true" />
+              <span className="md:sr-only">Modifier</span>
+            </Button>
+          </TooltipTrigger>
           <TooltipContent>Modifier</TooltipContent>
         </Tooltip>
       ) : null}
@@ -565,10 +510,14 @@ function TransactionDeletion({
 }
 
 function TransactionLines({
-  lines,
-}: Readonly<{ lines: Transaction["lines"] }>) {
+  lineCount,
+  transactionId,
+}: Readonly<{
+  lineCount: number
+  transactionId: Id<"transactions">
+}>) {
   const [open, setOpen] = useState(false)
-  if (lines.length === 0) return null
+  if (lineCount === 0) return null
 
   return (
     <Collapsible onOpenChange={setOpen} open={open}>
@@ -578,36 +527,219 @@ function TransactionLines({
           type="button"
           variant="link"
         >
-          {lines.length} {lines.length === 1 ? "ligne" : "lignes"}
+          {lineCount} {lineCount === 1 ? "ligne" : "lignes"}
           <ChevronDown
             aria-hidden="true"
             className={cn("transition-transform", open && "rotate-180")}
           />
         </Button>
       </CollapsibleTrigger>
-      <CollapsibleContent className="pt-1">
-        <ul className="grid gap-1 border-l border-primary/30 pl-2 text-xs text-muted-foreground">
-          {lines.map((line) => (
-            <li className="flex flex-wrap justify-between gap-2" key={line._id}>
-              <span className="flex flex-wrap items-center gap-1.5">
-                {line.direction ? (
-                  <Badge
-                    className="px-1.5 py-0 text-[0.58rem]"
-                    variant="outline"
-                  >
-                    {line.direction === "incoming" ? "Acheté" : "Vendu"}
-                  </Badge>
-                ) : null}
-                {line.productName} · {formatQuantity(line.quantity)}
-              </span>
-              <span className="font-semibold text-foreground tabular-nums">
-                {line.direction === "incoming" ? "−" : ""}
-                {formatSeptims(line.total)}
-              </span>
-            </li>
-          ))}
-        </ul>
+      <CollapsibleContent className="pt-1 max-md:col-span-2">
+        {open ? <TransactionLineContent transactionId={transactionId} /> : null}
       </CollapsibleContent>
     </Collapsible>
+  )
+}
+
+function TransactionLineContent({
+  transactionId,
+}: Readonly<{ transactionId: Id<"transactions"> }>) {
+  const details = useConvexQuery(api.transactions.getDetails, {
+    transactionId,
+  })
+  if (details === undefined) {
+    return (
+      <span className="flex items-center gap-1 text-xs text-muted-foreground">
+        <LoaderCircle
+          aria-hidden="true"
+          className="animate-spin motion-reduce:animate-none"
+        />
+        Chargement…
+      </span>
+    )
+  }
+  if (!details) {
+    return (
+      <p className="text-xs text-destructive">
+        Impossible de charger les lignes.
+      </p>
+    )
+  }
+
+  return (
+    <ul className="grid gap-1 border-l border-primary/30 pl-2 text-xs text-muted-foreground">
+      {details.lines.map((line) => (
+        <li className="flex flex-wrap justify-between gap-2" key={line._id}>
+          <span className="flex flex-wrap items-center gap-1.5">
+            {line.direction ? (
+              <Badge className="px-1.5 py-0 text-[0.58rem]" variant="outline">
+                {line.direction === "incoming" ? "Acheté" : "Vendu"}
+              </Badge>
+            ) : null}
+            {line.productName} · {formatQuantity(line.quantity)}
+          </span>
+          <span className="font-semibold text-foreground tabular-nums">
+            {line.direction === "incoming" ? "−" : ""}
+            {formatSeptims(line.total)}
+          </span>
+        </li>
+      ))}
+    </ul>
+  )
+}
+
+function ActivityEditor({
+  isAdmin,
+  onClose,
+  request,
+}: Readonly<{
+  isAdmin: boolean
+  onClose: () => void
+  request: EditorRequest
+}>) {
+  return request.type === "order" ? (
+    <OrderActivityEditor
+      isAdmin={isAdmin}
+      onClose={onClose}
+      request={request}
+    />
+  ) : (
+    <OperationActivityEditor onClose={onClose} request={request} />
+  )
+}
+
+function OperationActivityEditor({
+  onClose,
+  request,
+}: Readonly<{
+  onClose: () => void
+  request: Extract<EditorRequest, { type: "operation" }>
+}>) {
+  const products = useConvexQuery(api.products.selectable)
+  const characters = useConvexQuery(api.characters.list)
+  const bundles = useConvexQuery(api.recipes.listBundles)
+  const transaction = useConvexQuery(
+    api.transactions.getDetails,
+    request.transactionId ? { transactionId: request.transactionId } : "skip"
+  )
+
+  const isLoading =
+    products === undefined ||
+    characters === undefined ||
+    bundles === undefined ||
+    (request.transactionId !== undefined && transaction === undefined)
+  const missingEntity =
+    !isLoading && request.transactionId !== undefined && transaction === null
+
+  if (missingEntity || isLoading) {
+    return <EditorLoadingDialog failed={missingEntity} onClose={onClose} />
+  }
+  return (
+    <OperationDialog
+      bundles={bundles}
+      characters={characters}
+      initialKind={request.initialKind}
+      key={request.transactionId ?? request.initialKind}
+      onOpenChange={(nextOpen) => {
+        if (!nextOpen) onClose()
+      }}
+      open
+      products={products}
+      transaction={transaction ?? undefined}
+      trigger={null}
+    />
+  )
+}
+
+function OrderActivityEditor({
+  isAdmin,
+  onClose,
+  request,
+}: Readonly<{
+  isAdmin: boolean
+  onClose: () => void
+  request: Extract<EditorRequest, { type: "order" }>
+}>) {
+  const products = useConvexQuery(api.products.selectable)
+  const characters = useConvexQuery(api.characters.list)
+  const recipes = useConvexQuery(api.recipes.list)
+  const order = useConvexQuery(api.orders.getById, {
+    orderId: request.orderId,
+  })
+  const isLoading =
+    products === undefined ||
+    characters === undefined ||
+    recipes === undefined ||
+    order === undefined
+  const missingEntity = !isLoading && order === null
+
+  if (missingEntity || isLoading) {
+    return <EditorLoadingDialog failed={missingEntity} onClose={onClose} />
+  }
+  if (!order) {
+    return <EditorLoadingDialog failed onClose={onClose} />
+  }
+
+  return (
+    <OrderDialog
+      characters={characters}
+      isAdmin={isAdmin}
+      key={request.orderId}
+      onOpenChange={(nextOpen) => {
+        if (!nextOpen) onClose()
+      }}
+      open
+      order={order}
+      products={products}
+      recipes={recipes}
+      trigger={null}
+    />
+  )
+}
+
+function EditorLoadingDialog({
+  failed,
+  onClose,
+}: Readonly<{
+  failed: boolean
+  onClose: () => void
+}>) {
+  return (
+    <Dialog
+      onOpenChange={(nextOpen) => {
+        if (!nextOpen) onClose()
+      }}
+      open
+    >
+      <DialogContent className="rounded-[0.2rem] border-[#6a5436] bg-[#eee1c7] ring-0 sm:max-w-xl">
+        <DialogHeader>
+          <p className="text-[0.66rem] font-bold tracking-[0.2em] text-primary uppercase">
+            Activité de la boutique
+          </p>
+          <DialogTitle className="font-display text-2xl">
+            {failed ? "Modification indisponible" : "Préparation du registre"}
+          </DialogTitle>
+          <DialogDescription>
+            {failed
+              ? "Les informations de cette opération n’ont pas pu être retrouvées."
+              : "Les références nécessaires sont chargées à la demande."}
+          </DialogDescription>
+        </DialogHeader>
+        {failed ? (
+          <Alert variant="destructive">
+            <AlertTitle>Chargement impossible</AlertTitle>
+            <AlertDescription>
+              Fermez cette fenêtre puis réessayez.
+            </AlertDescription>
+          </Alert>
+        ) : (
+          <div className="grid gap-3" aria-label="Chargement" role="status">
+            <Skeleton className="h-10 w-full" />
+            <Skeleton className="h-24 w-full" />
+            <Skeleton className="h-10 w-2/3" />
+          </div>
+        )}
+      </DialogContent>
+    </Dialog>
   )
 }

@@ -1,7 +1,8 @@
 import { ConvexError, v } from "convex/values"
+import { paginationOptsValidator } from "convex/server"
 
 import { type Doc, type Id } from "./_generated/dataModel"
-import { mutation, query } from "./_generated/server"
+import { mutation, query, type QueryCtx } from "./_generated/server"
 import { requireUser } from "./lib/auth"
 import {
   assertFiniteRange,
@@ -90,6 +91,85 @@ function cleanOptionalText(value: string | undefined): string | undefined {
   return cleaned
 }
 
+async function withTransactionDetails(
+  ctx: QueryCtx,
+  user: AuthenticatedUser,
+  transaction: Doc<"transactions">
+) {
+  const [lines, movements] = await Promise.all([
+    transaction.lineCount
+      ? ctx.db
+          .query("transactionLines")
+          .withIndex("by_transaction", (index) =>
+            index.eq("transactionId", transaction._id)
+          )
+          .collect()
+      : [],
+    ctx.db
+      .query("stockMovements")
+      .withIndex("by_transaction", (index) =>
+        index.eq("transactionId", transaction._id)
+      )
+      .collect(),
+  ])
+  const deltas = new Map<string, number>()
+  for (const movement of movements) {
+    deltas.set(
+      movement.productId,
+      (deltas.get(movement.productId) ?? 0) + movement.delta
+    )
+  }
+  const canManage = canManageTransaction(user, transaction)
+  return {
+    ...transaction,
+    canManage,
+    canDelete: canManage,
+    lines,
+    stockDeltas: [...deltas].map(([productId, delta]) => ({
+      delta,
+      productId: productId as Id<"products">,
+    })),
+  }
+}
+
+export const listPage = query({
+  args: {
+    paginationOpts: paginationOptsValidator,
+  },
+  handler: async (ctx, args) => {
+    const user = await requireUser(ctx)
+    const result = await ctx.db
+      .query("transactions")
+      .withIndex("by_occurred_at")
+      .order("desc")
+      .paginate(args.paginationOpts)
+
+    return {
+      ...result,
+      page: result.page.map((transaction) => {
+        const canManage = canManageTransaction(user, transaction)
+        return {
+          ...transaction,
+          canManage,
+          canDelete: canManage,
+        }
+      }),
+    }
+  },
+})
+
+export const getDetails = query({
+  args: {
+    transactionId: v.id("transactions"),
+  },
+  handler: async (ctx, args) => {
+    const user = await requireUser(ctx)
+    const transaction = await ctx.db.get(args.transactionId)
+    if (!transaction) return null
+    return withTransactionDetails(ctx, user, transaction)
+  },
+})
+
 export const list = query({
   args: {
     limit: v.optional(v.number()),
@@ -103,41 +183,9 @@ export const list = query({
       .order("desc")
       .take(limit)
     return Promise.all(
-      transactions.map(async (transaction) => {
-        const [lines, movements] = await Promise.all([
-          transaction.lineCount
-            ? ctx.db
-                .query("transactionLines")
-                .withIndex("by_transaction", (index) =>
-                  index.eq("transactionId", transaction._id)
-                )
-                .collect()
-            : [],
-          ctx.db
-            .query("stockMovements")
-            .withIndex("by_transaction", (index) =>
-              index.eq("transactionId", transaction._id)
-            )
-            .collect(),
-        ])
-        const deltas = new Map<string, number>()
-        for (const movement of movements) {
-          deltas.set(
-            movement.productId,
-            (deltas.get(movement.productId) ?? 0) + movement.delta
-          )
-        }
-        return {
-          ...transaction,
-          canManage: canManageTransaction(user, transaction),
-          canDelete: canManageTransaction(user, transaction),
-          lines,
-          stockDeltas: [...deltas].map(([productId, delta]) => ({
-            delta,
-            productId: productId as Id<"products">,
-          })),
-        }
-      })
+      transactions.map((transaction) =>
+        withTransactionDetails(ctx, user, transaction)
+      )
     )
   },
 })

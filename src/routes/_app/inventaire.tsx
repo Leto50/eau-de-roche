@@ -14,13 +14,7 @@ import {
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import {
-  Card,
-  CardAction,
-  CardContent,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card"
+import { Card, CardContent } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import {
   Table,
@@ -152,48 +146,36 @@ function InventoryPage() {
       </p>
 
       {filteredProducts.length > 0 ? (
-        <>
-          <Card className="mt-4 hidden rounded-none border-x-0 border-y border-t-2 border-[#5b462b]/35 bg-transparent py-0 ring-0 md:flex">
-            <CardContent className="px-0">
-              <Table>
-                <TableHeader>
-                  <TableRow className="border-b-[#5b462b]/50 bg-[#684f2d]/10 hover:bg-[#684f2d]/10">
-                    <TableHead className="pl-4">Référence</TableHead>
-                    <TableHead>Famille</TableHead>
-                    <TableHead className="text-right">Stock</TableHead>
-                    <TableHead className="text-right">Seuil</TableHead>
-                    <TableHead className="text-right">Prix</TableHead>
-                    <TableHead className="pr-4 text-right">État</TableHead>
-                    {isAdmin ? (
-                      <TableHead className="w-10">
-                        <span className="sr-only">Modifier</span>
-                      </TableHead>
-                    ) : null}
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {filteredProducts.map((product) => (
-                    <InventoryRow
-                      isAdmin={isAdmin}
-                      key={product._id}
-                      product={product}
-                    />
-                  ))}
-                </TableBody>
-              </Table>
-            </CardContent>
-          </Card>
-
-          <div className="mt-4 grid gap-3 md:hidden">
-            {filteredProducts.map((product) => (
-              <InventoryCard
-                isAdmin={isAdmin}
-                key={product._id}
-                product={product}
-              />
-            ))}
-          </div>
-        </>
+        <Card className="mt-4 rounded-none border-x-0 border-y border-t-2 border-[#5b462b]/35 bg-transparent py-0 ring-0 max-md:border-0">
+          <CardContent className="px-0">
+            <Table className="max-md:block">
+              <TableHeader className="max-md:hidden">
+                <TableRow className="border-b-[#5b462b]/50 bg-[#684f2d]/10 hover:bg-[#684f2d]/10">
+                  <TableHead className="pl-4">Référence</TableHead>
+                  <TableHead>Famille</TableHead>
+                  <TableHead className="text-right">Stock</TableHead>
+                  <TableHead className="text-right">Seuil</TableHead>
+                  <TableHead className="text-right">Prix</TableHead>
+                  <TableHead className="pr-4 text-right">État</TableHead>
+                  {isAdmin ? (
+                    <TableHead className="w-10">
+                      <span className="sr-only">Modifier</span>
+                    </TableHead>
+                  ) : null}
+                </TableRow>
+              </TableHeader>
+              <TableBody className="max-md:grid max-md:gap-3">
+                {filteredProducts.map((product) => (
+                  <InventoryRow
+                    isAdmin={isAdmin}
+                    key={product._id}
+                    product={product}
+                  />
+                ))}
+              </TableBody>
+            </Table>
+          </CardContent>
+        </Card>
       ) : (
         <Alert className="mt-4 border-[#6a4f2e]/30 bg-card/35">
           <Search aria-hidden="true" />
@@ -246,25 +228,41 @@ function InventoryRow({
   product,
 }: Readonly<{ isAdmin: boolean; product: Doc<"products"> }>) {
   return (
-    <TableRow className="border-[#5b462b]/20 hover:bg-[#fffdeb]/40">
-      <TableCell className="max-w-80 truncate pl-4 font-semibold">
+    <TableRow className="border-[#5b462b]/20 hover:bg-[#fffdeb]/40 max-md:relative max-md:grid max-md:grid-cols-3 max-md:gap-x-3 max-md:gap-y-1 max-md:border max-md:border-[#5b462b]/35 max-md:bg-[#fff8e7]/30 max-md:p-4 max-md:shadow-[2px_3px_0_rgba(84,63,37,0.05)]">
+      <TableCell className="max-w-80 truncate pl-4 font-semibold max-md:col-span-2 max-md:col-start-1 max-md:row-start-1 max-md:max-w-none max-md:p-0 max-md:font-display max-md:text-base">
         {product.name}
       </TableCell>
-      <TableCell className="text-muted-foreground">
-        {categoryLabels[product.category]}
+      <TableCell className="text-muted-foreground max-md:col-span-2 max-md:col-start-1 max-md:row-start-2 max-md:p-0">
+        <span className="max-md:hidden">
+          {categoryLabels[product.category]}
+        </span>
+        <Badge className="w-fit md:hidden" variant="secondary">
+          {categoryLabels[product.category]}
+        </Badge>
       </TableCell>
-      <TableCell className="text-right font-display text-base">
+      <TableCell className="text-right font-display text-base max-md:col-start-1 max-md:row-start-3 max-md:mt-3 max-md:p-0 max-md:text-left max-md:text-lg">
+        <span className="mb-1 block font-sans text-xs text-muted-foreground md:hidden">
+          Stock
+        </span>
         {product.tracksStock ? formatNumber(product.currentStock) : "—"}
       </TableCell>
-      <TableCell className="text-right text-muted-foreground">
+      <TableCell className="text-right text-muted-foreground max-md:col-start-2 max-md:row-start-3 max-md:mt-3 max-md:p-0 max-md:text-left max-md:font-display max-md:text-lg max-md:text-foreground">
+        <span className="mb-1 block font-sans text-xs text-muted-foreground md:hidden">
+          Seuil
+        </span>
         {product.tracksStock ? formatNumber(product.minimumStock) : "—"}
       </TableCell>
-      <TableCell className="text-right">{productPrice(product)}</TableCell>
-      <TableCell className="pr-4 text-right">
+      <TableCell className="text-right max-md:col-start-3 max-md:row-start-3 max-md:mt-3 max-md:p-0 max-md:text-left max-md:font-semibold">
+        <span className="mb-1 block text-xs font-normal text-muted-foreground md:hidden">
+          Prix
+        </span>
+        {productPrice(product)}
+      </TableCell>
+      <TableCell className="pr-4 text-right max-md:col-start-3 max-md:row-start-1 max-md:p-0 max-md:pr-9">
         <ProductState product={product} />
       </TableCell>
       {isAdmin ? (
-        <TableCell>
+        <TableCell className="max-md:absolute max-md:top-2.5 max-md:right-2 max-md:p-0">
           <ProductDialog
             product={product}
             trigger={
@@ -280,60 +278,5 @@ function InventoryRow({
         </TableCell>
       ) : null}
     </TableRow>
-  )
-}
-
-function InventoryCard({
-  isAdmin,
-  product,
-}: Readonly<{ isAdmin: boolean; product: Doc<"products"> }>) {
-  return (
-    <Card className="rounded-none border-[#5b462b]/35 bg-[#fff8e7]/30 shadow-[2px_3px_0_rgba(84,63,37,0.05)] ring-0">
-      <CardHeader>
-        <CardTitle className="font-display text-base">{product.name}</CardTitle>
-        <Badge className="w-fit" variant="secondary">
-          {categoryLabels[product.category]}
-        </Badge>
-        <CardAction>
-          <div className="flex items-center gap-1">
-            <ProductState product={product} />
-            {isAdmin ? (
-              <ProductDialog
-                product={product}
-                trigger={
-                  <Button
-                    aria-label={`Modifier ${product.name}`}
-                    size="icon"
-                    variant="ghost"
-                  >
-                    <Pencil aria-hidden="true" />
-                  </Button>
-                }
-              />
-            ) : null}
-          </div>
-        </CardAction>
-      </CardHeader>
-      <CardContent>
-        <dl className="grid grid-cols-3 gap-3 text-sm">
-          <div>
-            <dt className="text-xs text-muted-foreground">Stock</dt>
-            <dd className="mt-1 font-display text-lg">
-              {product.tracksStock ? formatNumber(product.currentStock) : "—"}
-            </dd>
-          </div>
-          <div>
-            <dt className="text-xs text-muted-foreground">Seuil</dt>
-            <dd className="mt-1 font-display text-lg">
-              {product.tracksStock ? formatNumber(product.minimumStock) : "—"}
-            </dd>
-          </div>
-          <div>
-            <dt className="text-xs text-muted-foreground">Prix</dt>
-            <dd className="mt-1 font-semibold">{productPrice(product)}</dd>
-          </div>
-        </dl>
-      </CardContent>
-    </Card>
   )
 }
