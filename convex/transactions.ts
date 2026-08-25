@@ -138,11 +138,18 @@ export const listPage = query({
   },
   handler: async (ctx, args) => {
     const user = await requireUser(ctx)
+    const paginationOpts = {
+      ...args.paginationOpts,
+      numItems: Math.min(
+        100,
+        Math.max(1, Math.round(args.paginationOpts.numItems))
+      ),
+    }
     const result = await ctx.db
       .query("transactions")
       .withIndex("by_occurred_at")
       .order("desc")
-      .paginate(args.paginationOpts)
+      .paginate(paginationOpts)
 
     return {
       ...result,
