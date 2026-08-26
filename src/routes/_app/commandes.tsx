@@ -4,6 +4,7 @@ import { createFileRoute } from "@tanstack/react-router"
 import { useMutation } from "convex/react"
 import { type FunctionReturnType } from "convex/server"
 import {
+  AlertTriangle,
   CalendarClock,
   Check,
   Coins,
@@ -62,17 +63,22 @@ import { getUserFacingErrorMessage } from "@/lib/errors"
 import {
   formatDate,
   formatNumber,
+  formatOrderStatus,
   formatSeptims,
   formatUnitPrice,
-  orderStatusLabels,
 } from "@/lib/format"
 import { calculateOrderPreparation } from "@/lib/order-preparation"
 import { cn } from "@/lib/utils"
+import {
+  orderIsOverdue,
+  orderNeedsAttention,
+} from "../../../shared/order-attention"
 
 type Order = FunctionReturnType<typeof api.orders.list>[number]
 type Recipe = FunctionReturnType<typeof api.recipes.list>[number]
 type OrderStatus = Order["status"]
 type OrderKind = Order["kind"]
+type OrderView = "attention" | OrderKind
 
 const statusOptions: readonly OrderStatus[] = [
   "open",
@@ -83,7 +89,7 @@ const statusOptions: readonly OrderStatus[] = [
 
 const orderToneClasses: Readonly<Record<OrderStatus, string>> = {
   cancelled: "border-t-[#8a4233]",
-  delivered: "border-t-[#81613d] opacity-75",
+  delivered: "border-t-[#81613d]",
   open: "border-t-[#81613d]",
   ready: "border-t-[#4f6a4e]",
 }
@@ -103,6 +109,19 @@ function isOrderKind(value: string): value is OrderKind {
   return value === "client" || value === "supplier"
 }
 
+function isOrderView(value: string): value is OrderView {
+  return value === "attention" || isOrderKind(value)
+}
+
+function validateOrderSearch(search: Record<string, unknown>) {
+  return {
+    view:
+      typeof search.view === "string" && isOrderView(search.view)
+        ? search.view
+        : ("client" as const),
+  }
+}
+
 export const Route = createFileRoute("/_app/commandes")({
   component: OrdersPage,
   errorComponent: PageError,
@@ -117,9 +136,12 @@ export const Route = createFileRoute("/_app/commandes")({
     ])
   },
   pendingComponent: PageSkeleton,
+  validateSearch: validateOrderSearch,
 })
 
 function OrdersPage() {
+  const { view } = Route.useSearch()
+  const navigate = Route.useNavigate()
   const { data: session } = authClient.useSession()
   const isHydrated = useHydrated()
   const { data: orders } = useSuspenseQuery(convexQuery(api.orders.list, {}))
@@ -131,11 +153,33 @@ function OrdersPage() {
   )
   const { data: recipes } = useSuspenseQuery(convexQuery(api.recipes.list, {}))
   const updateStatus = useMutation(api.orders.updateStatus)
-  const [kind, setKind] = useState<OrderKind>("client")
-  const visibleOrders = orders.filter((order) => order.kind === kind)
-  const openCount = visibleOrders.filter(
-    (order) => order.status === "open"
-  ).length
+  const attentionOrders = orders.filter(orderNeedsAttention)
+  const kind = view === "supplier" ? "supplier" : "client"
+  const selectedOrders =
+    view === "attention"
+      ? attentionOrders
+      : orders.filter((order) => order.kind === view)
+  const visibleOrders = [...selectedOrders].sort((left, right) => {
+    const leftNeedsAttention = orderNeedsAttention(left)
+    const rightNeedsAttention = orderNeedsAttention(right)
+    const attentionOrder =
+      Number(rightNeedsAttention) - Number(leftNeedsAttention)
+    if (attentionOrder !== 0) return attentionOrder
+
+    if (leftNeedsAttention) {
+      return (
+        Number(orderIsOverdue(right)) - Number(orderIsOverdue(left)) ||
+        (left.dueAt ?? Number.MAX_SAFE_INTEGER) -
+          (right.dueAt ?? Number.MAX_SAFE_INTEGER)
+      )
+    }
+
+    return right._creationTime - left._creationTime
+  })
+  const attentionCount =
+    view === "attention"
+      ? visibleOrders.length
+      : visibleOrders.filter(orderNeedsAttention).length
   const isAdmin =
     isHydrated && (session?.user.role?.split(",").includes("admin") ?? false)
 
@@ -154,8 +198,9 @@ function OrdersPage() {
     }
   }
 
-  function handleKindChange(value: string) {
-    if (isOrderKind(value)) setKind(value)
+  function handleViewChange(value: string) {
+    if (!isOrderView(value)) return
+    void navigate({ replace: true, search: { view: value } })
   }
 
   return (
@@ -177,8 +222,11 @@ function OrdersPage() {
       </PageHeader>
 
       <div className="mt-7 flex flex-wrap items-center justify-between gap-4 border-y border-border/70 py-3">
-        <Tabs onValueChange={handleKindChange} value={kind}>
+        <Tabs onValueChange={handleViewChange} value={view}>
           <TabsList aria-label="Type de commande" className="bg-[#6e5330]/8">
+            <TabsTrigger value="attention">
+              <AlertTriangle aria-hidden="true" />À traiter
+            </TabsTrigger>
             <TabsTrigger value="client">
               <PackageCheck aria-hidden="true" />
               Clients
@@ -191,11 +239,9 @@ function OrdersPage() {
         </Tabs>
         <p className="text-sm text-muted-foreground">
           <strong className="font-display text-lg text-foreground">
-            {openCount}
+            {attentionCount}
           </strong>{" "}
-          {openCount === 1
-            ? "commande encore ouverte"
-            : "commandes encore ouvertes"}
+          {attentionCount === 1 ? "commande à traiter" : "commandes à traiter"}
         </p>
       </div>
 
@@ -222,7 +268,9 @@ function OrdersPage() {
           )}
           <AlertTitle>Aucune commande</AlertTitle>
           <AlertDescription>
-            Les nouvelles commandes apparaîtront ici après leur création.
+            {view === "attention"
+              ? "Aucune préparation, réception ou paiement ne demande votre attention."
+              : "Les nouvelles commandes apparaîtront ici après leur création."}
           </AlertDescription>
         </Alert>
       )}
@@ -257,12 +305,15 @@ function OrderEntry({
 }>) {
   const total = orderTotal(order)
   const preparation = calculateOrderPreparation(order.lines, products, recipes)
+  const overdue = orderIsOverdue(order)
 
   return (
     <Card
       className={cn(
         "rounded-none border-t-[3px] border-[#5b462b]/35 bg-[#fff8e7]/30 shadow-[3px_4px_0_rgba(76,56,32,0.05)] ring-0",
-        orderToneClasses[order.status]
+        orderToneClasses[order.status],
+        !orderNeedsAttention(order) && "opacity-75",
+        overdue && "border-t-[#9a3f31]"
       )}
     >
       <CardHeader>
@@ -280,6 +331,14 @@ function OrderEntry({
               <CalendarClock aria-hidden="true" className="size-3.5" />
               {order.dueAt ? formatDate(order.dueAt) : order.dueLabel}
             </span>
+            {overdue ? (
+              <Badge
+                className="mt-2 border-[#9a3f31]/35 bg-[#9a3f31]/[0.08] text-[#8a3429]"
+                variant="outline"
+              >
+                <AlertTriangle aria-hidden="true" /> En retard
+              </Badge>
+            ) : null}
           </CardDescription>
         ) : null}
         <CardAction className="flex items-center gap-1">
@@ -293,7 +352,7 @@ function OrderEntry({
             <SelectContent>
               {statusOptions.map((status) => (
                 <SelectItem key={status} value={status}>
-                  {orderStatusLabels[status]}
+                  {formatOrderStatus(status, order.kind)}
                 </SelectItem>
               ))}
             </SelectContent>
@@ -359,7 +418,7 @@ function OrderEntry({
         <div className="flex flex-wrap items-center gap-2">
           <Badge className={statusBadgeClasses[order.status]} variant="outline">
             {order.status === "delivered" ? <Check aria-hidden="true" /> : null}
-            {orderStatusLabels[order.status]}
+            {formatOrderStatus(order.status, order.kind)}
           </Badge>
           <OrderProcessingDialog characters={characters} order={order} />
         </div>
@@ -431,7 +490,7 @@ function OrderProcessingDialog({
     setOpen(nextOpen)
   }
 
-  if (order.lines.some((line) => line.unitPrice === undefined)) {
+  if (!processed && order.lines.some((line) => line.unitPrice === undefined)) {
     return <Badge variant="outline">Prix à renseigner</Badge>
   }
 

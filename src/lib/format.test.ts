@@ -2,10 +2,20 @@ import { describe, expect, it } from "vitest"
 
 import {
   formatDecimalSeptims,
+  formatOrderStatus,
   formatQuantity,
   formatSeptims,
   formatUnitPrice,
 } from "./format"
+
+describe("formatOrderStatus", () => {
+  it("adapte le vocabulaire au sens de la commande", () => {
+    expect(formatOrderStatus("open", "client")).toBe("À préparer")
+    expect(formatOrderStatus("delivered", "client")).toBe("Livrée")
+    expect(formatOrderStatus("open", "supplier")).toBe("À recevoir")
+    expect(formatOrderStatus("delivered", "supplier")).toBe("Reçue")
+  })
+})
 
 describe("formatQuantity", () => {
   it("accorde unité au singulier", () => {

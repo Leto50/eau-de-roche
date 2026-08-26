@@ -38,6 +38,13 @@ import { authClient } from "@/lib/auth-client"
 import { cn } from "@/lib/utils"
 
 type CategoryFilter = "all" | ProductCategory
+type StockFilter = "low"
+
+interface InventoryRouteSearch {
+  category?: CategoryFilter
+  q?: string
+  stock?: StockFilter
+}
 
 const categoryFilters: readonly {
   label: string
@@ -53,6 +60,24 @@ function isCategoryFilter(value: string): value is CategoryFilter {
   return categoryFilters.some((filter) => filter.value === value)
 }
 
+function validateInventorySearch(
+  search: Record<string, unknown>
+): InventoryRouteSearch {
+  const category =
+    typeof search.category === "string" && isCategoryFilter(search.category)
+      ? search.category
+      : undefined
+  const q =
+    typeof search.q === "string" && search.q.trim()
+      ? search.q.slice(0, 100)
+      : undefined
+  return {
+    ...(category && category !== "all" ? { category } : {}),
+    ...(q ? { q } : {}),
+    ...(search.stock === "low" ? { stock: "low" as const } : {}),
+  }
+}
+
 export const Route = createFileRoute("/_app/inventaire")({
   component: InventoryPage,
   errorComponent: PageError,
@@ -65,9 +90,12 @@ export const Route = createFileRoute("/_app/inventaire")({
     ])
   },
   pendingComponent: PageSkeleton,
+  validateSearch: validateInventorySearch,
 })
 
 function InventoryPage() {
+  const filters = Route.useSearch()
+  const navigate = Route.useNavigate()
   const { data: session } = authClient.useSession()
   const isHydrated = useHydrated()
   const { data: products } = useSuspenseQuery(
@@ -78,8 +106,9 @@ function InventoryPage() {
   )
   const isAdmin =
     isHydrated && (session?.user.role?.split(",").includes("admin") ?? false)
-  const [category, setCategory] = useState<CategoryFilter>("all")
-  const [search, setSearch] = useState("")
+  const category = filters.category ?? "all"
+  const search = filters.q ?? ""
+  const lowOnly = filters.stock === "low"
   const [recipeProductId, setRecipeProductId] = useState<string>()
   const recipeProduct = products.find(
     (product) => product._id === recipeProductId
@@ -90,12 +119,22 @@ function InventoryPage() {
     (product) =>
       (category === "all" ||
         canonicalProductCategory(product.category) === category) &&
+      (!lowOnly ||
+        (product.tracksStock &&
+          product.currentStock <= product.minimumStock)) &&
       (!normalizedSearch ||
         product.name.toLocaleLowerCase("fr").includes(normalizedSearch))
   )
 
   function handleCategoryChange(value: string) {
-    if (isCategoryFilter(value)) setCategory(value)
+    if (!isCategoryFilter(value)) return
+    void navigate({
+      replace: true,
+      search: (previous) => ({
+        ...previous,
+        category: value === "all" ? undefined : value,
+      }),
+    })
   }
 
   return (
@@ -127,32 +166,61 @@ function InventoryPage() {
           <Input
             aria-label="Rechercher un produit"
             className="h-9 bg-background/50 pl-9"
-            onChange={(event) => setSearch(event.target.value)}
+            onChange={(event) => {
+              const value = event.target.value
+              void navigate({
+                replace: true,
+                search: (previous) => ({
+                  ...previous,
+                  q: value || undefined,
+                }),
+              })
+            }}
             placeholder="Rechercher un produit…"
             type="search"
             value={search}
           />
         </div>
-        <Tabs onValueChange={handleCategoryChange} value={category}>
-          <TabsList
-            aria-label="Catégories de l'inventaire"
-            className="h-auto flex-wrap justify-start bg-[#6e5330]/8"
+        <div className="flex flex-wrap items-center gap-2">
+          <Button
+            aria-pressed={lowOnly}
+            onClick={() =>
+              void navigate({
+                replace: true,
+                search: (previous) => ({
+                  ...previous,
+                  stock: lowOnly ? undefined : "low",
+                }),
+              })
+            }
+            size="sm"
+            type="button"
+            variant={lowOnly ? "secondary" : "outline"}
           >
-            <SlidersHorizontal
-              aria-hidden="true"
-              className="mx-1 size-4 shrink-0 text-muted-foreground"
-            />
-            {categoryFilters.map((filter) => (
-              <TabsTrigger
-                className="min-h-7 px-2.5 data-active:bg-primary data-active:text-primary-foreground"
-                key={filter.value}
-                value={filter.value}
-              >
-                {filter.label}
-              </TabsTrigger>
-            ))}
-          </TabsList>
-        </Tabs>
+            <CircleAlert aria-hidden="true" />
+            Stocks faibles
+          </Button>
+          <Tabs onValueChange={handleCategoryChange} value={category}>
+            <TabsList
+              aria-label="Catégories de l'inventaire"
+              className="h-auto flex-wrap justify-start bg-[#6e5330]/8"
+            >
+              <SlidersHorizontal
+                aria-hidden="true"
+                className="mx-1 size-4 shrink-0 text-muted-foreground"
+              />
+              {categoryFilters.map((filter) => (
+                <TabsTrigger
+                  className="min-h-7 px-2.5 data-active:bg-primary data-active:text-primary-foreground"
+                  key={filter.value}
+                  value={filter.value}
+                >
+                  {filter.label}
+                </TabsTrigger>
+              ))}
+            </TabsList>
+          </Tabs>
+        </div>
       </section>
 
       <p className="mt-4 text-xs text-muted-foreground">
@@ -199,7 +267,7 @@ function InventoryPage() {
           <Search aria-hidden="true" />
           <AlertTitle>Aucun produit trouvé</AlertTitle>
           <AlertDescription>
-            Modifiez la recherche ou choisissez une autre catégorie.
+            Modifiez la recherche, la catégorie ou le filtre de stock.
           </AlertDescription>
         </Alert>
       )}
