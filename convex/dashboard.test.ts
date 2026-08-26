@@ -178,4 +178,75 @@ describe("dashboard.overview", () => {
     expect(overview.weeklyTransactionCount).toBe(1)
     expect(overview.weeklyBalance).toBe(25)
   })
+
+  it("sépare le total des stocks faibles de l’aperçu et compte le travail restant", async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date("2026-08-26T12:00:00.000Z"))
+    const backend = createTestBackend()
+    const member = await asAuthenticatedMember(backend)
+
+    await backend.run(async (ctx) => {
+      for (let index = 0; index < 8; index += 1) {
+        await ctx.db.insert("products", {
+          active: true,
+          category: "ingredient",
+          currentStock: index,
+          minimumStock: 10,
+          name: `Ingrédient faible ${index}`,
+          normalizedName: `ingredient faible ${index}`,
+          tracksStock: true,
+        })
+      }
+
+      const transactionId = await ctx.db.insert("transactions", {
+        actorName: "Comptable test",
+        kind: "purchase",
+        occurredAt: Date.now(),
+        productName: "Commande reçue",
+        quantity: 1,
+        source: "web",
+        total: -10,
+      })
+      await ctx.db.insert("orders", {
+        contactName: "Client en retard",
+        dueAt: Date.parse("2026-08-20T12:00:00.000Z"),
+        kind: "client",
+        status: "open",
+      })
+      await ctx.db.insert("orders", {
+        contactName: "Client livré non payé",
+        dueAt: Date.parse("2026-08-21T12:00:00.000Z"),
+        kind: "client",
+        status: "delivered",
+      })
+      await ctx.db.insert("orders", {
+        contactName: "Fournisseur attendu",
+        dueAt: Date.parse("2026-08-28T12:00:00.000Z"),
+        kind: "supplier",
+        status: "ready",
+      })
+      await ctx.db.insert("orders", {
+        contactName: "Fournisseur reçu",
+        kind: "supplier",
+        status: "delivered",
+        transactionId,
+      })
+      await ctx.db.insert("orders", {
+        contactName: "Commande annulée",
+        kind: "client",
+        status: "cancelled",
+      })
+    })
+
+    const overview = await member.query(api.dashboard.overview, {})
+
+    expect(overview.lowStock).toHaveLength(6)
+    expect(overview.lowStockCount).toBe(8)
+    expect(overview.orderAttention).toEqual({
+      client: 2,
+      overdue: 2,
+      supplier: 1,
+      total: 3,
+    })
+  })
 })

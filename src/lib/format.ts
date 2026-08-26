@@ -75,3 +75,19 @@ export const orderStatusLabels = {
   open: "À préparer",
   ready: "Prête",
 } as const
+
+const supplierOrderStatusLabels = {
+  cancelled: "Annulée",
+  delivered: "Reçue",
+  open: "À recevoir",
+  ready: "Disponible",
+} as const
+
+export function formatOrderStatus(
+  status: keyof typeof orderStatusLabels,
+  kind: "client" | "supplier"
+): string {
+  return kind === "supplier"
+    ? supplierOrderStatusLabels[status]
+    : orderStatusLabels[status]
+}

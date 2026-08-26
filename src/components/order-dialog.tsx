@@ -63,7 +63,7 @@ import { Textarea } from "@/components/ui/textarea"
 import { api } from "../../convex/_generated/api"
 import { type Doc } from "../../convex/_generated/dataModel"
 import { getUserFacingErrorMessage } from "@/lib/errors"
-import { formatSeptims, orderStatusLabels } from "@/lib/format"
+import { formatOrderStatus, formatSeptims } from "@/lib/format"
 import { calculateOrderPreparation } from "@/lib/order-preparation"
 import {
   priceDraftFromValue,
@@ -572,7 +572,7 @@ export function OrderDialog({
                 <SelectContent>
                   {orderStatuses.map((entry) => (
                     <SelectItem key={entry} value={entry}>
-                      {orderStatusLabels[entry]}
+                      {formatOrderStatus(entry, kind)}
                     </SelectItem>
                   ))}
                 </SelectContent>

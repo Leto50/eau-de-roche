@@ -1,4 +1,5 @@
 import { query } from "./_generated/server"
+import { summarizeOrderAttention } from "../shared/order-attention"
 import { requireUser } from "./lib/auth"
 import { calculateRecipeCost } from "./lib/recipeCost"
 import { startOfUtcWeek } from "./lib/time"
@@ -13,7 +14,7 @@ export const overview = query({
       recipes,
       recipeIngredients,
       recentTransactionCandidates,
-      openOrders,
+      orders,
     ] = await Promise.all([
       ctx.db.query("products").collect(),
       ctx.db.query("recipes").collect(),
@@ -23,10 +24,7 @@ export const overview = query({
         .withIndex("by_occurred_at")
         .order("desc")
         .take(24),
-      ctx.db
-        .query("orders")
-        .withIndex("by_status", (index) => index.eq("status", "open"))
-        .collect(),
+      ctx.db.query("orders").collect(),
     ])
     const recentTransactions = recentTransactionCandidates.slice(0, 8)
     const productsById = new Map(
@@ -47,14 +45,14 @@ export const overview = query({
     const activeStock = products.filter(
       (product) => product.active && product.tracksStock
     )
-    const lowStock = activeStock
+    const lowStockProducts = activeStock
       .filter((product) => product.currentStock <= product.minimumStock)
       .sort(
         (left, right) =>
           left.currentStock / Math.max(left.minimumStock, 1) -
           right.currentStock / Math.max(right.minimumStock, 1)
       )
-      .slice(0, 6)
+    const lowStock = lowStockProducts.slice(0, 6)
     const stockValue = activeStock.reduce(
       (total, product) =>
         total +
@@ -78,7 +76,8 @@ export const overview = query({
 
     return {
       lowStock,
-      openOrders: openOrders.length,
+      lowStockCount: lowStockProducts.length,
+      orderAttention: summarizeOrderAttention(orders, now),
       recentTransactions,
       stockValue,
       weeklyBalance,
