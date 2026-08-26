@@ -9,6 +9,7 @@ import { BundleArchivesDialog, BundleDialog } from "@/components/bundle-dialog"
 import { PageError } from "@/components/page-error"
 import { PageHeader } from "@/components/page-header"
 import { PageSkeleton } from "@/components/page-skeleton"
+import { ProductDialog } from "@/components/product-dialog"
 import { RecipeArchivesDialog, RecipeDialog } from "@/components/recipe-dialog"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
@@ -33,7 +34,8 @@ import { api } from "../../../convex/_generated/api"
 import { type Doc } from "../../../convex/_generated/dataModel"
 import { useHydrated } from "@/hooks/use-hydrated"
 import { authClient } from "@/lib/auth-client"
-import { formatNumber, formatSeptims } from "@/lib/format"
+import { formatDecimalSeptims, formatNumber, formatSeptims } from "@/lib/format"
+import { recipeFamilies } from "@/lib/recipe-families"
 
 type Recipe = FunctionReturnType<typeof api.recipes.list>[number]
 type Bundle = FunctionReturnType<typeof api.recipes.listBundles>[number]
@@ -50,6 +52,9 @@ export const Route = createFileRoute("/_app/recettes")({
       context.queryClient.ensureQueryData(
         convexQuery(api.products.selectable, {})
       ),
+      context.queryClient.ensureQueryData(
+        convexQuery(api.recipes.listLinkedProductIds, {})
+      ),
     ])
   },
   pendingComponent: PageSkeleton,
@@ -65,12 +70,15 @@ function RecipesPage() {
   const { data: products } = useSuspenseQuery(
     convexQuery(api.products.selectable, {})
   )
+  const { data: linkedProductIds } = useSuspenseQuery(
+    convexQuery(api.recipes.listLinkedProductIds, {})
+  )
   const isAdmin =
     isHydrated && (session?.user.role?.split(",").includes("admin") ?? false)
   const [search, setSearch] = useState("")
   const [family, setFamily] = useState("all")
-  const families = [...new Set(recipes.map((recipe) => recipe.family))].sort(
-    (left, right) => left.localeCompare(right, "fr")
+  const families = recipeFamilies.filter((entry) =>
+    recipes.some((recipe) => recipe.family === entry)
   )
   const normalizedSearch = search.trim().toLocaleLowerCase("fr")
   const visibleRecipes = recipes.filter(
@@ -80,7 +88,6 @@ function RecipesPage() {
         recipe.name.toLocaleLowerCase("fr").includes(normalizedSearch) ||
         recipe.effect?.toLocaleLowerCase("fr").includes(normalizedSearch))
   )
-
   return (
     <div className="animate-in duration-300 fade-in slide-in-from-bottom-1 motion-reduce:animate-none">
       <PageHeader eyebrow="Production" title="Recettes & lots">
@@ -137,7 +144,10 @@ function RecipesPage() {
             {isAdmin ? (
               <>
                 <RecipeArchivesDialog />
-                <RecipeDialog products={products} />
+                <RecipeDialog
+                  linkedProductIds={linkedProductIds}
+                  products={products}
+                />
               </>
             ) : null}
             <BookMarked aria-hidden="true" className="size-5 text-primary" />
@@ -149,6 +159,7 @@ function RecipesPage() {
               <RecipeEntry
                 isAdmin={isAdmin}
                 key={recipe._id}
+                linkedProductIds={linkedProductIds}
                 products={products}
                 recipe={recipe}
               />
@@ -206,10 +217,12 @@ function RecipesPage() {
 
 function RecipeEntry({
   isAdmin,
+  linkedProductIds,
   products,
   recipe,
 }: Readonly<{
   isAdmin: boolean
+  linkedProductIds: readonly Doc<"products">["_id"][]
   products: readonly Doc<"products">[]
   recipe: Recipe
 }>) {
@@ -223,9 +236,16 @@ function RecipeEntry({
           {recipe.name}
         </CardTitle>
         <CardAction className="flex items-center gap-1 text-sm font-semibold">
-          {recipe.cost !== undefined ? formatSeptims(recipe.cost) : null}
+          {recipe.cost === undefined ? (
+            <Badge variant="outline">Coût incomplet</Badge>
+          ) : (
+            <span title="Coût matière calculé">
+              {formatDecimalSeptims(recipe.cost)}
+            </span>
+          )}
           {isAdmin ? (
             <RecipeDialog
+              linkedProductIds={linkedProductIds}
               products={products}
               recipe={recipe}
               trigger={
@@ -253,16 +273,46 @@ function RecipeEntry({
         ) : null}
 
         <div className="mt-4 flex flex-wrap gap-1.5">
-          {recipe.ingredients.map((ingredient) => (
-            <Badge
-              className="border-[#614b2c]/20 bg-[#6b5939]/[0.07] text-[#5a4b37]"
-              key={ingredient._id}
-              variant="outline"
-            >
-              <strong>{formatNumber(ingredient.quantity)}</strong>{" "}
-              {ingredient.ingredientName}
-            </Badge>
-          ))}
+          {recipe.ingredients.map((ingredient) => {
+            const product = ingredient.productId
+              ? products.find((entry) => entry._id === ingredient.productId)
+              : undefined
+            const content = (
+              <>
+                <strong>{formatNumber(ingredient.quantity)}</strong>{" "}
+                {ingredient.ingredientName}
+              </>
+            )
+
+            return isAdmin && product ? (
+              <ProductDialog
+                key={ingredient._id}
+                product={product}
+                trigger={
+                  <Badge
+                    asChild
+                    className="cursor-pointer touch-manipulation border-[#614b2c]/20 bg-[#6b5939]/[0.07] text-[#5a4b37] hover:border-primary/35 hover:bg-primary/[0.09] hover:text-[#443522] active:bg-primary/[0.14]"
+                    variant="outline"
+                  >
+                    <button
+                      aria-label={`Modifier l’ingrédient ${ingredient.ingredientName}`}
+                      type="button"
+                    >
+                      {content}
+                    </button>
+                  </Badge>
+                }
+              />
+            ) : (
+              <Badge
+                className="border-[#614b2c]/20 bg-[#6b5939]/[0.07] text-[#5a4b37]"
+                key={ingredient._id}
+                variant="outline"
+              >
+                {content}
+              </Badge>
+            )
+          })}
         </div>
       </CardContent>
     </Card>

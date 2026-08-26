@@ -6,6 +6,8 @@ import { type FunctionReturnType } from "convex/server"
 import {
   CalendarClock,
   Check,
+  Coins,
+  LoaderCircle,
   MessageSquareText,
   PackageCheck,
   Pencil,
@@ -15,10 +17,21 @@ import { useState } from "react"
 import { toast } from "sonner"
 
 import { OrderDialog } from "@/components/order-dialog"
+import { OrderPreparationDetails } from "@/components/order-preparation-details"
 import { PageError } from "@/components/page-error"
 import { PageHeader } from "@/components/page-header"
 import { PageSkeleton } from "@/components/page-skeleton"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
+import {
+  AlertDialog,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import {
@@ -30,6 +43,8 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card"
+import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
 import {
   Select,
   SelectContent,
@@ -43,6 +58,7 @@ import { api } from "../../../convex/_generated/api"
 import { type Doc } from "../../../convex/_generated/dataModel"
 import { useHydrated } from "@/hooks/use-hydrated"
 import { authClient } from "@/lib/auth-client"
+import { getUserFacingErrorMessage } from "@/lib/errors"
 import {
   formatDate,
   formatNumber,
@@ -50,9 +66,11 @@ import {
   formatUnitPrice,
   orderStatusLabels,
 } from "@/lib/format"
+import { calculateOrderPreparation } from "@/lib/order-preparation"
 import { cn } from "@/lib/utils"
 
 type Order = FunctionReturnType<typeof api.orders.list>[number]
+type Recipe = FunctionReturnType<typeof api.recipes.list>[number]
 type OrderStatus = Order["status"]
 type OrderKind = Order["kind"]
 
@@ -94,6 +112,8 @@ export const Route = createFileRoute("/_app/commandes")({
       context.queryClient.ensureQueryData(
         convexQuery(api.products.selectable, {})
       ),
+      context.queryClient.ensureQueryData(convexQuery(api.characters.list, {})),
+      context.queryClient.ensureQueryData(convexQuery(api.recipes.list, {})),
     ])
   },
   pendingComponent: PageSkeleton,
@@ -106,6 +126,10 @@ function OrdersPage() {
   const { data: products } = useSuspenseQuery(
     convexQuery(api.products.selectable, {})
   )
+  const { data: characters } = useSuspenseQuery(
+    convexQuery(api.characters.list, {})
+  )
+  const { data: recipes } = useSuspenseQuery(convexQuery(api.recipes.list, {}))
   const updateStatus = useMutation(api.orders.updateStatus)
   const [kind, setKind] = useState<OrderKind>("client")
   const visibleOrders = orders.filter((order) => order.kind === kind)
@@ -122,9 +146,10 @@ function OrdersPage() {
       toast.success("L'état de la commande a été mis à jour.")
     } catch (error) {
       toast.error(
-        error instanceof Error
-          ? error.message
-          : "Impossible de modifier cette commande."
+        getUserFacingErrorMessage(
+          error,
+          "Impossible de modifier cette commande."
+        )
       )
     }
   }
@@ -138,9 +163,11 @@ function OrdersPage() {
       <PageHeader
         action={
           <OrderDialog
+            characters={characters}
             initialKind={kind}
             isAdmin={isAdmin}
             products={products}
+            recipes={recipes}
           />
         }
         eyebrow="Suivi des commandes"
@@ -176,11 +203,13 @@ function OrdersPage() {
         <div className="mt-6 grid gap-5 xl:grid-cols-2">
           {visibleOrders.map((order) => (
             <OrderEntry
+              characters={characters}
               isAdmin={isAdmin}
               key={order._id}
               onStatusChange={(value) => handleStatusChange(order, value)}
               order={order}
               products={products}
+              recipes={recipes}
             />
           ))}
         </div>
@@ -206,23 +235,28 @@ function orderTotal(order: Order): number | undefined {
   const lineTotals = order.lines
     .map((line) => line.total)
     .filter((value): value is number => value !== undefined)
-  return lineTotals.length > 0
+  return lineTotals.length === order.lines.length && lineTotals.length > 0
     ? lineTotals.reduce((total, value) => total + value, 0)
     : undefined
 }
 
 function OrderEntry({
+  characters,
   isAdmin,
   onStatusChange,
   order,
   products,
+  recipes,
 }: Readonly<{
+  characters: readonly Doc<"characters">[]
   isAdmin: boolean
   onStatusChange: (value: string) => void
   order: Order
   products: readonly Doc<"products">[]
+  recipes: readonly Recipe[]
 }>) {
   const total = orderTotal(order)
+  const preparation = calculateOrderPreparation(order.lines, products, recipes)
 
   return (
     <Card
@@ -265,9 +299,11 @@ function OrderEntry({
             </SelectContent>
           </Select>
           <OrderDialog
+            characters={characters}
             isAdmin={isAdmin}
             order={order}
             products={products}
+            recipes={recipes}
             trigger={
               <Button
                 aria-label={`Modifier la commande de ${order.contactName}`}
@@ -305,6 +341,10 @@ function OrderEntry({
           </TableBody>
         </Table>
 
+        {order.kind === "client" ? (
+          <OrderPreparationDetails preparation={preparation} />
+        ) : null}
+
         {order.notes ? (
           <Alert className="border-primary/25 bg-primary/[0.03]">
             <MessageSquareText aria-hidden="true" />
@@ -315,14 +355,17 @@ function OrderEntry({
         ) : null}
       </CardContent>
 
-      <CardFooter className="justify-between gap-3 border-t border-border/60">
-        <Badge className={statusBadgeClasses[order.status]} variant="outline">
-          {order.status === "delivered" ? <Check aria-hidden="true" /> : null}
-          {orderStatusLabels[order.status]}
-        </Badge>
+      <CardFooter className="flex-wrap justify-between gap-3 border-t border-border/60">
+        <div className="flex flex-wrap items-center gap-2">
+          <Badge className={statusBadgeClasses[order.status]} variant="outline">
+            {order.status === "delivered" ? <Check aria-hidden="true" /> : null}
+            {orderStatusLabels[order.status]}
+          </Badge>
+          <OrderProcessingDialog characters={characters} order={order} />
+        </div>
         <div className="text-right">
           <p className="text-[0.65rem] tracking-wider text-muted-foreground uppercase">
-            Total
+            Total convenu
           </p>
           <p className="font-display text-xl">
             {total === undefined ? "À convenir" : formatSeptims(total)}
@@ -330,5 +373,208 @@ function OrderEntry({
         </div>
       </CardFooter>
     </Card>
+  )
+}
+
+function todayInputValue(): string {
+  const today = new Date()
+  const year = today.getFullYear()
+  const month = String(today.getMonth() + 1).padStart(2, "0")
+  const day = String(today.getDate()).padStart(2, "0")
+  return `${year}-${month}-${day}`
+}
+
+function dateInputFromTimestamp(timestamp: number): string {
+  const date = new Date(timestamp)
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, "0")
+  const day = String(date.getDate()).padStart(2, "0")
+  return `${year}-${month}-${day}`
+}
+
+function dateInputToTimestamp(value: string): number | undefined {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value)
+  if (!match) return undefined
+  const timestamp = new Date(
+    Number(match[1]),
+    Number(match[2]) - 1,
+    Number(match[3]),
+    12
+  ).getTime()
+  return Number.isFinite(timestamp) ? timestamp : undefined
+}
+
+function OrderProcessingDialog({
+  characters,
+  order,
+}: Readonly<{
+  characters: readonly Doc<"characters">[]
+  order: Order
+}>) {
+  const processOrder = useMutation(api.orders.process)
+  const [open, setOpen] = useState(false)
+  const [characterId, setCharacterId] = useState("")
+  const [occurredOn, setOccurredOn] = useState(todayInputValue)
+  const [isSubmitting, setIsSubmitting] = useState(false)
+  const clientOrder = order.kind === "client"
+  const processed = Boolean(order.transactionId && order.processedAt)
+
+  function handleOpenChange(nextOpen: boolean) {
+    if (nextOpen) {
+      setCharacterId(order.linkedTransaction?.actorCharacterId ?? "")
+      setOccurredOn(
+        order.processedAt
+          ? dateInputFromTimestamp(order.processedAt)
+          : todayInputValue()
+      )
+    }
+    setOpen(nextOpen)
+  }
+
+  if (order.lines.some((line) => line.unitPrice === undefined)) {
+    return <Badge variant="outline">Prix à renseigner</Badge>
+  }
+
+  async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    const character = characters.find((entry) => entry._id === characterId)
+    const occurredAt = dateInputToTimestamp(occurredOn)
+    if (!character || !occurredAt) {
+      toast.error("Choisissez un personnage et une date valide.")
+      return
+    }
+
+    setIsSubmitting(true)
+    try {
+      await processOrder({
+        characterId: character._id,
+        occurredAt,
+        orderId: order._id,
+      })
+      toast.success(
+        processed
+          ? clientOrder
+            ? "Paiement corrigé."
+            : "Réception corrigée."
+          : clientOrder
+            ? "Paiement ajouté au journal."
+            : "Réception ajoutée au journal et au stock."
+      )
+      setOpen(false)
+    } catch (error) {
+      toast.error(
+        getUserFacingErrorMessage(
+          error,
+          "Impossible de traiter cette commande."
+        )
+      )
+    } finally {
+      setIsSubmitting(false)
+    }
+  }
+
+  return (
+    <AlertDialog onOpenChange={handleOpenChange} open={open}>
+      <AlertDialogTrigger asChild>
+        <Button
+          aria-label={
+            processed
+              ? `${clientOrder ? "Corriger le paiement" : "Corriger la réception"} de ${order.contactName}`
+              : undefined
+          }
+          size="sm"
+          type="button"
+          variant={processed ? "secondary" : "outline"}
+        >
+          {processed ? (
+            <Pencil aria-hidden="true" />
+          ) : clientOrder ? (
+            <Coins aria-hidden="true" />
+          ) : (
+            <PackageCheck aria-hidden="true" />
+          )}
+          {processed && order.processedAt
+            ? `${clientOrder ? "Payée" : "Reçue"} le ${formatDate(order.processedAt)}`
+            : clientOrder
+              ? "Enregistrer le paiement"
+              : "Réceptionner"}
+        </Button>
+      </AlertDialogTrigger>
+      <AlertDialogContent className="border-[#6a5436] bg-[#eee1c7]" size="lg">
+        <form className="grid gap-5" onSubmit={handleSubmit}>
+          <AlertDialogHeader>
+            <AlertDialogTitle className="font-display text-2xl">
+              {processed
+                ? clientOrder
+                  ? "Corriger le paiement"
+                  : "Corriger la réception"
+                : clientOrder
+                  ? "Enregistrer le paiement"
+                  : "Réceptionner la commande"}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {processed
+                ? "La transaction existante sera corrigée sans créer de doublon."
+                : "Une transaction liée sera inscrite au journal. Sa date peut être différente de la date prévue de la commande."}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+
+          <div className="grid gap-4 sm:grid-cols-[minmax(0,1.15fr)_minmax(11rem,0.85fr)]">
+            <div className="grid min-w-0 gap-2">
+              <Label htmlFor={`order-character-${order._id}`}>Personnage</Label>
+              <Select onValueChange={setCharacterId} value={characterId}>
+                <SelectTrigger
+                  className="w-full min-w-0"
+                  id={`order-character-${order._id}`}
+                >
+                  <SelectValue placeholder="Qui traite la commande ?" />
+                </SelectTrigger>
+                <SelectContent>
+                  {characters.map((character) => (
+                    <SelectItem key={character._id} value={character._id}>
+                      {character.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="grid min-w-0 gap-2">
+              <Label htmlFor={`order-date-${order._id}`}>
+                {clientOrder ? "Date du paiement" : "Date de réception"}
+              </Label>
+              <Input
+                className="min-w-0"
+                id={`order-date-${order._id}`}
+                onChange={(event) => setOccurredOn(event.target.value)}
+                required
+                type="date"
+                value={occurredOn}
+              />
+            </div>
+          </div>
+
+          <AlertDialogFooter>
+            <AlertDialogCancel type="button">Retour</AlertDialogCancel>
+            <Button disabled={isSubmitting} type="submit">
+              {isSubmitting ? (
+                <LoaderCircle
+                  aria-hidden="true"
+                  className="animate-spin motion-reduce:animate-none"
+                />
+              ) : clientOrder ? (
+                <Coins aria-hidden="true" />
+              ) : (
+                <PackageCheck aria-hidden="true" />
+              )}
+              {processed
+                ? "Enregistrer la correction"
+                : clientOrder
+                  ? "Valider le paiement"
+                  : "Valider la réception"}
+            </Button>
+          </AlertDialogFooter>
+        </form>
+      </AlertDialogContent>
+    </AlertDialog>
   )
 }

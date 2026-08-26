@@ -1,13 +1,20 @@
 import { ConvexError, v } from "convex/values"
+import { paginationOptsValidator } from "convex/server"
 
 import { type Doc, type Id } from "./_generated/dataModel"
-import { mutation, query, type MutationCtx } from "./_generated/server"
+import { mutation, query, type QueryCtx } from "./_generated/server"
 import { requireUser } from "./lib/auth"
 import {
   assertFiniteRange,
   assertWholeNumberRange,
   roundSeptimsDown,
 } from "./lib/numbers"
+import {
+  exchangeLineValidator,
+  loadStockBeforeTransaction,
+  prepareExchange,
+} from "./lib/exchange"
+import { orderTransactionLabel, withOrderTotal } from "./lib/order"
 import { stockOperationKind } from "./lib/validators"
 
 const MAX_TEXT_LENGTH = 500
@@ -62,8 +69,9 @@ function requireTransactionManager(
 
 function isEditableKind(
   kind: Doc<"transactions">["kind"]
-): kind is "production" | "purchase" | "sale" | "service" {
+): kind is "exchange" | "production" | "purchase" | "sale" | "service" {
   return (
+    kind === "exchange" ||
     kind === "production" ||
     kind === "purchase" ||
     kind === "sale" ||
@@ -83,6 +91,108 @@ function cleanOptionalText(value: string | undefined): string | undefined {
   return cleaned
 }
 
+async function requireCraftableProduct(
+  ctx: QueryCtx,
+  productId: Id<"products">
+): Promise<void> {
+  const recipes = await ctx.db
+    .query("recipes")
+    .withIndex("by_product", (index) => index.eq("productId", productId))
+    .collect()
+  if (recipes.some((recipe) => recipe.active !== false)) return
+
+  throw new ConvexError({
+    code: "INVALID_OPERATION",
+    message: "Ce produit ne possède aucune recette active.",
+  })
+}
+
+async function withTransactionDetails(
+  ctx: QueryCtx,
+  user: AuthenticatedUser,
+  transaction: Doc<"transactions">
+) {
+  const [lines, movements] = await Promise.all([
+    transaction.lineCount
+      ? ctx.db
+          .query("transactionLines")
+          .withIndex("by_transaction", (index) =>
+            index.eq("transactionId", transaction._id)
+          )
+          .collect()
+      : [],
+    ctx.db
+      .query("stockMovements")
+      .withIndex("by_transaction", (index) =>
+        index.eq("transactionId", transaction._id)
+      )
+      .collect(),
+  ])
+  const deltas = new Map<string, number>()
+  for (const movement of movements) {
+    deltas.set(
+      movement.productId,
+      (deltas.get(movement.productId) ?? 0) + movement.delta
+    )
+  }
+  const canManage = canManageTransaction(user, transaction)
+  return {
+    ...transaction,
+    canManage,
+    canDelete: canManage,
+    lines,
+    stockDeltas: [...deltas].map(([productId, delta]) => ({
+      delta,
+      productId: productId as Id<"products">,
+    })),
+  }
+}
+
+export const listPage = query({
+  args: {
+    paginationOpts: paginationOptsValidator,
+  },
+  handler: async (ctx, args) => {
+    const user = await requireUser(ctx)
+    const paginationOpts = {
+      ...args.paginationOpts,
+      numItems: Math.min(
+        100,
+        Math.max(1, Math.round(args.paginationOpts.numItems))
+      ),
+    }
+    const result = await ctx.db
+      .query("transactions")
+      .withIndex("by_occurred_at")
+      .order("desc")
+      .paginate(paginationOpts)
+
+    return {
+      ...result,
+      page: result.page.map((transaction) => {
+        const canManage = canManageTransaction(user, transaction)
+        return {
+          ...transaction,
+          canManage,
+          canDelete: canManage,
+        }
+      }),
+    }
+  },
+})
+
+export const getDetails = query({
+  args: {
+    transactionId: v.id("transactions"),
+  },
+  handler: async (ctx, args) => {
+    const user = await requireUser(ctx)
+    const transaction = await ctx.db.get(args.transactionId)
+    if (!transaction) return null
+    return withTransactionDetails(ctx, user, transaction)
+  },
+})
+
 export const list = query({
   args: {
     limit: v.optional(v.number()),
@@ -96,42 +206,102 @@ export const list = query({
       .order("desc")
       .take(limit)
     return Promise.all(
-      transactions.map(async (transaction) => {
-        const [lines, movements] = await Promise.all([
-          transaction.lineCount
-            ? ctx.db
-                .query("transactionLines")
-                .withIndex("by_transaction", (index) =>
-                  index.eq("transactionId", transaction._id)
-                )
-                .collect()
-            : [],
-          ctx.db
-            .query("stockMovements")
-            .withIndex("by_transaction", (index) =>
-              index.eq("transactionId", transaction._id)
-            )
-            .collect(),
-        ])
-        const deltas = new Map<string, number>()
-        for (const movement of movements) {
-          deltas.set(
-            movement.productId,
-            (deltas.get(movement.productId) ?? 0) + movement.delta
-          )
-        }
-        return {
-          ...transaction,
-          canManage: canManageTransaction(user, transaction),
-          canDelete: canManageTransaction(user, transaction),
-          lines,
-          stockDeltas: [...deltas].map(([productId, delta]) => ({
-            delta,
-            productId: productId as Id<"products">,
-          })),
-        }
-      })
+      transactions.map((transaction) =>
+        withTransactionDetails(ctx, user, transaction)
+      )
     )
+  },
+})
+
+export const recordExchange = mutation({
+  args: {
+    characterId: v.id("characters"),
+    comment: v.optional(v.string()),
+    counterparty: v.optional(v.string()),
+    discount: v.optional(v.number()),
+    lines: v.array(exchangeLineValidator),
+    occurredAt: v.number(),
+  },
+  handler: async (ctx, args) => {
+    const user = await requireUser(ctx)
+    const character = await ctx.db.get(args.characterId)
+    if (!character?.active) {
+      throw new ConvexError({
+        code: "NOT_FOUND",
+        message: "Personnage introuvable ou archivé.",
+      })
+    }
+    assertFiniteRange(args.occurredAt, 0, Date.now() + 86_400_000, "La date")
+    const discount = args.discount ?? 0
+    const prepared = await prepareExchange(ctx, args.lines, { discount })
+    const comment = cleanOptionalText(args.comment)
+    const counterparty = cleanOptionalText(args.counterparty)
+    const firstLine = prepared.lines[0]
+    const transactionId = await ctx.db.insert("transactions", {
+      actorCharacterId: character._id,
+      actorName: character.name,
+      actorUserId: String(user._id),
+      ...(comment ? { comment } : {}),
+      ...(counterparty ? { counterparty } : {}),
+      ...(discount > 0 ? { discount } : {}),
+      incomingTotal: prepared.incomingTotal,
+      kind: prepared.kind,
+      lineCount: prepared.lines.length,
+      occurredAt: args.occurredAt,
+      outgoingTotal: prepared.outgoingTotal,
+      productName:
+        prepared.lines.length === 1 && firstLine
+          ? firstLine.productName
+          : `${prepared.lines.length} références`,
+      quantity: prepared.lines.reduce((sum, line) => sum + line.quantity, 0),
+      source: "web",
+      total: prepared.total,
+      ...(prepared.lines.length === 1 && firstLine
+        ? { unitPrice: firstLine.unitPrice }
+        : {}),
+    })
+
+    for (const line of prepared.lines) {
+      await ctx.db.insert("transactionLines", {
+        ...(line.bundleId ? { bundleId: line.bundleId } : {}),
+        direction: line.direction,
+        kind: line.kind,
+        ...(line.productId ? { productId: line.productId } : {}),
+        productName: line.productName,
+        quantity: line.quantity,
+        total: line.total,
+        transactionId,
+        unitPrice: line.unitPrice,
+      })
+    }
+    for (const { delta, product } of prepared.deltas.values()) {
+      const resultingStock = product.currentStock + delta
+      await ctx.db.patch(product._id, { currentStock: resultingStock })
+      await ctx.db.insert("stockMovements", {
+        delta,
+        occurredAt: args.occurredAt,
+        previousStock: product.currentStock,
+        productId: product._id,
+        reason: prepared.kind,
+        resultingStock,
+        transactionId,
+      })
+    }
+    await ctx.db.insert("auditLogs", {
+      action: "exchange.recorded",
+      actorUserId: String(user._id),
+      createdAt: Date.now(),
+      detail: `${prepared.lines.length}:${prepared.total}`,
+      entityId: transactionId,
+      entityType: "transaction",
+    })
+
+    return {
+      incomingTotal: prepared.incomingTotal,
+      outgoingTotal: prepared.outgoingTotal,
+      total: prepared.total,
+      transactionId,
+    }
   },
 })
 
@@ -411,6 +581,16 @@ export const record = mutation({
         message: "Personnage introuvable ou archivé.",
       })
     }
+    if (args.kind === "production" && product.craftable === false) {
+      throw new ConvexError({
+        code: "INVALID_OPERATION",
+        message:
+          "Cette potion est trouvée uniquement et ne peut pas être fabriquée.",
+      })
+    }
+    if (args.kind === "production") {
+      await requireCraftableProduct(ctx, product._id)
+    }
 
     assertWholeNumberRange(args.quantity, 1, MAX_QUANTITY, "La quantité")
     assertFiniteRange(args.occurredAt, 0, Date.now() + 86_400_000, "La date")
@@ -509,47 +689,247 @@ export const record = mutation({
   },
 })
 
-interface StockState {
-  baseStock: number
-  product: Doc<"products">
-}
-
-async function loadStockBeforeTransaction(
-  ctx: MutationCtx,
-  transactionId: Id<"transactions">
-) {
-  const movements = await ctx.db
-    .query("stockMovements")
-    .withIndex("by_transaction", (index) =>
-      index.eq("transactionId", transactionId)
+export const updateExchange = mutation({
+  args: {
+    agreedTotal: v.optional(v.number()),
+    characterId: v.id("characters"),
+    comment: v.optional(v.string()),
+    counterparty: v.optional(v.string()),
+    discount: v.optional(v.number()),
+    lines: v.array(exchangeLineValidator),
+    occurredAt: v.number(),
+    transactionId: v.id("transactions"),
+  },
+  handler: async (ctx, args) => {
+    const user = await requireUser(ctx)
+    const transaction = await ctx.db.get(args.transactionId)
+    if (!transaction) {
+      throw new ConvexError({
+        code: "NOT_FOUND",
+        message: "Opération introuvable.",
+      })
+    }
+    if (transaction.kind === "production") {
+      throw new ConvexError({
+        code: "INVALID_OPERATION",
+        message: "Une production utilise son formulaire dédié.",
+      })
+    }
+    requireTransactionManager(user, transaction)
+    const character = await ctx.db.get(args.characterId)
+    if (!character?.active) {
+      throw new ConvexError({
+        code: "NOT_FOUND",
+        message: "Personnage introuvable ou archivé.",
+      })
+    }
+    assertFiniteRange(args.occurredAt, 0, Date.now() + 86_400_000, "La date")
+    const { movements, states } = await loadStockBeforeTransaction(
+      ctx,
+      transaction._id
     )
-    .collect()
-  const oldDeltas = new Map<string, number>()
-  for (const movement of movements) {
-    oldDeltas.set(
-      movement.productId,
-      (oldDeltas.get(movement.productId) ?? 0) + movement.delta
+    const baseStocks = new Map(
+      [...states].map(([productId, state]) => [productId, state.baseStock])
     )
-  }
-
-  const states = new Map<string, StockState>()
-  await Promise.all(
-    [...oldDeltas].map(async ([productId, oldDelta]) => {
-      const product = await ctx.db.get(productId as Id<"products">)
-      if (!product) {
+    const linkedOrder = transaction.orderId
+      ? await ctx.db.get(transaction.orderId)
+      : null
+    if (transaction.orderId && !linkedOrder) {
+      throw new ConvexError({
+        code: "LINKED_ORDER_MISSING",
+        message:
+          "La commande liée à cette transaction est introuvable. Aucune correction n’a été appliquée.",
+      })
+    }
+    const discount = args.discount ?? 0
+    if (linkedOrder && discount > 0) {
+      throw new ConvexError({
+        code: "INVALID_INPUT",
+        message:
+          "Modifiez le total convenu de la commande plutôt qu’une remise.",
+      })
+    }
+    if (linkedOrder && args.agreedTotal !== undefined) {
+      assertWholeNumberRange(args.agreedTotal, 0, MAX_PRICE, "Le total convenu")
+    }
+    const preparedFromLines = await prepareExchange(ctx, args.lines, {
+      baseStocks,
+      discount: linkedOrder ? 0 : discount,
+    })
+    const linkedOrderKind =
+      linkedOrder && preparedFromLines.lines[0]?.direction === "incoming"
+        ? "supplier"
+        : "client"
+    const linkedAgreedTotal = linkedOrder
+      ? (args.agreedTotal ?? linkedOrder.total ?? Math.abs(transaction.total))
+      : undefined
+    if (linkedAgreedTotal !== undefined) {
+      assertWholeNumberRange(
+        linkedAgreedTotal,
+        0,
+        MAX_PRICE,
+        "Le total convenu"
+      )
+    }
+    const prepared =
+      linkedOrder && linkedAgreedTotal !== undefined
+        ? withOrderTotal(preparedFromLines, linkedOrderKind, linkedAgreedTotal)
+        : preparedFromLines
+    if (linkedOrder) {
+      const directions = new Set(prepared.lines.map((line) => line.direction))
+      if (
+        directions.size !== 1 ||
+        prepared.lines.some((line) => line.kind === "bundle")
+      ) {
         throw new ConvexError({
-          code: "NOT_FOUND",
-          message: "Un produit lié à l’opération est introuvable.",
+          code: "INVALID_ORDER_TRANSACTION",
+          message:
+            "Une transaction liée à une commande doit contenir uniquement des produits dans un seul sens.",
         })
       }
-      states.set(product._id, {
-        baseStock: product.currentStock - oldDelta,
-        product,
+    }
+    const existingLines = await ctx.db
+      .query("transactionLines")
+      .withIndex("by_transaction", (index) =>
+        index.eq("transactionId", transaction._id)
+      )
+      .collect()
+    const stockIds = new Set([...states.keys(), ...prepared.deltas.keys()])
+    for (const productId of stockIds) {
+      const state = states.get(productId)
+      const newDelta = prepared.deltas.get(productId)
+      const product = state?.product ?? newDelta?.product
+      if (!product) continue
+      const baseStock = state?.baseStock ?? product.currentStock
+      const resultingStock = baseStock + (newDelta?.delta ?? 0)
+      if (resultingStock < 0) {
+        throw new ConvexError({
+          code: "INSUFFICIENT_STOCK",
+          message: `Stock insuffisant pour « ${product.name} » : ${baseStock} disponibles.`,
+        })
+      }
+    }
+
+    await Promise.all([
+      ...existingLines.map((line) => ctx.db.delete(line._id)),
+      ...movements.map((movement) => ctx.db.delete(movement._id)),
+    ])
+    for (const productId of stockIds) {
+      const state = states.get(productId)
+      const newDelta = prepared.deltas.get(productId)
+      const product = state?.product ?? newDelta?.product
+      if (!product) continue
+      const baseStock = state?.baseStock ?? product.currentStock
+      await ctx.db.patch(product._id, {
+        currentStock: baseStock + (newDelta?.delta ?? 0),
       })
+    }
+
+    const comment = cleanOptionalText(args.comment)
+    const counterparty = cleanOptionalText(args.counterparty)
+    const firstLine = prepared.lines[0]
+    await ctx.db.replace(transaction._id, {
+      actorCharacterId: character._id,
+      actorName: character.name,
+      actorUserId: transaction.actorUserId ?? String(user._id),
+      ...(comment ? { comment } : {}),
+      ...(counterparty ? { counterparty } : {}),
+      ...(!linkedOrder && discount > 0 ? { discount } : {}),
+      incomingTotal: prepared.incomingTotal,
+      kind: prepared.kind,
+      ...(transaction.legacyKey ? { legacyKey: transaction.legacyKey } : {}),
+      lineCount: prepared.lines.length,
+      occurredAt: args.occurredAt,
+      ...(transaction.orderId ? { orderId: transaction.orderId } : {}),
+      outgoingTotal: prepared.outgoingTotal,
+      productName: linkedOrder
+        ? orderTransactionLabel(
+            linkedOrderKind,
+            counterparty ?? linkedOrder.contactName
+          )
+        : prepared.lines.length === 1 && firstLine
+          ? firstLine.productName
+          : `${prepared.lines.length} références`,
+      quantity: prepared.lines.reduce((sum, line) => sum + line.quantity, 0),
+      source: transaction.source,
+      total: prepared.total,
+      ...(prepared.lines.length === 1 && firstLine
+        ? { unitPrice: firstLine.unitPrice }
+        : {}),
     })
-  )
-  return { movements, states }
-}
+    for (const line of prepared.lines) {
+      await ctx.db.insert("transactionLines", {
+        ...(line.bundleId ? { bundleId: line.bundleId } : {}),
+        direction: line.direction,
+        kind: line.kind,
+        ...(line.productId ? { productId: line.productId } : {}),
+        productName: line.productName,
+        quantity: line.quantity,
+        total: line.total,
+        transactionId: transaction._id,
+        unitPrice: line.unitPrice,
+      })
+    }
+    if (linkedOrder) {
+      const oldOrderLines = await ctx.db
+        .query("orderLines")
+        .withIndex("by_order", (index) => index.eq("orderId", linkedOrder._id))
+        .collect()
+      await Promise.all(oldOrderLines.map((line) => ctx.db.delete(line._id)))
+      await Promise.all(
+        prepared.lines.map((line) =>
+          ctx.db.insert("orderLines", {
+            kind: "product",
+            orderId: linkedOrder._id,
+            productId: line.productId,
+            productName: line.productName,
+            quantity: line.quantity,
+            total: line.total,
+            unitPrice: line.unitPrice,
+          })
+        )
+      )
+      await ctx.db.patch(linkedOrder._id, {
+        contactName: counterparty ?? linkedOrder.contactName,
+        discount: undefined,
+        kind: linkedOrderKind,
+        processedAt: args.occurredAt,
+        ...(linkedOrderKind === "supplier"
+          ? { status: "delivered" as const }
+          : {}),
+        total: Math.abs(prepared.total),
+      })
+    }
+    for (const { delta, product } of prepared.deltas.values()) {
+      const baseStock =
+        states.get(product._id)?.baseStock ?? product.currentStock
+      const resultingStock = baseStock + delta
+      await ctx.db.insert("stockMovements", {
+        delta,
+        occurredAt: args.occurredAt,
+        previousStock: baseStock,
+        productId: product._id,
+        reason: prepared.kind,
+        resultingStock,
+        transactionId: transaction._id,
+      })
+    }
+    await ctx.db.insert("auditLogs", {
+      action: "transaction.updated",
+      actorUserId: String(user._id),
+      createdAt: Date.now(),
+      detail: `${transaction.kind}->${prepared.kind}:${transaction.total}->${prepared.total}`,
+      entityId: transaction._id,
+      entityType: "transaction",
+    })
+
+    return {
+      incomingTotal: prepared.incomingTotal,
+      outgoingTotal: prepared.outgoingTotal,
+      total: prepared.total,
+    }
+  },
+})
 
 export const remove = mutation({
   args: {
@@ -585,6 +965,12 @@ export const remove = mutation({
         index.eq("transactionId", transaction._id)
       )
       .collect()
+    const linkedOrder = await ctx.db
+      .query("orders")
+      .withIndex("by_transaction", (index) =>
+        index.eq("transactionId", transaction._id)
+      )
+      .unique()
     await Promise.all([
       ...lines.map((line) => ctx.db.delete(line._id)),
       ...movements.map((movement) => ctx.db.delete(movement._id)),
@@ -595,6 +981,12 @@ export const remove = mutation({
       )
     )
     await ctx.db.delete(transaction._id)
+    if (linkedOrder) {
+      await ctx.db.patch(linkedOrder._id, {
+        processedAt: undefined,
+        transactionId: undefined,
+      })
+    }
     await ctx.db.insert("auditLogs", {
       action: "transaction.deleted",
       actorUserId: String(user._id),
@@ -839,6 +1231,20 @@ export const update = mutation({
           code: "NOT_FOUND",
           message: "Produit introuvable ou archivé.",
         })
+      }
+      if (
+        args.kind === "production" &&
+        (transaction.kind !== "production" ||
+          transaction.productId !== product._id)
+      ) {
+        if (product.craftable === false) {
+          throw new ConvexError({
+            code: "INVALID_OPERATION",
+            message:
+              "Cette potion est trouvée uniquement et ne peut pas être fabriquée.",
+          })
+        }
+        await requireCraftableProduct(ctx, product._id)
       }
       assertWholeNumberRange(args.quantity, 1, MAX_QUANTITY, "La quantité")
       const fallbackPrice = product.salePrice

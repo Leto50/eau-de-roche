@@ -250,7 +250,7 @@
       "characters": 5,
       "contacts": 11,
       "orders": 12,
-      "products": 83,
+      "products": 84,
       "recipes": 35,
       "transactions": 111
     }
@@ -683,7 +683,7 @@
       "normalizedName": "champignon luisant"
     },
     {
-      "category": "annexe",
+      "category": "potion",
       "currentStock": 1,
       "minimumStock": 2,
       "name": "Chevalier",
@@ -733,7 +733,7 @@
       "normalizedName": "ectoplasme"
     },
     {
-      "category": "annexe",
+      "category": "potion",
       "currentStock": 3,
       "minimumStock": 2,
       "name": "Escarmoucheur",
@@ -743,7 +743,7 @@
       "normalizedName": "escarmoucheur"
     },
     {
-      "category": "annexe",
+      "category": "potion",
       "currentStock": 8,
       "minimumStock": 2,
       "name": "Force",
@@ -753,7 +753,7 @@
       "normalizedName": "force"
     },
     {
-      "category": "annexe",
+      "category": "potion",
       "currentStock": 2,
       "minimumStock": 2,
       "name": "Forgeron",
@@ -832,7 +832,7 @@
       "normalizedName": "hydromelle"
     },
     {
-      "category": "annexe",
+      "category": "potion",
       "currentStock": 2,
       "minimumStock": 2,
       "name": "Invocateur",
@@ -1181,7 +1181,7 @@
       "normalizedName": "rayon de miel"
     },
     {
-      "category": "annexe",
+      "category": "potion",
       "currentStock": 1,
       "minimumStock": 2,
       "name": "Res. feu",
@@ -1191,7 +1191,7 @@
       "normalizedName": "res feu"
     },
     {
-      "category": "annexe",
+      "category": "potion",
       "currentStock": 1,
       "minimumStock": 2,
       "name": "Res. foudre",
@@ -1201,7 +1201,7 @@
       "normalizedName": "res foudre"
     },
     {
-      "category": "annexe",
+      "category": "potion",
       "currentStock": 0,
       "minimumStock": 2,
       "name": "Res. Glace",
@@ -1211,7 +1211,7 @@
       "normalizedName": "res glace"
     },
     {
-      "category": "annexe",
+      "category": "potion",
       "currentStock": 5,
       "minimumStock": 2,
       "name": "Respiration aqua.",
@@ -1307,6 +1307,15 @@
       "tracksStock": true,
       "legacyKey": "product:soin profus",
       "normalizedName": "soin profus"
+    },
+    {
+      "category": "ingredient",
+      "currentStock": 0,
+      "legacyKey": "product:sucrelune",
+      "minimumStock": 50,
+      "name": "Sucrelune",
+      "normalizedName": "sucrelune",
+      "tracksStock": true
     },
     {
       "category": "ingredient",
@@ -1649,7 +1658,7 @@
       "cost": 4
     },
     {
-      "family": "Vigueur accru",
+      "family": "Vigueur améliorée",
       "ingredients": [
         {
           "ingredientName": "ail",
@@ -1670,7 +1679,7 @@
       "cost": 4
     },
     {
-      "family": "Vigueur accru",
+      "family": "Vigueur améliorée",
       "ingredients": [
         {
           "ingredientName": "ail",
@@ -1820,7 +1829,7 @@
       "cost": 11
     },
     {
-      "family": "Resistance magie",
+      "family": "Résistance magique",
       "ingredients": [
         {
           "ingredientName": "coton",
@@ -1841,7 +1850,7 @@
       "cost": 2
     },
     {
-      "family": "Resistance magie",
+      "family": "Résistance magique",
       "ingredients": [
         {
           "ingredientName": "coton",
@@ -1867,7 +1876,7 @@
       "effect": "15% pour 1min."
     },
     {
-      "family": "Puissance Durable",
+      "family": "Puissance durable",
       "ingredients": [
         {
           "ingredientName": "sel",
@@ -1888,7 +1897,7 @@
       "cost": 7
     },
     {
-      "family": "Puissance Durable",
+      "family": "Puissance durable",
       "ingredients": [
         {
           "ingredientName": "sel",
@@ -1915,7 +1924,7 @@
       "cost": 57
     },
     {
-      "family": "Mana accru",
+      "family": "Magie accrue",
       "ingredients": [
         {
           "ingredientName": "coton",
@@ -1935,7 +1944,7 @@
       "effect": "20 point pour 1 min."
     },
     {
-      "family": "Mana accru",
+      "family": "Magie accrue",
       "ingredients": [
         {
           "ingredientName": "coton",
@@ -2057,7 +2066,7 @@
       "cost": 47
     },
     {
-      "family": "Médicinal",
+      "family": "Médicinale",
       "ingredients": [
         {
           "ingredientName": "ail",

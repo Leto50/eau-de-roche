@@ -3,16 +3,14 @@ import { useSuspenseQuery } from "@tanstack/react-query"
 import { createFileRoute, Link } from "@tanstack/react-router"
 import {
   AlertTriangle,
-  ArrowDownToLine,
   ArrowDownLeft,
+  ArrowLeftRight,
   ArrowUpRight,
   CalendarDays,
   ChevronRight,
   Coins,
   Hammer,
-  ReceiptText,
   ScrollText,
-  ShoppingBasket,
 } from "lucide-react"
 
 import { OperationDialog } from "@/components/operation-dialog"
@@ -45,6 +43,7 @@ import {
 import { api } from "../../../convex/_generated/api"
 import {
   formatDate,
+  formatDecimalSeptims,
   formatNumber,
   formatQuantity,
   formatSeptims,
@@ -67,6 +66,9 @@ export const Route = createFileRoute("/_app/")({
       context.queryClient.ensureQueryData(
         convexQuery(api.recipes.listBundles, {})
       ),
+      context.queryClient.ensureQueryData(
+        convexQuery(api.recipes.listCraftableProductIds, {})
+      ),
     ])
   },
   pendingComponent: PageSkeleton,
@@ -83,6 +85,9 @@ function DashboardPage() {
   const { data: bundles } = useSuspenseQuery(
     convexQuery(api.recipes.listBundles, {})
   )
+  const { data: craftableProductIds } = useSuspenseQuery(
+    convexQuery(api.recipes.listCraftableProductIds, {})
+  )
 
   return (
     <div className="animate-in duration-300 fade-in slide-in-from-bottom-1 motion-reduce:animate-none">
@@ -98,7 +103,7 @@ function DashboardPage() {
           </CardTitle>
           <CardDescription>Que venez-vous de faire ?</CardDescription>
         </CardHeader>
-        <CardContent className="grid grid-cols-2 gap-2 lg:grid-cols-4">
+        <CardContent className="grid gap-2 sm:grid-cols-2">
           <OperationDialog
             bundles={bundles}
             characters={characters}
@@ -108,30 +113,15 @@ function DashboardPage() {
                 className="h-20 w-full flex-col gap-1.5 px-3 text-center text-sm whitespace-normal shadow-sm"
                 size="lg"
               >
-                <ShoppingBasket aria-hidden="true" className="size-5" />
-                Encaisser une vente
+                <ArrowLeftRight aria-hidden="true" className="size-5" />
+                Enregistrer un échange
               </Button>
             }
           />
           <OperationDialog
             bundles={bundles}
             characters={characters}
-            initialKind="purchase"
-            products={products}
-            trigger={
-              <Button
-                className="h-20 w-full flex-col gap-1.5 border-[#6a5436]/40 bg-background/35 px-3 text-center text-sm whitespace-normal"
-                size="lg"
-                variant="outline"
-              >
-                <ArrowDownToLine aria-hidden="true" className="size-5" />
-                Recevoir un achat
-              </Button>
-            }
-          />
-          <OperationDialog
-            bundles={bundles}
-            characters={characters}
+            craftableProductIds={craftableProductIds}
             initialKind="production"
             products={products}
             trigger={
@@ -141,23 +131,7 @@ function DashboardPage() {
                 variant="outline"
               >
                 <Hammer aria-hidden="true" className="size-5" />
-                Ajouter une production
-              </Button>
-            }
-          />
-          <OperationDialog
-            bundles={bundles}
-            characters={characters}
-            initialKind="service"
-            products={products}
-            trigger={
-              <Button
-                className="h-20 w-full flex-col gap-1.5 border-[#6a5436]/40 bg-background/35 px-3 text-center text-sm whitespace-normal"
-                size="lg"
-                variant="outline"
-              >
-                <ReceiptText aria-hidden="true" className="size-5" />
-                Facturer un service
+                Enregistrer une production
               </Button>
             }
           />
@@ -178,66 +152,61 @@ function DashboardPage() {
             </CardDescription>
           </CardHeader>
           <CardContent className="grid gap-3 md:grid-cols-2 lg:grid-cols-1 xl:grid-cols-2">
-            <Alert
-              className={cn(
-                "min-h-24 border-[#6a5436]/30 bg-background/35 p-4 pr-14",
-                data.lowStock.length > 0 &&
-                  "border-[#9a4b32]/30 bg-[#9a4b32]/[0.04]"
-              )}
+            <Link
+              className="group block h-full rounded-lg outline-none focus-visible:ring-2 focus-visible:ring-ring/30"
+              to="/inventaire"
             >
-              <AlertTriangle
-                aria-hidden="true"
+              <Alert
                 className={cn(
-                  "size-5 text-primary",
-                  data.lowStock.length > 0 && "text-[#9a4b32]"
+                  "h-full min-h-24 border-[#6a5436]/30 bg-background/35 p-4 pr-14 transition-colors group-hover:border-primary/45 group-hover:bg-accent/60 group-focus-visible:border-primary/50 group-focus-visible:bg-accent/60",
+                  data.lowStock.length > 0 &&
+                    "border-[#9a4b32]/30 bg-[#9a4b32]/[0.04]"
                 )}
-              />
-              <AlertTitle className="text-sm font-semibold text-foreground">
-                {data.lowStock.length > 0
-                  ? `${formatNumber(data.lowStock.length)} stocks faibles`
-                  : "Stocks à jour"}
-              </AlertTitle>
-              <AlertDescription>
-                {data.lowStock.length > 0
-                  ? "Réapprovisionnement nécessaire"
-                  : "Aucune référence sous son seuil"}
-              </AlertDescription>
-              <AlertAction className="top-3 right-3">
-                <Button
-                  aria-label="Voir l’inventaire"
-                  asChild
-                  size="icon-lg"
-                  variant="ghost"
-                >
-                  <Link to="/inventaire">
-                    <ChevronRight aria-hidden="true" />
-                  </Link>
-                </Button>
-              </AlertAction>
-            </Alert>
+              >
+                <AlertTriangle
+                  aria-hidden="true"
+                  className={cn(
+                    "size-5 text-primary",
+                    data.lowStock.length > 0 && "text-[#9a4b32]"
+                  )}
+                />
+                <AlertTitle className="text-sm font-semibold text-foreground">
+                  {data.lowStock.length > 0
+                    ? `${formatNumber(data.lowStock.length)} stocks faibles`
+                    : "Stocks à jour"}
+                </AlertTitle>
+                <AlertDescription>
+                  {data.lowStock.length > 0
+                    ? "Réapprovisionnement nécessaire"
+                    : "Aucune référence sous son seuil"}
+                </AlertDescription>
+                <AlertAction aria-hidden="true" className="top-3 right-3">
+                  <ChevronRight className="size-5 text-muted-foreground transition-[color,transform] group-hover:translate-x-0.5 group-hover:text-primary group-focus-visible:translate-x-0.5 group-focus-visible:text-primary motion-reduce:transform-none" />
+                </AlertAction>
+              </Alert>
+            </Link>
 
-            <Alert className="min-h-24 border-primary/20 bg-primary/[0.035] p-4 pr-14">
-              <ScrollText aria-hidden="true" className="size-5 text-primary" />
-              <AlertTitle className="text-sm font-semibold text-foreground">
-                {formatNumber(data.openOrders)}{" "}
-                {data.openOrders === 1
-                  ? "commande ouverte"
-                  : "commandes ouvertes"}
-              </AlertTitle>
-              <AlertDescription>Clients et fournisseurs</AlertDescription>
-              <AlertAction className="top-3 right-3">
-                <Button
-                  aria-label="Voir les commandes"
-                  asChild
-                  size="icon-lg"
-                  variant="ghost"
-                >
-                  <Link to="/commandes">
-                    <ChevronRight aria-hidden="true" />
-                  </Link>
-                </Button>
-              </AlertAction>
-            </Alert>
+            <Link
+              className="group block h-full rounded-lg outline-none focus-visible:ring-2 focus-visible:ring-ring/30"
+              to="/commandes"
+            >
+              <Alert className="h-full min-h-24 border-primary/20 bg-primary/[0.035] p-4 pr-14 transition-colors group-hover:border-primary/45 group-hover:bg-accent/60 group-focus-visible:border-primary/50 group-focus-visible:bg-accent/60">
+                <ScrollText
+                  aria-hidden="true"
+                  className="size-5 text-primary"
+                />
+                <AlertTitle className="text-sm font-semibold text-foreground">
+                  {formatNumber(data.openOrders)}{" "}
+                  {data.openOrders === 1
+                    ? "commande ouverte"
+                    : "commandes ouvertes"}
+                </AlertTitle>
+                <AlertDescription>Clients et fournisseurs</AlertDescription>
+                <AlertAction aria-hidden="true" className="top-3 right-3">
+                  <ChevronRight className="size-5 text-muted-foreground transition-[color,transform] group-hover:translate-x-0.5 group-hover:text-primary group-focus-visible:translate-x-0.5 group-focus-visible:text-primary motion-reduce:transform-none" />
+                </AlertAction>
+              </Alert>
+            </Link>
           </CardContent>
         </Card>
 
@@ -253,7 +222,7 @@ function DashboardPage() {
               Valeur estimée du stock
             </p>
             <p className="mt-1 font-display text-2xl leading-none font-[600] text-primary tabular-nums">
-              {formatSeptims(data.stockValue)}
+              {formatDecimalSeptims(data.stockValue)}
             </p>
             <p className="mt-1 text-xs text-muted-foreground">
               Prix d’achat, ou de vente à défaut
@@ -353,7 +322,7 @@ function DashboardPage() {
                           positive ? "text-[#456044]" : "text-[#8a3e2f]"
                         )}
                       >
-                        {positive ? "+" : ""}
+                        {transaction.total > 0 ? "+" : ""}
                         {formatSeptims(transaction.total)}
                       </TableCell>
                     </TableRow>

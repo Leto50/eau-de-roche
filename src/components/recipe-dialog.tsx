@@ -4,6 +4,8 @@ import {
   Archive,
   ArchiveRestore,
   BookPlus,
+  Calculator,
+  CircleAlert,
   LoaderCircle,
   Pencil,
   Plus,
@@ -11,6 +13,7 @@ import {
 } from "lucide-react"
 import {
   useId,
+  useMemo,
   useRef,
   useState,
   type FormEvent,
@@ -18,7 +21,6 @@ import {
 } from "react"
 import { toast } from "sonner"
 
-import { PriceInput } from "@/components/price-input"
 import { ProductPicker } from "@/components/product-picker"
 import {
   AlertDialog,
@@ -33,6 +35,7 @@ import {
 } from "@/components/ui/alert-dialog"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
+import { Card, CardContent } from "@/components/ui/card"
 import {
   Dialog,
   DialogContent,
@@ -45,16 +48,27 @@ import {
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { ScrollArea } from "@/components/ui/scroll-area"
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectLabel,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
 import { Separator } from "@/components/ui/separator"
 import { Textarea } from "@/components/ui/textarea"
 import { api } from "../../convex/_generated/api"
-import { type Doc } from "../../convex/_generated/dataModel"
-import { formatSeptims } from "@/lib/format"
+import { type Doc, type Id } from "../../convex/_generated/dataModel"
+import { getUserFacingErrorMessage } from "@/lib/errors"
+import { formatDecimalSeptims } from "@/lib/format"
+import { canonicalProductCategory } from "@/lib/product-categories"
 import {
-  priceDraftFromValue,
-  priceDraftToValue,
-  type PriceDraft,
-} from "@/lib/prices"
+  isRecipeFamily,
+  recipeFamilies,
+  type RecipeFamily,
+} from "@/lib/recipe-families"
 
 type Recipe = FunctionReturnType<typeof api.recipes.list>[number]
 
@@ -65,38 +79,106 @@ interface IngredientDraft {
 }
 
 export function RecipeDialog({
+  initialProduct,
+  linkedProductIds = [],
+  onOpenChange,
+  open: controlledOpen,
   products,
   recipe,
   trigger,
 }: Readonly<{
+  initialProduct?: Doc<"products">
+  linkedProductIds?: readonly Id<"products">[]
+  onOpenChange?: (open: boolean) => void
+  open?: boolean
   products: readonly Doc<"products">[]
   recipe?: Recipe
-  trigger?: ReactElement
+  trigger?: ReactElement | null
 }>) {
   const saveRecipe = useMutation(api.recipes.save)
   const setRecipeActive = useMutation(api.recipes.setActive)
   const fieldId = useId()
   const nextLineKey = useRef(1)
-  const [open, setOpen] = useState(false)
-  const [name, setName] = useState("")
-  const [family, setFamily] = useState("")
-  const [effect, setEffect] = useState("")
-  const [productId, setProductId] = useState("")
-  const [cost, setCost] = useState<PriceDraft>(() =>
-    priceDraftFromValue(undefined)
+  const [internalOpen, setInternalOpen] = useState(false)
+  const open = controlledOpen ?? internalOpen
+  const [name, setName] = useState(recipe?.name ?? initialProduct?.name ?? "")
+  const [family, setFamily] = useState<RecipeFamily | "">(
+    recipe && isRecipeFamily(recipe.family) ? recipe.family : ""
   )
+  const [outputProductId, setOutputProductId] = useState<string>(
+    initialProduct?._id ?? "new"
+  )
+  const [effect, setEffect] = useState(recipe?.effect ?? "")
   const [ingredients, setIngredients] = useState<IngredientDraft[]>([
     { key: 0, productId: "", quantity: "1" },
   ])
   const [isSubmitting, setIsSubmitting] = useState(false)
-  const ingredientProducts = products.filter((product) => product.tracksStock)
+  const ingredientProducts = useMemo(
+    () => products.filter((product) => product.tracksStock),
+    [products]
+  )
+  const linkedProducts = useMemo(
+    () => new Set(linkedProductIds),
+    [linkedProductIds]
+  )
+  const outputProducts = useMemo(
+    () =>
+      products.filter(
+        (product) =>
+          product.tracksStock &&
+          canonicalProductCategory(product.category) === "potion" &&
+          product.craftable !== false &&
+          (!linkedProducts.has(product._id) ||
+            recipe?.productId === product._id ||
+            initialProduct?._id === product._id)
+      ),
+    [initialProduct, linkedProducts, products, recipe]
+  )
+  const selectedOutputProduct = outputProducts.find(
+    (product) => product._id === outputProductId
+  )
+  const costCalculation = useMemo(() => {
+    const missingPrices = new Set<string>()
+    let complete = ingredients.length > 0
+    let value = 0
+
+    for (const ingredient of ingredients) {
+      const product = ingredientProducts.find(
+        (entry) => entry._id === ingredient.productId
+      )
+      const quantity = Number(ingredient.quantity)
+      if (
+        !product ||
+        !Number.isFinite(quantity) ||
+        !Number.isInteger(quantity) ||
+        quantity <= 0
+      ) {
+        complete = false
+        continue
+      }
+      if (product.purchasePrice === undefined) {
+        missingPrices.add(product.name)
+        continue
+      }
+      value += product.purchasePrice * quantity
+    }
+
+    return {
+      cost:
+        complete && missingPrices.size === 0 && ingredients.length > 0
+          ? value
+          : undefined,
+      missingPrices: [...missingPrices].sort((left, right) =>
+        left.localeCompare(right, "fr")
+      ),
+    }
+  }, [ingredientProducts, ingredients])
 
   function resetForm() {
-    setName(recipe?.name ?? "")
-    setFamily(recipe?.family ?? "")
+    setName(recipe?.name ?? initialProduct?.name ?? "")
+    setFamily(recipe && isRecipeFamily(recipe.family) ? recipe.family : "")
+    setOutputProductId(initialProduct?._id ?? "new")
     setEffect(recipe?.effect ?? "")
-    setProductId(recipe?.productId ?? "")
-    setCost(priceDraftFromValue(recipe?.cost))
     if (recipe?.ingredients.length) {
       setIngredients(
         recipe.ingredients.map((ingredient, index) => ({
@@ -114,7 +196,8 @@ export function RecipeDialog({
 
   function handleOpenChange(nextOpen: boolean) {
     if (nextOpen && !open) resetForm()
-    setOpen(nextOpen)
+    if (controlledOpen === undefined) setInternalOpen(nextOpen)
+    onOpenChange?.(nextOpen)
   }
 
   function updateIngredient(key: number, patch: Partial<IngredientDraft>) {
@@ -142,19 +225,15 @@ export function RecipeDialog({
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
-    const submittedCost = priceDraftToValue(cost)
     const preparedIngredients = ingredients.map((ingredient) => ({
       productId: ingredientProducts.find(
         (product) => product._id === ingredient.productId
       )?._id,
       quantity: Number(ingredient.quantity),
     }))
-    const linkedProductId = products.find(
-      (product) => product._id === productId
-    )?._id
-
-    if (!name.trim() || !family.trim()) {
-      toast.error("Le nom et la famille de la recette sont obligatoires.")
+    const submittedName = selectedOutputProduct?.name ?? name.trim()
+    if (!submittedName || !family) {
+      toast.error("Le nom et la catégorie de la recette sont obligatoires.")
       return
     }
     if (
@@ -179,19 +258,17 @@ export function RecipeDialog({
       toast.error("Un ingrédient ne peut apparaître qu’une fois.")
       return
     }
-    if (submittedCost !== null && !Number.isFinite(submittedCost)) {
-      toast.error(
-        "Indiquez un nombre entier de septims pour un nombre entier d’unités."
-      )
+    const producedProductId = recipe?.productId ?? selectedOutputProduct?._id
+    if (producedProductId && ingredientIds.includes(producedProductId)) {
+      toast.error("Un article ne peut pas être son propre ingrédient.")
       return
     }
 
     setIsSubmitting(true)
     try {
       await saveRecipe({
-        cost: submittedCost,
         effect: effect.trim(),
-        family: family.trim(),
+        family,
         ingredients: preparedIngredients.flatMap((ingredient) =>
           ingredient.productId
             ? [
@@ -202,17 +279,17 @@ export function RecipeDialog({
               ]
             : []
         ),
-        name: name.trim(),
-        productId: linkedProductId ?? null,
+        name: submittedName,
+        ...(!recipe && selectedOutputProduct
+          ? { outputProductId: selectedOutputProduct._id }
+          : {}),
         ...(recipe ? { recipeId: recipe._id } : {}),
       })
       toast.success(recipe ? "Recette mise à jour." : "Recette créée.")
-      setOpen(false)
+      handleOpenChange(false)
     } catch (error) {
       toast.error(
-        error instanceof Error
-          ? error.message
-          : "Impossible d’enregistrer la recette."
+        getUserFacingErrorMessage(error, "Impossible d’enregistrer la recette.")
       )
     } finally {
       setIsSubmitting(false)
@@ -225,12 +302,10 @@ export function RecipeDialog({
     try {
       await setRecipeActive({ active: false, recipeId: recipe._id })
       toast.success("Recette archivée.")
-      setOpen(false)
+      handleOpenChange(false)
     } catch (error) {
       toast.error(
-        error instanceof Error
-          ? error.message
-          : "Impossible d’archiver la recette."
+        getUserFacingErrorMessage(error, "Impossible d’archiver la recette.")
       )
     } finally {
       setIsSubmitting(false)
@@ -239,75 +314,114 @@ export function RecipeDialog({
 
   return (
     <Dialog onOpenChange={handleOpenChange} open={open}>
-      <DialogTrigger asChild>
-        {trigger ?? (
-          <Button>
-            <BookPlus aria-hidden="true" />
-            Nouvelle recette
-          </Button>
-        )}
-      </DialogTrigger>
+      {trigger === null ? null : (
+        <DialogTrigger asChild>
+          {trigger ?? (
+            <Button>
+              <BookPlus aria-hidden="true" />
+              Nouvelle recette
+            </Button>
+          )}
+        </DialogTrigger>
+      )}
       <DialogContent className="max-h-[94svh] overflow-y-auto rounded-[0.2rem] border-[#6a5436] bg-[#eee1c7] ring-0 sm:max-w-2xl">
         <DialogHeader className="pr-8">
           <p className="text-[0.66rem] font-bold tracking-[0.2em] text-primary uppercase">
             Registre de fabrication
           </p>
           <DialogTitle className="font-display text-2xl">
-            {recipe ? "Modifier la recette" : "Créer une recette"}
+            {recipe
+              ? "Modifier la recette"
+              : initialProduct
+                ? `Recette de ${initialProduct.name}`
+                : "Créer une recette"}
           </DialogTitle>
           <DialogDescription>
-            Renseignez le résultat, le coût et les ingrédients consommés.
+            Nommez la préparation et indiquez les ingrédients consommés pour la
+            fabriquer.
           </DialogDescription>
         </DialogHeader>
 
         <form className="grid gap-5" onSubmit={handleSubmit}>
           <div className="grid gap-4 sm:grid-cols-2">
+            {recipe ? (
+              <div className="grid gap-2">
+                <Label htmlFor={`${fieldId}-name`}>Nom de la potion</Label>
+                <Input
+                  id={`${fieldId}-name`}
+                  maxLength={100}
+                  onChange={(event) => setName(event.target.value)}
+                  placeholder="Élixir du veilleur"
+                  required
+                  value={name}
+                />
+              </div>
+            ) : (
+              <div className="grid gap-2">
+                <Label htmlFor={`${fieldId}-output`}>Potion obtenue</Label>
+                <Select
+                  disabled={initialProduct !== undefined}
+                  onValueChange={(value) => {
+                    setOutputProductId(value)
+                    const product = outputProducts.find(
+                      (entry) => entry._id === value
+                    )
+                    setName(product?.name ?? "")
+                  }}
+                  value={outputProductId}
+                >
+                  <SelectTrigger className="w-full" id={`${fieldId}-output`}>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="new">Nouvelle potion</SelectItem>
+                    {outputProducts.length > 0 ? (
+                      <SelectGroup>
+                        <SelectLabel>Potions sans recette</SelectLabel>
+                        {outputProducts.map((product) => (
+                          <SelectItem key={product._id} value={product._id}>
+                            {product.name}
+                          </SelectItem>
+                        ))}
+                      </SelectGroup>
+                    ) : null}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
             <div className="grid gap-2">
-              <Label htmlFor={`${fieldId}-name`}>Nom de la recette</Label>
-              <Input
-                id={`${fieldId}-name`}
-                maxLength={100}
-                onChange={(event) => setName(event.target.value)}
-                placeholder="Nom de la préparation"
-                required
-                value={name}
-              />
-            </div>
-            <div className="grid gap-2">
-              <Label htmlFor={`${fieldId}-family`}>Famille</Label>
-              <Input
-                id={`${fieldId}-family`}
-                maxLength={60}
-                onChange={(event) => setFamily(event.target.value)}
-                placeholder="Poisons, soins, fortifiants…"
-                required
+              <Label htmlFor={`${fieldId}-family`}>Catégorie</Label>
+              <Select
+                onValueChange={(value) => {
+                  if (isRecipeFamily(value)) setFamily(value)
+                }}
                 value={family}
-              />
+              >
+                <SelectTrigger className="w-full" id={`${fieldId}-family`}>
+                  <SelectValue placeholder="Choisir une catégorie…" />
+                </SelectTrigger>
+                <SelectContent>
+                  {recipeFamilies.map((entry) => (
+                    <SelectItem key={entry} value={entry}>
+                      {entry}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
-          </div>
-
-          <div className="grid gap-4 sm:grid-cols-2">
-            <div className="grid gap-2">
-              <Label>Produit fabriqué</Label>
-              <ProductPicker
-                clearLabel="Aucun produit lié"
-                onChange={(value) => setProductId(value ?? "")}
-                products={products}
-                selectedProductId={productId}
-                showStock={false}
-              />
-              <p className="text-xs text-muted-foreground">
-                Ce lien permet d’utiliser la recette lors d’une production.
-              </p>
-            </div>
-            <div className="grid gap-2">
-              <Label htmlFor={`${fieldId}-cost`}>Coût de fabrication</Label>
-              <PriceInput
-                id={`${fieldId}-cost`}
-                onValueChange={setCost}
-                value={cost}
-              />
-            </div>
+            {!recipe && outputProductId === "new" ? (
+              <div className="grid gap-2 sm:col-span-2">
+                <Label htmlFor={`${fieldId}-name`}>Nom de la potion</Label>
+                <Input
+                  id={`${fieldId}-name`}
+                  maxLength={100}
+                  onChange={(event) => setName(event.target.value)}
+                  placeholder="Élixir du veilleur"
+                  required
+                  value={name}
+                />
+              </div>
+            ) : null}
           </div>
 
           <div className="grid gap-2">
@@ -390,6 +504,39 @@ export function RecipeDialog({
             ))}
           </div>
 
+          <Card className="gap-0 rounded-none border-primary/20 bg-primary/[0.035] py-0 ring-0">
+            <CardContent className="flex items-center justify-between gap-4 p-4">
+              <div className="flex min-w-0 items-center gap-3">
+                <Calculator
+                  aria-hidden="true"
+                  className="size-5 shrink-0 text-primary"
+                />
+                <div className="min-w-0">
+                  <p className="text-sm font-semibold">Coût matière calculé</p>
+                  <p className="text-xs text-muted-foreground">
+                    Quantités × prix d’achat actuels des ingrédients.
+                  </p>
+                </div>
+              </div>
+              <output className="shrink-0 font-display text-lg text-primary tabular-nums">
+                {costCalculation.cost === undefined
+                  ? "—"
+                  : formatDecimalSeptims(costCalculation.cost)}
+              </output>
+            </CardContent>
+          </Card>
+
+          {costCalculation.missingPrices.length > 0 ? (
+            <Alert className="border-[#8a4233]/30 bg-[#8a4233]/5">
+              <CircleAlert aria-hidden="true" />
+              <AlertTitle>Prix d’achat manquant</AlertTitle>
+              <AlertDescription>
+                Renseignez dans l’inventaire le prix d’achat manquant pour :{" "}
+                {costCalculation.missingPrices.join(", ")}.
+              </AlertDescription>
+            </Alert>
+          ) : null}
+
           <DialogFooter className="gap-2 sm:justify-between">
             <div>
               {recipe ? (
@@ -426,7 +573,7 @@ export function RecipeDialog({
             </div>
             <div className="flex justify-end gap-2">
               <Button
-                onClick={() => setOpen(false)}
+                onClick={() => handleOpenChange(false)}
                 type="button"
                 variant="ghost"
               >
@@ -465,9 +612,7 @@ export function RecipeArchivesDialog() {
       toast.success(`« ${recipe.name} » est de nouveau disponible.`)
     } catch (error) {
       toast.error(
-        error instanceof Error
-          ? error.message
-          : "Impossible de réactiver la recette."
+        getUserFacingErrorMessage(error, "Impossible de réactiver la recette.")
       )
     } finally {
       setRestoringId(undefined)
@@ -522,8 +667,8 @@ export function RecipeArchivesDialog() {
                     <p className="text-xs text-muted-foreground">
                       {recipe.family}
                       {recipe.cost === undefined
-                        ? ""
-                        : ` · ${formatSeptims(recipe.cost)}`}
+                        ? " · coût incomplet"
+                        : ` · ${formatDecimalSeptims(recipe.cost)}`}
                     </p>
                   </div>
                   <Button

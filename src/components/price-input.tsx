@@ -16,7 +16,7 @@ export function PriceInput({
   value: PriceDraft
 }>) {
   return (
-    <div className="grid grid-cols-[minmax(4.5rem,1fr)_auto_minmax(4.5rem,1fr)] items-center gap-2">
+    <div className="grid min-w-0 grid-cols-[minmax(4.5rem,1fr)_auto_minmax(4.5rem,1fr)] items-center gap-2">
       <InputGroup className="h-9 bg-background/50">
         <InputGroupInput
           aria-label="Nombre de septims"

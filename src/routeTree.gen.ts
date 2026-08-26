@@ -13,6 +13,7 @@ import { Route as AppRouteImport } from './routes/_app'
 import { Route as ConnexionRouteImport } from './routes/connexion'
 import { Route as AppIndexRouteImport } from './routes/_app/index'
 import { Route as AppCommandesRouteImport } from './routes/_app/commandes'
+import { Route as AppCompteRouteImport } from './routes/_app/compte'
 import { Route as AppInventaireRouteImport } from './routes/_app/inventaire'
 import { Route as AppJournalRouteImport } from './routes/_app/journal'
 import { Route as AppPersonnagesRouteImport } from './routes/_app/personnages'
@@ -36,6 +37,11 @@ const AppIndexRoute = AppIndexRouteImport.update({
 const AppCommandesRoute = AppCommandesRouteImport.update({
   id: '/commandes',
   path: '/commandes',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppCompteRoute = AppCompteRouteImport.update({
+  id: '/compte',
+  path: '/compte',
   getParentRoute: () => AppRoute,
 } as any)
 const AppInventaireRoute = AppInventaireRouteImport.update({
@@ -68,6 +74,7 @@ export interface FileRoutesByFullPath {
   '/': typeof AppIndexRoute
   '/connexion': typeof ConnexionRoute
   '/commandes': typeof AppCommandesRoute
+  '/compte': typeof AppCompteRoute
   '/inventaire': typeof AppInventaireRoute
   '/journal': typeof AppJournalRoute
   '/personnages': typeof AppPersonnagesRoute
@@ -77,6 +84,7 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/connexion': typeof ConnexionRoute
   '/commandes': typeof AppCommandesRoute
+  '/compte': typeof AppCompteRoute
   '/inventaire': typeof AppInventaireRoute
   '/journal': typeof AppJournalRoute
   '/personnages': typeof AppPersonnagesRoute
@@ -89,6 +97,7 @@ export interface FileRoutesById {
   '/_app': typeof AppRouteWithChildren
   '/connexion': typeof ConnexionRoute
   '/_app/commandes': typeof AppCommandesRoute
+  '/_app/compte': typeof AppCompteRoute
   '/_app/inventaire': typeof AppInventaireRoute
   '/_app/journal': typeof AppJournalRoute
   '/_app/personnages': typeof AppPersonnagesRoute
@@ -102,6 +111,7 @@ export interface FileRouteTypes {
     | '/'
     | '/connexion'
     | '/commandes'
+    | '/compte'
     | '/inventaire'
     | '/journal'
     | '/personnages'
@@ -111,6 +121,7 @@ export interface FileRouteTypes {
   to:
     | '/connexion'
     | '/commandes'
+    | '/compte'
     | '/inventaire'
     | '/journal'
     | '/personnages'
@@ -122,6 +133,7 @@ export interface FileRouteTypes {
     | '/_app'
     | '/connexion'
     | '/_app/commandes'
+    | '/_app/compte'
     | '/_app/inventaire'
     | '/_app/journal'
     | '/_app/personnages'
@@ -166,6 +178,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppCommandesRouteImport
       parentRoute: typeof AppRoute
     }
+    '/_app/compte': {
+      id: '/_app/compte'
+      path: '/compte'
+      fullPath: '/compte'
+      preLoaderRoute: typeof AppCompteRouteImport
+      parentRoute: typeof AppRoute
+    }
     '/_app/inventaire': {
       id: '/_app/inventaire'
       path: '/inventaire'
@@ -206,6 +225,7 @@ declare module '@tanstack/react-router' {
 
 interface AppRouteChildren {
   AppCommandesRoute: typeof AppCommandesRoute
+  AppCompteRoute: typeof AppCompteRoute
   AppInventaireRoute: typeof AppInventaireRoute
   AppJournalRoute: typeof AppJournalRoute
   AppPersonnagesRoute: typeof AppPersonnagesRoute
@@ -215,6 +235,7 @@ interface AppRouteChildren {
 
 const AppRouteChildren: AppRouteChildren = {
   AppCommandesRoute: AppCommandesRoute,
+  AppCompteRoute: AppCompteRoute,
   AppInventaireRoute: AppInventaireRoute,
   AppJournalRoute: AppJournalRoute,
   AppPersonnagesRoute: AppPersonnagesRoute,

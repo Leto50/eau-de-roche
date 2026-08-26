@@ -1,6 +1,13 @@
 import { useMutation } from "convex/react"
 import { type FunctionReturnType } from "convex/server"
-import { ClipboardPlus, LoaderCircle, Pencil, Plus, Trash2 } from "lucide-react"
+import {
+  ClipboardPlus,
+  LoaderCircle,
+  Pencil,
+  Plus,
+  RefreshCw,
+  Trash2,
+} from "lucide-react"
 import {
   useId,
   useRef,
@@ -11,7 +18,9 @@ import {
 import { toast } from "sonner"
 
 import { PriceInput } from "@/components/price-input"
+import { OrderPreparationDetails } from "@/components/order-preparation-details"
 import { ProductPicker } from "@/components/product-picker"
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import {
   AlertDialog,
   AlertDialogAction,
@@ -24,6 +33,7 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog"
 import { Button } from "@/components/ui/button"
+import { Card, CardContent } from "@/components/ui/card"
 import {
   Dialog,
   DialogContent,
@@ -34,6 +44,12 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
+import {
+  InputGroup,
+  InputGroupAddon,
+  InputGroupInput,
+  InputGroupText,
+} from "@/components/ui/input-group"
 import { Label } from "@/components/ui/label"
 import {
   Select,
@@ -46,7 +62,9 @@ import { Separator } from "@/components/ui/separator"
 import { Textarea } from "@/components/ui/textarea"
 import { api } from "../../convex/_generated/api"
 import { type Doc } from "../../convex/_generated/dataModel"
+import { getUserFacingErrorMessage } from "@/lib/errors"
 import { formatSeptims, orderStatusLabels } from "@/lib/format"
+import { calculateOrderPreparation } from "@/lib/order-preparation"
 import {
   priceDraftFromValue,
   priceDraftToValue,
@@ -55,6 +73,7 @@ import {
 } from "@/lib/prices"
 
 type Order = FunctionReturnType<typeof api.orders.list>[number]
+type Recipe = FunctionReturnType<typeof api.recipes.list>[number]
 type OrderKind = Order["kind"]
 type OrderStatus = Order["status"]
 
@@ -91,54 +110,92 @@ function defaultPrice(product: Doc<"products">, kind: OrderKind) {
   return kind === "client" ? product.salePrice : product.purchasePrice
 }
 
-export function OrderDialog({
-  initialKind = "client",
-  isAdmin,
-  order,
-  products,
-  trigger,
-}: Readonly<{
-  initialKind?: OrderKind
-  isAdmin: boolean
-  order?: Order
-  products: readonly Doc<"products">[]
-  trigger?: ReactElement
-}>) {
-  const saveOrder = useMutation(api.orders.save)
-  const removeOrder = useMutation(api.orders.remove)
-  const fieldId = useId()
-  const nextLineKey = useRef(1)
-  const [open, setOpen] = useState(false)
-  const [kind, setKind] = useState<OrderKind>(initialKind)
-  const [contactName, setContactName] = useState("")
-  const [dueDate, setDueDate] = useState("")
-  const [notes, setNotes] = useState("")
-  const [status, setStatus] = useState<OrderStatus>("open")
-  const [lines, setLines] = useState<OrderLineDraft[]>([
+function initialOrderLines(order: Order | undefined): OrderLineDraft[] {
+  if (order?.lines.length) {
+    return order.lines.map((line, index) => ({
+      key: index,
+      productId: line.productId ?? "",
+      quantity: line.quantity.toString(),
+      unitPrice: priceDraftFromValue(line.unitPrice),
+    }))
+  }
+  return [
     {
       key: 0,
       productId: "",
       quantity: "1",
       unitPrice: priceDraftFromValue(undefined),
     },
-  ])
+  ]
+}
+
+export function OrderDialog({
+  characters,
+  initialKind = "client",
+  isAdmin,
+  onOpenChange,
+  open: controlledOpen,
+  order,
+  products,
+  recipes,
+  trigger,
+}: Readonly<{
+  characters: readonly Doc<"characters">[]
+  initialKind?: OrderKind
+  isAdmin: boolean
+  onOpenChange?: (open: boolean) => void
+  open?: boolean
+  order?: Order
+  products: readonly Doc<"products">[]
+  recipes: readonly Recipe[]
+  trigger?: ReactElement | null
+}>) {
+  const saveOrder = useMutation(api.orders.save)
+  const removeOrder = useMutation(api.orders.remove)
+  const fieldId = useId()
+  const nextLineKey = useRef(order?.lines.length ?? 1)
+  const [internalOpen, setInternalOpen] = useState(false)
+  const open = controlledOpen ?? internalOpen
+  const [kind, setKind] = useState<OrderKind>(order?.kind ?? initialKind)
+  const [contactName, setContactName] = useState(order?.contactName ?? "")
+  const [agreedTotal, setAgreedTotal] = useState(order?.total?.toString() ?? "")
+  const [totalOverridden, setTotalOverridden] = useState(
+    order?.total !== undefined
+  )
+  const [dueDate, setDueDate] = useState(() =>
+    dateInputFromTimestamp(order?.dueAt)
+  )
+  const [notes, setNotes] = useState(order?.notes ?? "")
+  const [status, setStatus] = useState<OrderStatus>(order?.status ?? "open")
+  const [processedCharacterId, setProcessedCharacterId] = useState(
+    order?.linkedTransaction?.actorCharacterId ?? ""
+  )
+  const [processedDate, setProcessedDate] = useState(() =>
+    dateInputFromTimestamp(
+      order?.processedAt ?? order?.linkedTransaction?.occurredAt
+    )
+  )
+  const [lines, setLines] = useState<OrderLineDraft[]>(() =>
+    initialOrderLines(order)
+  )
   const [isSubmitting, setIsSubmitting] = useState(false)
 
   function resetForm() {
     setKind(order?.kind ?? initialKind)
     setContactName(order?.contactName ?? "")
+    setAgreedTotal(order?.total?.toString() ?? "")
+    setTotalOverridden(order?.total !== undefined)
     setDueDate(dateInputFromTimestamp(order?.dueAt))
     setNotes(order?.notes ?? "")
     setStatus(order?.status ?? "open")
-    if (order?.lines.length) {
-      setLines(
-        order.lines.map((line, index) => ({
-          key: index,
-          productId: line.productId ?? "",
-          quantity: line.quantity.toString(),
-          unitPrice: priceDraftFromValue(line.unitPrice),
-        }))
+    setProcessedCharacterId(order?.linkedTransaction?.actorCharacterId ?? "")
+    setProcessedDate(
+      dateInputFromTimestamp(
+        order?.processedAt ?? order?.linkedTransaction?.occurredAt
       )
+    )
+    if (order?.lines.length) {
+      setLines(initialOrderLines(order))
       nextLineKey.current = order.lines.length
       return
     }
@@ -155,7 +212,8 @@ export function OrderDialog({
 
   function handleOpenChange(nextOpen: boolean) {
     if (nextOpen && !open) resetForm()
-    setOpen(nextOpen)
+    if (controlledOpen === undefined) setInternalOpen(nextOpen)
+    onOpenChange?.(nextOpen)
   }
 
   function updateLine(key: number, patch: Partial<OrderLineDraft>) {
@@ -196,24 +254,39 @@ export function OrderDialog({
     quantity: Number(line.quantity),
     unitPrice: priceDraftToValue(line.unitPrice),
   }))
-  const previewTotal = lineValues.every(
+  const gross = lineValues.reduce(
+    (sum, line) => sum + line.quantity * (line.unitPrice ?? 0),
+    0
+  )
+  const automaticTotal = lineValues.every(
     (line) =>
       Number.isFinite(line.quantity) &&
       line.quantity > 0 &&
       line.unitPrice !== null &&
       Number.isFinite(line.unitPrice)
   )
-    ? roundSeptimsDown(
-        lineValues.reduce(
-          (sum, line) => sum + line.quantity * (line.unitPrice ?? 0),
-          0
-        )
-      )
+    ? roundSeptimsDown(gross)
     : undefined
+  const displayedTotal = totalOverridden
+    ? agreedTotal
+    : (automaticTotal?.toString() ?? "")
+  const agreedTotalValue = displayedTotal.trim() ? Number(displayedTotal) : null
+  const preparation = calculateOrderPreparation(
+    lines.map((line) => ({
+      productId: line.productId || undefined,
+      productName:
+        products.find((product) => product._id === line.productId)?.name ??
+        "Référence non choisie",
+      quantity: Number(line.quantity),
+    })),
+    products,
+    recipes
+  )
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     const submittedDueAt = timestampFromDateInput(dueDate)
+    const submittedProcessedAt = timestampFromDateInput(processedDate)
     const preparedLines = lines.map((line) => ({
       productId: products.find((product) => product._id === line.productId)
         ?._id,
@@ -231,6 +304,17 @@ export function OrderDialog({
     }
     if (submittedDueAt !== null && !Number.isFinite(submittedDueAt)) {
       toast.error("La date prévue n’est pas valide.")
+      return
+    }
+    if (
+      order?.transactionId &&
+      (!characters.some(
+        (character) => character._id === processedCharacterId
+      ) ||
+        submittedProcessedAt === null ||
+        !Number.isFinite(submittedProcessedAt))
+    ) {
+      toast.error("Choisissez le personnage et la date de la transaction liée.")
       return
     }
     if (
@@ -258,6 +342,13 @@ export function OrderDialog({
       )
       return
     }
+    if (
+      agreedTotalValue !== null &&
+      (!Number.isSafeInteger(agreedTotalValue) || agreedTotalValue < 0)
+    ) {
+      toast.error("Le total convenu doit être un nombre entier de septims.")
+      return
+    }
     const productIds = preparedLines.flatMap((line) =>
       line.productId ? [line.productId] : []
     )
@@ -269,6 +360,13 @@ export function OrderDialog({
     setIsSubmitting(true)
     try {
       await saveOrder({
+        ...(order?.transactionId
+          ? {
+              actorCharacterId:
+                processedCharacterId as Doc<"characters">["_id"],
+              processedAt: submittedProcessedAt!,
+            }
+          : {}),
         contactName: contactName.trim(),
         dueAt: submittedDueAt,
         kind,
@@ -286,14 +384,23 @@ export function OrderDialog({
         notes: notes.trim(),
         ...(order ? { orderId: order._id } : {}),
         status,
+        total: agreedTotalValue,
       })
-      toast.success(order ? "Commande mise à jour." : "Commande créée.")
-      setOpen(false)
+      toast.success(
+        order?.transactionId
+          ? "Commande, transaction et stock mis à jour."
+          : order
+            ? "Commande mise à jour."
+            : "Commande créée."
+      )
+      if (controlledOpen === undefined) setInternalOpen(false)
+      onOpenChange?.(false)
     } catch (error) {
       toast.error(
-        error instanceof Error
-          ? error.message
-          : "Impossible d’enregistrer la commande."
+        getUserFacingErrorMessage(
+          error,
+          "Impossible d’enregistrer la commande."
+        )
       )
     } finally {
       setIsSubmitting(false)
@@ -306,12 +413,11 @@ export function OrderDialog({
     try {
       await removeOrder({ orderId: order._id })
       toast.success("Commande supprimée.")
-      setOpen(false)
+      if (controlledOpen === undefined) setInternalOpen(false)
+      onOpenChange?.(false)
     } catch (error) {
       toast.error(
-        error instanceof Error
-          ? error.message
-          : "Impossible de supprimer la commande."
+        getUserFacingErrorMessage(error, "Impossible de supprimer la commande.")
       )
     } finally {
       setIsSubmitting(false)
@@ -320,14 +426,16 @@ export function OrderDialog({
 
   return (
     <Dialog onOpenChange={handleOpenChange} open={open}>
-      <DialogTrigger asChild>
-        {trigger ?? (
-          <Button>
-            <ClipboardPlus aria-hidden="true" />
-            Nouvelle commande
-          </Button>
-        )}
-      </DialogTrigger>
+      {trigger === null ? null : (
+        <DialogTrigger asChild>
+          {trigger ?? (
+            <Button>
+              <ClipboardPlus aria-hidden="true" />
+              Nouvelle commande
+            </Button>
+          )}
+        </DialogTrigger>
+      )}
       <DialogContent className="max-h-[94svh] overflow-y-auto rounded-[0.2rem] border-[#6a5436] bg-[#eee1c7] ring-0 sm:max-w-3xl">
         <DialogHeader className="pr-8">
           <p className="text-[0.66rem] font-bold tracking-[0.2em] text-primary uppercase">
@@ -337,10 +445,22 @@ export function OrderDialog({
             {order ? "Modifier la commande" : "Créer une commande"}
           </DialogTitle>
           <DialogDescription>
-            Une commande prépare un échange futur et ne modifie pas encore le
-            stock.
+            {order?.transactionId
+              ? "Corrigez la commande sans perdre la transaction déjà associée."
+              : "Une commande prépare un échange futur et ne modifie pas encore le stock."}
           </DialogDescription>
         </DialogHeader>
+
+        {order?.transactionId ? (
+          <Alert className="border-primary/30 bg-primary/[0.04]">
+            <RefreshCw aria-hidden="true" />
+            <AlertTitle>Correction synchronisée</AlertTitle>
+            <AlertDescription>
+              Les lignes, le total, le personnage, la date, la transaction et le
+              stock seront corrigés ensemble.
+            </AlertDescription>
+          </Alert>
+        ) : null}
 
         <form className="grid gap-5" onSubmit={handleSubmit}>
           <div className="grid gap-4 sm:grid-cols-2">
@@ -379,6 +499,50 @@ export function OrderDialog({
               />
             </div>
           </div>
+
+          {order?.transactionId ? (
+            <Card className="gap-0 rounded-none border-primary/25 bg-primary/[0.035] py-0 ring-0">
+              <CardContent className="grid gap-4 p-3 sm:grid-cols-2">
+                <div className="grid min-w-0 gap-2">
+                  <Label htmlFor={`${fieldId}-processed-character`}>
+                    Personnage de la transaction
+                  </Label>
+                  <Select
+                    onValueChange={setProcessedCharacterId}
+                    value={processedCharacterId}
+                  >
+                    <SelectTrigger
+                      className="w-full"
+                      id={`${fieldId}-processed-character`}
+                    >
+                      <SelectValue placeholder="Choisir un personnage" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {characters.map((character) => (
+                        <SelectItem key={character._id} value={character._id}>
+                          {character.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="grid gap-2">
+                  <Label htmlFor={`${fieldId}-processed-date`}>
+                    {kind === "client"
+                      ? "Date du paiement"
+                      : "Date de réception"}
+                  </Label>
+                  <Input
+                    id={`${fieldId}-processed-date`}
+                    onChange={(event) => setProcessedDate(event.target.value)}
+                    required
+                    type="date"
+                    value={processedDate}
+                  />
+                </div>
+              </CardContent>
+            </Card>
+          ) : null}
 
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="grid gap-2">
@@ -445,7 +609,11 @@ export function OrderDialog({
                   <Label>Produit {index + 1}</Label>
                   <ProductPicker
                     onChange={(value) => selectProduct(line.key, value)}
-                    products={products}
+                    products={
+                      kind === "supplier"
+                        ? products.filter((product) => product.tracksStock)
+                        : products
+                    }
                     selectedProductId={line.productId}
                   />
                 </div>
@@ -491,6 +659,13 @@ export function OrderDialog({
             ))}
           </div>
 
+          {kind === "client" ? (
+            <OrderPreparationDetails
+              defaultOpen={!order}
+              preparation={preparation}
+            />
+          ) : null}
+
           <div className="grid gap-2">
             <Label htmlFor={`${fieldId}-notes`}>Notes</Label>
             <Textarea
@@ -502,20 +677,65 @@ export function OrderDialog({
             />
           </div>
 
-          <div className="flex items-center justify-between gap-4 border-y border-border/70 py-3">
-            <p className="text-xs text-muted-foreground">
-              Le total est arrondi au septim inférieur.
-            </p>
-            <p className="font-display text-xl">
-              {previewTotal === undefined
-                ? "À convenir"
-                : formatSeptims(previewTotal)}
-            </p>
-          </div>
+          <Card className="gap-0 rounded-none border-primary/25 bg-primary/[0.035] py-0 ring-0">
+            <CardContent className="grid gap-4 p-3 sm:grid-cols-[minmax(0,1fr)_minmax(13rem,0.8fr)] sm:items-end">
+              <div>
+                <p className="text-[0.65rem] tracking-wider text-muted-foreground uppercase">
+                  Total des lignes
+                </p>
+                <p className="mt-1 font-display text-xl">
+                  {automaticTotal === undefined
+                    ? "À calculer"
+                    : formatSeptims(automaticTotal)}
+                </p>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Base indicative avant négociation du montant final.
+                </p>
+              </div>
+              <div className="grid min-w-0 gap-2">
+                <div className="flex items-center justify-between gap-2">
+                  <Label htmlFor={`${fieldId}-agreed-total`}>
+                    Total convenu
+                  </Label>
+                  {totalOverridden && automaticTotal !== undefined ? (
+                    <Button
+                      className="h-auto px-1 py-0 text-xs"
+                      onClick={() => {
+                        setAgreedTotal("")
+                        setTotalOverridden(false)
+                      }}
+                      type="button"
+                      variant="link"
+                    >
+                      <RefreshCw aria-hidden="true" />
+                      Reprendre le calcul
+                    </Button>
+                  ) : null}
+                </div>
+                <InputGroup className="bg-background/50">
+                  <InputGroupInput
+                    id={`${fieldId}-agreed-total`}
+                    min="0"
+                    onChange={(event) => {
+                      setAgreedTotal(event.target.value)
+                      setTotalOverridden(true)
+                    }}
+                    placeholder="À convenir"
+                    step="1"
+                    type="number"
+                    value={displayedTotal}
+                  />
+                  <InputGroupAddon align="inline-end">
+                    <InputGroupText>septims</InputGroupText>
+                  </InputGroupAddon>
+                </InputGroup>
+              </div>
+            </CardContent>
+          </Card>
 
           <DialogFooter className="gap-2 sm:justify-between">
             <div>
-              {order && isAdmin ? (
+              {order && isAdmin && !order.transactionId ? (
                 <AlertDialog>
                   <AlertDialogTrigger asChild>
                     <Button type="button" variant="ghost">
@@ -549,7 +769,7 @@ export function OrderDialog({
             </div>
             <div className="flex justify-end gap-2">
               <Button
-                onClick={() => setOpen(false)}
+                onClick={() => handleOpenChange(false)}
                 type="button"
                 variant="ghost"
               >

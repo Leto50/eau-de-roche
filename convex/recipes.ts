@@ -1,33 +1,61 @@
 import { ConvexError, v } from "convex/values"
 
-import { type Id } from "./_generated/dataModel"
-import { mutation, query } from "./_generated/server"
+import { type Doc, type Id } from "./_generated/dataModel"
+import { mutation, query, type QueryCtx } from "./_generated/server"
 import { requireAdmin, requireUser } from "./lib/auth"
-import { assertFiniteRange, assertWholeNumberRange } from "./lib/numbers"
+import { assertWholeNumberRange } from "./lib/numbers"
+import { calculateRecipeCost } from "./lib/recipeCost"
+import { recipeFamily } from "./lib/recipeFamilies"
 import { normalizeName } from "./lib/text"
 
-const MAX_COST = 1_000_000_000
 const MAX_EFFECT_LENGTH = 500
-const MAX_FAMILY_LENGTH = 60
 const MAX_INGREDIENTS = 50
 const MAX_NAME_LENGTH = 100
 const MAX_QUANTITY = 1_000_000
+
+async function completeRecipe(
+  ctx: QueryCtx,
+  recipe: Doc<"recipes">,
+  productsById: ReadonlyMap<string, Doc<"products">>
+) {
+  const ingredients = await ctx.db
+    .query("recipeIngredients")
+    .withIndex("by_recipe", (index) => index.eq("recipeId", recipe._id))
+    .collect()
+  const product = recipe.productId
+    ? productsById.get(recipe.productId)
+    : undefined
+  const { cost, missingReferences } = calculateRecipeCost(
+    ingredients,
+    productsById
+  )
+  const storedRecipe = { ...recipe }
+  delete storedRecipe.cost
+
+  return {
+    ...storedRecipe,
+    ...(cost === undefined ? {} : { cost }),
+    ingredients,
+    missingCostReferences: missingReferences,
+    name: product?.name ?? recipe.name,
+  }
+}
 
 export const list = query({
   args: {},
   handler: async (ctx) => {
     await requireUser(ctx)
-    const recipes = await ctx.db.query("recipes").collect()
+    const [recipes, products] = await Promise.all([
+      ctx.db.query("recipes").collect(),
+      ctx.db.query("products").collect(),
+    ])
+    const productsById = new Map(
+      products.map((product) => [product._id, product])
+    )
     const withIngredients = await Promise.all(
       recipes
         .filter((recipe) => recipe.active !== false)
-        .map(async (recipe) => ({
-          ...recipe,
-          ingredients: await ctx.db
-            .query("recipeIngredients")
-            .withIndex("by_recipe", (index) => index.eq("recipeId", recipe._id))
-            .collect(),
-        }))
+        .map((recipe) => completeRecipe(ctx, recipe, productsById))
     )
     return withIngredients.sort((left, right) =>
       left.name.localeCompare(right.name, "fr")
@@ -35,20 +63,68 @@ export const list = query({
   },
 })
 
+export const listCraftableProductIds = query({
+  args: {},
+  handler: async (ctx) => {
+    await requireUser(ctx)
+    const [recipes, products] = await Promise.all([
+      ctx.db.query("recipes").collect(),
+      ctx.db.query("products").collect(),
+    ])
+    const craftableProducts = new Set(
+      products
+        .filter(
+          (product) =>
+            product.active &&
+            product.tracksStock &&
+            product.category === "potion" &&
+            product.craftable !== false
+        )
+        .map((product) => product._id)
+    )
+    return [
+      ...new Set(
+        recipes.flatMap((recipe) =>
+          recipe.active !== false &&
+          recipe.productId &&
+          craftableProducts.has(recipe.productId)
+            ? [recipe.productId]
+            : []
+        )
+      ),
+    ]
+  },
+})
+
+export const listLinkedProductIds = query({
+  args: {},
+  handler: async (ctx) => {
+    await requireUser(ctx)
+    const recipes = await ctx.db.query("recipes").collect()
+    return [
+      ...new Set(
+        recipes.flatMap((recipe) =>
+          recipe.productId ? [recipe.productId] : []
+        )
+      ),
+    ]
+  },
+})
+
 export const listArchived = query({
   args: {},
   handler: async (ctx) => {
     await requireAdmin(ctx)
-    const recipes = await ctx.db.query("recipes").collect()
+    const [recipes, products] = await Promise.all([
+      ctx.db.query("recipes").collect(),
+      ctx.db.query("products").collect(),
+    ])
     const archived = recipes.filter((recipe) => recipe.active === false)
+    const productsById = new Map(
+      products.map((product) => [product._id, product])
+    )
     const withIngredients = await Promise.all(
-      archived.map(async (recipe) => ({
-        ...recipe,
-        ingredients: await ctx.db
-          .query("recipeIngredients")
-          .withIndex("by_recipe", (index) => index.eq("recipeId", recipe._id))
-          .collect(),
-      }))
+      archived.map((recipe) => completeRecipe(ctx, recipe, productsById))
     )
     return withIngredients.sort((left, right) =>
       left.name.localeCompare(right.name, "fr")
@@ -58,9 +134,8 @@ export const listArchived = query({
 
 export const save = mutation({
   args: {
-    cost: v.union(v.number(), v.null()),
     effect: v.string(),
-    family: v.string(),
+    family: recipeFamily,
     ingredients: v.array(
       v.object({
         productId: v.id("products"),
@@ -68,24 +143,18 @@ export const save = mutation({
       })
     ),
     name: v.string(),
-    productId: v.union(v.id("products"), v.null()),
+    outputProductId: v.optional(v.id("products")),
     recipeId: v.optional(v.id("recipes")),
   },
   handler: async (ctx, args) => {
     const user = await requireAdmin(ctx)
     const name = args.name.trim()
-    const family = args.family.trim()
+    const family = args.family
     const effect = args.effect.trim()
     if (!name || name.length > MAX_NAME_LENGTH) {
       throw new ConvexError({
         code: "INVALID_INPUT",
         message: `Le nom doit contenir entre 1 et ${MAX_NAME_LENGTH} caractères.`,
-      })
-    }
-    if (!family || family.length > MAX_FAMILY_LENGTH) {
-      throw new ConvexError({
-        code: "INVALID_INPUT",
-        message: `La famille doit contenir entre 1 et ${MAX_FAMILY_LENGTH} caractères.`,
       })
     }
     if (effect.length > MAX_EFFECT_LENGTH) {
@@ -103,10 +172,6 @@ export const save = mutation({
         message: `Une recette doit contenir entre 1 et ${MAX_INGREDIENTS} ingrédients.`,
       })
     }
-    if (args.cost !== null) {
-      assertFiniteRange(args.cost, 0, MAX_COST, "Le coût")
-    }
-
     const existing = args.recipeId ? await ctx.db.get(args.recipeId) : undefined
     if (args.recipeId && !existing) {
       throw new ConvexError({
@@ -114,6 +179,7 @@ export const save = mutation({
         message: "Recette introuvable.",
       })
     }
+
     const normalizedName = normalizeName(name)
     const recipes = await ctx.db.query("recipes").collect()
     if (
@@ -125,22 +191,129 @@ export const save = mutation({
     ) {
       throw new ConvexError({
         code: "ALREADY_EXISTS",
-        message: "Une recette portant ce nom existe déjà.",
+        message: `Une recette existe déjà sous le nom « ${name} ».`,
       })
     }
 
-    let linkedProductId: Id<"products"> | undefined
-    if (args.productId !== null) {
-      const linkedProduct = await ctx.db.get(args.productId)
-      if (!linkedProduct?.active) {
+    const productsWithName = await ctx.db
+      .query("products")
+      .withIndex("by_normalized_name", (index) =>
+        index.eq("normalizedName", normalizedName)
+      )
+      .collect()
+    let linkedProduct: Doc<"products"> | null
+    if (existing) {
+      linkedProduct = existing.productId
+        ? await ctx.db.get(existing.productId)
+        : null
+      if (!linkedProduct) {
         throw new ConvexError({
           code: "NOT_FOUND",
-          message: "Le produit fabriqué est introuvable ou indisponible.",
+          message: "L’article fabriqué lié à cette recette est introuvable.",
         })
       }
-      linkedProductId = linkedProduct._id
+      if (
+        productsWithName.some((product) => product._id !== linkedProduct?._id)
+      ) {
+        throw new ConvexError({
+          code: "ALREADY_EXISTS",
+          message: `Un article existe déjà sous le nom « ${name} ».`,
+        })
+      }
+      if (
+        linkedProduct.name !== name ||
+        linkedProduct.normalizedName !== normalizedName
+      ) {
+        await ctx.db.patch(linkedProduct._id, { name, normalizedName })
+        linkedProduct = { ...linkedProduct, name, normalizedName }
+        await ctx.db.insert("auditLogs", {
+          action: "product.updated",
+          actorUserId: String(user._id),
+          createdAt: Date.now(),
+          detail: name,
+          entityId: linkedProduct._id,
+          entityType: "product",
+        })
+      }
+    } else if (args.outputProductId) {
+      linkedProduct = await ctx.db.get(args.outputProductId)
+      if (
+        !linkedProduct?.active ||
+        !linkedProduct.tracksStock ||
+        linkedProduct.category !== "potion" ||
+        linkedProduct.craftable === false
+      ) {
+        throw new ConvexError({
+          code: "NOT_FOUND",
+          message: "La potion choisie est introuvable ou non fabricable.",
+        })
+      }
+      if (linkedProduct.normalizedName !== normalizedName) {
+        throw new ConvexError({
+          code: "INVALID_INPUT",
+          message: "La recette doit porter exactement le nom de la potion.",
+        })
+      }
+      if (
+        productsWithName.some((product) => product._id !== linkedProduct?._id)
+      ) {
+        throw new ConvexError({
+          code: "ALREADY_EXISTS",
+          message: `Un autre article existe déjà sous le nom « ${name} ».`,
+        })
+      }
+    } else {
+      if (productsWithName.length > 0) {
+        throw new ConvexError({
+          code: "ALREADY_EXISTS",
+          message: `Choisissez l’article existant « ${name} » comme potion obtenue.`,
+        })
+      }
+      const productId = await ctx.db.insert("products", {
+        active: true,
+        category: "potion",
+        craftable: true,
+        currentStock: 0,
+        minimumStock: 0,
+        name,
+        normalizedName,
+        tracksStock: true,
+      })
+      linkedProduct = await ctx.db.get(productId)
+      await ctx.db.insert("auditLogs", {
+        action: "product.created",
+        actorUserId: String(user._id),
+        createdAt: Date.now(),
+        detail: name,
+        entityId: productId,
+        entityType: "product",
+      })
     }
 
+    if (
+      !linkedProduct?.active ||
+      !linkedProduct.tracksStock ||
+      linkedProduct.category !== "potion" ||
+      linkedProduct.craftable === false
+    ) {
+      throw new ConvexError({
+        code: "NOT_FOUND",
+        message: "La potion fabriquée est introuvable ou non fabricable.",
+      })
+    }
+    if (
+      recipes.some(
+        (recipe) =>
+          recipe._id !== args.recipeId && recipe.productId === linkedProduct._id
+      )
+    ) {
+      throw new ConvexError({
+        code: "ALREADY_EXISTS",
+        message: `Une recette existe déjà pour « ${linkedProduct.name} ».`,
+      })
+    }
+
+    const ingredientProductsById = new Map<string, Doc<"products">>()
     const seenProducts = new Set<string>()
     const preparedIngredients = await Promise.all(
       args.ingredients.map(async (ingredient) => {
@@ -164,6 +337,13 @@ export const save = mutation({
             message: "Un ingrédient est introuvable ou indisponible.",
           })
         }
+        if (product._id === linkedProduct._id) {
+          throw new ConvexError({
+            code: "INVALID_INPUT",
+            message: "Un article ne peut pas être son propre ingrédient.",
+          })
+        }
+        ingredientProductsById.set(product._id, product)
         return {
           ingredientName: product.name,
           productId: product._id,
@@ -173,14 +353,19 @@ export const save = mutation({
       })
     )
 
+    const { cost } = calculateRecipeCost(
+      preparedIngredients,
+      ingredientProductsById
+    )
+
     const details = {
       active: existing?.active ?? true,
-      ...(args.cost === null ? {} : { cost: args.cost }),
+      ...(cost === undefined ? {} : { cost }),
       ...(effect ? { effect } : {}),
       family,
       ...(existing?.legacyKey ? { legacyKey: existing.legacyKey } : {}),
       name,
-      ...(linkedProductId ? { productId: linkedProductId } : {}),
+      productId: linkedProduct._id,
     }
     let recipeId: Id<"recipes">
     if (existing) {
@@ -227,6 +412,23 @@ export const setActive = mutation({
         code: "NOT_FOUND",
         message: "Recette introuvable.",
       })
+    }
+    if (args.active) {
+      const product = recipe.productId
+        ? await ctx.db.get(recipe.productId)
+        : null
+      if (
+        !product?.active ||
+        !product.tracksStock ||
+        product.category !== "potion" ||
+        product.craftable === false
+      ) {
+        throw new ConvexError({
+          code: "INVALID_OPERATION",
+          message:
+            "Rendez d’abord la potion fabricable avant de réactiver sa recette.",
+        })
+      }
     }
     await ctx.db.patch(recipe._id, { active: args.active })
     await ctx.db.insert("auditLogs", {

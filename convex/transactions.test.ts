@@ -25,6 +25,52 @@ async function seedStock(backend: ReturnType<typeof createTestBackend>) {
 }
 
 describe("transactions.record", () => {
+  it("réserve la production aux produits qui possèdent une recette active", async () => {
+    const backend = createTestBackend()
+    const member = await asAuthenticatedUser(backend)
+    const { characterId, productId } = await seedStock(backend)
+
+    await expect(
+      member.mutation(api.transactions.record, {
+        characterId,
+        kind: "production",
+        occurredAt: Date.now(),
+        productId,
+        quantity: 2,
+      })
+    ).rejects.toThrowError("aucune recette active")
+
+    await backend.run((ctx) =>
+      ctx.db.insert("recipes", {
+        active: true,
+        family: "Soins",
+        name: "Potion de soin",
+        productId,
+      })
+    )
+    await member.mutation(api.transactions.record, {
+      characterId,
+      kind: "production",
+      occurredAt: Date.now(),
+      productId,
+      quantity: 2,
+    })
+
+    const product = await backend.run((ctx) => ctx.db.get(productId))
+    expect(product?.currentStock).toBe(12)
+
+    await backend.run((ctx) => ctx.db.patch(productId, { craftable: false }))
+    await expect(
+      member.mutation(api.transactions.record, {
+        characterId,
+        kind: "production",
+        occurredAt: Date.now(),
+        productId,
+        quantity: 1,
+      })
+    ).rejects.toThrowError("trouvée uniquement")
+  })
+
   it("écrit atomiquement la vente, le mouvement, l'audit et le nouveau stock", async () => {
     const backend = createTestBackend()
     const member = await asAuthenticatedUser(backend)
@@ -165,6 +211,91 @@ describe("transactions.record", () => {
   })
 })
 
+describe("transactions.recordExchange", () => {
+  it("mélange produits, lot, service et achat dans un seul panier", async () => {
+    const backend = createTestBackend()
+    const member = await asAuthenticatedUser(backend)
+    const { characterId, productId } = await seedStock(backend)
+    const references = await backend.run(async (ctx) => {
+      const ingredientId = await ctx.db.insert("products", {
+        active: true,
+        category: "ingredient",
+        currentStock: 1,
+        minimumStock: 0,
+        name: "Ail du test",
+        normalizedName: "ail du test",
+        purchasePrice: 1 / 4,
+        tracksStock: true,
+      })
+      const serviceId = await ctx.db.insert("products", {
+        active: true,
+        category: "service",
+        currentStock: 0,
+        minimumStock: 0,
+        name: "Location test",
+        normalizedName: "location test",
+        salePrice: 20,
+        tracksStock: false,
+      })
+      const bundleId = await ctx.db.insert("bundles", {
+        active: true,
+        name: "Lot du test",
+        price: 30,
+      })
+      await ctx.db.insert("bundleItems", {
+        bundleId,
+        productId,
+        productName: "Potion de soin",
+        quantity: 2,
+      })
+      return { bundleId, ingredientId, serviceId }
+    })
+
+    const result = await member.mutation(api.transactions.recordExchange, {
+      characterId,
+      lines: [
+        {
+          bundleId: references.bundleId,
+          direction: "outgoing",
+          kind: "bundle",
+          quantity: 1,
+        },
+        {
+          direction: "outgoing",
+          kind: "product",
+          productId: references.serviceId,
+          quantity: 1,
+        },
+        {
+          direction: "incoming",
+          kind: "product",
+          productId: references.ingredientId,
+          quantity: 4,
+        },
+      ],
+      occurredAt: Date.now(),
+    })
+    const state = await backend.run(async (ctx) => ({
+      ingredient: await ctx.db.get(references.ingredientId),
+      lines: await ctx.db.query("transactionLines").collect(),
+      potion: await ctx.db.get(productId),
+      transactions: await ctx.db.query("transactions").collect(),
+    }))
+
+    expect(result).toMatchObject({
+      incomingTotal: 1,
+      outgoingTotal: 50,
+      total: 49,
+    })
+    expect(state.transactions[0]).toMatchObject({ kind: "exchange" })
+    expect(state.potion?.currentStock).toBe(8)
+    expect(state.ingredient?.currentStock).toBe(5)
+    expect(state.lines.map((line) => line.direction)).toEqual(
+      expect.arrayContaining(["incoming", "outgoing"])
+    )
+  })
+})
+
 describe("transactions.recordTrade", () => {
   it("enregistre un achat multi-produits dans une seule transaction", async () => {
     const backend = createTestBackend()
@@ -274,7 +405,7 @@ describe("transactions.recordTrade", () => {
     const { bundleId, secondProductId } = await backend.run(async (ctx) => {
       const secondProductId = await ctx.db.insert("products", {
         active: true,
-        category: "annexe",
+        category: "ingredient",
         currentStock: 5,
         minimumStock: 1,
         name: "Sacoche d’apothicaire",
@@ -455,6 +586,67 @@ describe("transactions.recordTrade", () => {
     )
     expect(result.total).toBe(1)
     expect(transaction?.total).toBe(1)
+  })
+})
+
+describe("transactions.listPage et getDetails", () => {
+  it("pagine les résumés sans charger les lignes de chaque opération", async () => {
+    const backend = createTestBackend()
+    const member = await asAuthenticatedUser(backend)
+    const { characterId, productId } = await seedStock(backend)
+    const now = Date.now()
+    for (const offset of [1, 2, 3]) {
+      await member.mutation(api.transactions.recordTrade, {
+        characterId,
+        kind: "sale",
+        lines: [{ kind: "product", productId, quantity: 1 }],
+        occurredAt: now - offset,
+      })
+    }
+
+    const firstPage = await member.query(api.transactions.listPage, {
+      paginationOpts: { cursor: null, numItems: 2 },
+    })
+    const secondPage = await member.query(api.transactions.listPage, {
+      paginationOpts: {
+        cursor: firstPage.continueCursor,
+        numItems: 2,
+      },
+    })
+
+    expect(firstPage.page).toHaveLength(2)
+    expect(firstPage.isDone).toBe(false)
+    expect(firstPage.page[0]).toMatchObject({
+      canDelete: true,
+      canManage: true,
+    })
+    expect(firstPage.page[0]).not.toHaveProperty("lines")
+    expect(firstPage.page[0]).not.toHaveProperty("stockDeltas")
+    expect(secondPage.page).toHaveLength(1)
+    expect(secondPage.isDone).toBe(true)
+  })
+
+  it("charge les lignes et variations de stock pour une seule opération", async () => {
+    const backend = createTestBackend()
+    const member = await asAuthenticatedUser(backend)
+    const { characterId, productId } = await seedStock(backend)
+    const recorded = await member.mutation(api.transactions.recordTrade, {
+      characterId,
+      kind: "sale",
+      lines: [{ kind: "product", productId, quantity: 3 }],
+      occurredAt: Date.now(),
+    })
+
+    const details = await member.query(api.transactions.getDetails, {
+      transactionId: recorded.transactionId,
+    })
+
+    expect(details?.lines).toHaveLength(1)
+    expect(details?.lines[0]).toMatchObject({
+      productId,
+      quantity: 3,
+    })
+    expect(details?.stockDeltas).toEqual([{ delta: -3, productId }])
   })
 })
 

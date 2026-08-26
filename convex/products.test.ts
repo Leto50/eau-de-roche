@@ -20,6 +20,7 @@ describe("products.save", () => {
 
     const product = await backend.run((ctx) => ctx.db.get(productId))
     expect(product).toMatchObject({
+      craftable: true,
       currentStock: 12,
       minimumStock: 2,
       purchasePrice: 1 / 8,
@@ -52,8 +53,8 @@ describe("products.save", () => {
   it("permet à un administrateur de modifier les prix et trace un ajustement de stock", async () => {
     const backend = createTestBackend()
     const admin = await asAuthenticatedUser(backend, "admin")
-    const productId = await backend.run((ctx) =>
-      ctx.db.insert("products", {
+    const productId = await backend.run(async (ctx) => {
+      const id = await ctx.db.insert("products", {
         active: true,
         category: "potion",
         currentStock: 8,
@@ -64,7 +65,14 @@ describe("products.save", () => {
         salePrice: 11,
         tracksStock: true,
       })
-    )
+      await ctx.db.insert("recipes", {
+        active: true,
+        family: "Vigueur",
+        name: "Potion de vigueur",
+        productId: id,
+      })
+      return id
+    })
 
     await admin.mutation(api.products.save, {
       active: true,
@@ -90,6 +98,7 @@ describe("products.save", () => {
       audits: await ctx.db.query("auditLogs").collect(),
       movements: await ctx.db.query("stockMovements").collect(),
       product: await ctx.db.get(productId),
+      recipes: await ctx.db.query("recipes").collect(),
       transactions: await ctx.db.query("transactions").collect(),
     }))
     expect(state.product).toMatchObject({
@@ -99,6 +108,7 @@ describe("products.save", () => {
       purchasePrice: 6,
       salePrice: 15,
     })
+    expect(state.recipes[0]?.name).toBe("Potion de vigueur supérieure")
     expect(state.transactions).toHaveLength(1)
     expect(state.transactions[0]).toMatchObject({
       kind: "adjustment",
@@ -116,6 +126,67 @@ describe("products.save", () => {
       "product.archived",
       "product.reactivated",
     ])
+  })
+
+  it("répercute le renommage d’un ingrédient dans les recettes et les lots", async () => {
+    const backend = createTestBackend()
+    const admin = await asAuthenticatedUser(backend, "admin")
+    const productId = await backend.run(async (ctx) => {
+      const ingredientId = await ctx.db.insert("products", {
+        active: true,
+        category: "ingredient",
+        currentStock: 5,
+        minimumStock: 1,
+        name: "Fleur pâle",
+        normalizedName: "fleur pale",
+        purchasePrice: 2,
+        tracksStock: true,
+      })
+      const recipeId = await ctx.db.insert("recipes", {
+        active: true,
+        family: "Essais",
+        name: "Décoction claire",
+      })
+      await ctx.db.insert("recipeIngredients", {
+        ingredientName: "Fleur pâle",
+        productId: ingredientId,
+        quantity: 3,
+        raw: "3 Fleur pâle",
+        recipeId,
+      })
+      const bundleId = await ctx.db.insert("bundles", {
+        active: true,
+        name: "Nécessaire d’alchimiste",
+      })
+      await ctx.db.insert("bundleItems", {
+        bundleId,
+        productId: ingredientId,
+        productName: "Fleur pâle",
+        quantity: 2,
+      })
+      return ingredientId
+    })
+
+    await admin.mutation(api.products.save, {
+      active: true,
+      category: "ingredient",
+      minimumStock: 1,
+      name: "Fleur des brumes",
+      productId,
+      purchasePrice: 2,
+      salePrice: null,
+      targetStock: 5,
+    })
+
+    const state = await backend.run(async (ctx) => ({
+      bundleItems: await ctx.db.query("bundleItems").collect(),
+      recipeIngredients: await ctx.db.query("recipeIngredients").collect(),
+    }))
+    expect(state.recipeIngredients[0]).toMatchObject({
+      ingredientName: "Fleur des brumes",
+      raw: "3 Fleur des brumes",
+    })
+    expect(state.bundleItems[0]?.productName).toBe("Fleur des brumes")
   })
 
   it("refuse une correction de stock sans motif sans écriture partielle", async () => {
@@ -156,6 +227,47 @@ describe("products.save", () => {
     expect(state.audits).toHaveLength(0)
   })
 
+  it("refuse de rendre non fabricable une potion qui possède une recette active", async () => {
+    const backend = createTestBackend()
+    const admin = await asAuthenticatedUser(backend, "admin")
+    const productId = await backend.run(async (ctx) => {
+      const id = await ctx.db.insert("products", {
+        active: true,
+        category: "potion",
+        craftable: true,
+        currentStock: 2,
+        minimumStock: 1,
+        name: "Potion liée",
+        normalizedName: "potion liee",
+        tracksStock: true,
+      })
+      await ctx.db.insert("recipes", {
+        active: true,
+        family: "Soin",
+        name: "Potion liée",
+        productId: id,
+      })
+      return id
+    })
+
+    await expect(
+      admin.mutation(api.products.save, {
+        active: true,
+        category: "potion",
+        craftable: false,
+        minimumStock: 1,
+        name: "Potion liée",
+        productId,
+        purchasePrice: null,
+        salePrice: null,
+        targetStock: 2,
+      })
+    ).rejects.toThrowError("Archivez d’abord la recette active")
+
+    const product = await backend.run((ctx) => ctx.db.get(productId))
+    expect(product?.craftable).toBe(true)
+  })
+
   it("refuse la gestion du catalogue à un employé", async () => {
     const backend = createTestBackend()
     const employee = await asAuthenticatedUser(backend)
@@ -163,7 +275,7 @@ describe("products.save", () => {
     await expect(
       employee.mutation(api.products.save, {
         active: true,
-        category: "annexe",
+        category: "ingredient",
         minimumStock: 0,
         name: "Flacon vide",
         purchasePrice: 1,

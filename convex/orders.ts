@@ -1,13 +1,24 @@
-import { ConvexError, v } from "convex/values"
+import { ConvexError, type Infer, v } from "convex/values"
 
-import { type Id } from "./_generated/dataModel"
-import { mutation, query } from "./_generated/server"
+import { type Doc, type Id } from "./_generated/dataModel"
+import {
+  mutation,
+  query,
+  type MutationCtx,
+  type QueryCtx,
+} from "./_generated/server"
 import { requireAdmin, requireUser } from "./lib/auth"
+import {
+  type exchangeLineValidator,
+  loadStockBeforeTransaction,
+  prepareExchange,
+} from "./lib/exchange"
 import {
   assertFiniteRange,
   assertWholeNumberRange,
   roundSeptimsDown,
 } from "./lib/numbers"
+import { orderTransactionLabel, withOrderTotal } from "./lib/order"
 import { normalizeName } from "./lib/text"
 import { orderKind, orderStatus } from "./lib/validators"
 
@@ -17,19 +28,201 @@ const MAX_NOTES_LENGTH = 1_000
 const MAX_PRICE = 1_000_000_000
 const MAX_QUANTITY = 1_000_000
 
+interface OrderLineForExchange {
+  bundleId?: Id<"bundles">
+  kind?: "bundle" | "product"
+  productId?: Id<"products">
+  productName: string
+  quantity: number
+  unitPrice?: number
+}
+
+interface LinkedTransactionCorrection {
+  actorCharacterId: Id<"characters">
+  actorName: string
+  occurredAt: number
+}
+
+function exchangeLinesFromOrder(
+  kind: Doc<"orders">["kind"],
+  lines: readonly OrderLineForExchange[]
+): Array<Infer<typeof exchangeLineValidator>> {
+  const direction = kind === "client" ? "outgoing" : "incoming"
+  return lines.map((line) => {
+    if (line.unitPrice === undefined) {
+      throw new ConvexError({
+        code: "ORDER_PRICE_REQUIRED",
+        message:
+          "Renseignez le prix de chaque ligne avant de traiter la commande.",
+      })
+    }
+    if (line.kind === "bundle") {
+      if (direction === "incoming" || !line.bundleId) {
+        throw new ConvexError({
+          code: "INVALID_OPERATION",
+          message: "Une commande fournisseur ne peut pas recevoir un lot.",
+        })
+      }
+      return {
+        bundleId: line.bundleId,
+        direction: "outgoing",
+        kind: "bundle",
+        quantity: line.quantity,
+        unitPrice: line.unitPrice,
+      }
+    }
+    if (!line.productId) {
+      throw new ConvexError({
+        code: "UNLINKED_ORDER_LINE",
+        message: `La référence « ${line.productName} » doit être reliée à un produit avant de traiter la commande.`,
+      })
+    }
+    return {
+      direction,
+      kind: "product",
+      productId: line.productId,
+      quantity: line.quantity,
+      unitPrice: line.unitPrice,
+    }
+  })
+}
+
+async function synchronizeLinkedTransaction(
+  ctx: MutationCtx,
+  transaction: Doc<"transactions">,
+  orderId: Id<"orders">,
+  orderKind: Doc<"orders">["kind"],
+  contactName: string,
+  exchangeLines: readonly Infer<typeof exchangeLineValidator>[],
+  total: number,
+  correction?: LinkedTransactionCorrection
+) {
+  const { movements, states } = await loadStockBeforeTransaction(
+    ctx,
+    transaction._id
+  )
+  const baseStocks = new Map(
+    [...states].map(([productId, state]) => [productId, state.baseStock])
+  )
+  const prepared = withOrderTotal(
+    await prepareExchange(ctx, exchangeLines, { baseStocks }),
+    orderKind,
+    total
+  )
+  const oldLines = await ctx.db
+    .query("transactionLines")
+    .withIndex("by_transaction", (index) =>
+      index.eq("transactionId", transaction._id)
+    )
+    .collect()
+  const stockIds = new Set([...states.keys(), ...prepared.deltas.keys()])
+
+  await Promise.all([
+    ...oldLines.map((line) => ctx.db.delete(line._id)),
+    ...movements.map((movement) => ctx.db.delete(movement._id)),
+  ])
+  for (const productId of stockIds) {
+    const state = states.get(productId)
+    const newDelta = prepared.deltas.get(productId)
+    const product = state?.product ?? newDelta?.product
+    if (!product) continue
+    const baseStock = state?.baseStock ?? product.currentStock
+    await ctx.db.patch(product._id, {
+      currentStock: baseStock + (newDelta?.delta ?? 0),
+    })
+  }
+
+  const firstLine = prepared.lines[0]
+  const occurredAt = correction?.occurredAt ?? transaction.occurredAt
+  await ctx.db.replace(transaction._id, {
+    ...((correction?.actorCharacterId ?? transaction.actorCharacterId)
+      ? {
+          actorCharacterId:
+            correction?.actorCharacterId ?? transaction.actorCharacterId,
+        }
+      : {}),
+    actorName: correction?.actorName ?? transaction.actorName,
+    ...(transaction.actorUserId
+      ? { actorUserId: transaction.actorUserId }
+      : {}),
+    ...(transaction.comment ? { comment: transaction.comment } : {}),
+    counterparty: contactName,
+    incomingTotal: prepared.incomingTotal,
+    kind: prepared.kind,
+    ...(transaction.legacyKey ? { legacyKey: transaction.legacyKey } : {}),
+    lineCount: prepared.lines.length,
+    occurredAt,
+    orderId,
+    outgoingTotal: prepared.outgoingTotal,
+    ...(prepared.lines.length === 1 && firstLine?.productId
+      ? { productId: firstLine.productId }
+      : {}),
+    productName: orderTransactionLabel(orderKind, contactName),
+    quantity: prepared.lines.reduce((sum, line) => sum + line.quantity, 0),
+    source: transaction.source,
+    total: prepared.total,
+    ...(prepared.lines.length === 1 && firstLine
+      ? { unitPrice: firstLine.unitPrice }
+      : {}),
+  })
+  for (const line of prepared.lines) {
+    await ctx.db.insert("transactionLines", {
+      ...(line.bundleId ? { bundleId: line.bundleId } : {}),
+      direction: line.direction,
+      kind: line.kind,
+      ...(line.productId ? { productId: line.productId } : {}),
+      productName: line.productName,
+      quantity: line.quantity,
+      total: line.total,
+      transactionId: transaction._id,
+      unitPrice: line.unitPrice,
+    })
+  }
+  for (const { delta, product } of prepared.deltas.values()) {
+    const baseStock = states.get(product._id)?.baseStock ?? product.currentStock
+    const resultingStock = baseStock + delta
+    await ctx.db.insert("stockMovements", {
+      delta,
+      occurredAt,
+      previousStock: baseStock,
+      productId: product._id,
+      reason: prepared.kind,
+      resultingStock,
+      transactionId: transaction._id,
+    })
+  }
+  return prepared
+}
+
+async function withOrderDetails(ctx: QueryCtx, order: Doc<"orders">) {
+  const [lines, linkedTransaction] = await Promise.all([
+    ctx.db
+      .query("orderLines")
+      .withIndex("by_order", (index) => index.eq("orderId", order._id))
+      .collect(),
+    order.transactionId ? ctx.db.get(order.transactionId) : null,
+  ])
+  return { ...order, lines, linkedTransaction }
+}
+
+export const getById = query({
+  args: {
+    orderId: v.id("orders"),
+  },
+  handler: async (ctx, args) => {
+    await requireUser(ctx)
+    const order = await ctx.db.get(args.orderId)
+    return order ? withOrderDetails(ctx, order) : null
+  },
+})
+
 export const list = query({
   args: {},
   handler: async (ctx) => {
     await requireUser(ctx)
     const orders = await ctx.db.query("orders").collect()
     const withLines = await Promise.all(
-      orders.map(async (order) => ({
-        ...order,
-        lines: await ctx.db
-          .query("orderLines")
-          .withIndex("by_order", (index) => index.eq("orderId", order._id))
-          .collect(),
-      }))
+      orders.map((order) => withOrderDetails(ctx, order))
     )
 
     return withLines.sort((left, right) => {
@@ -44,6 +237,7 @@ export const list = query({
 
 export const save = mutation({
   args: {
+    actorCharacterId: v.optional(v.id("characters")),
     contactName: v.string(),
     dueAt: v.union(v.number(), v.null()),
     kind: orderKind,
@@ -56,7 +250,9 @@ export const save = mutation({
     ),
     notes: v.string(),
     orderId: v.optional(v.id("orders")),
+    processedAt: v.optional(v.number()),
     status: orderStatus,
+    total: v.union(v.number(), v.null()),
   },
   handler: async (ctx, args) => {
     const user = await requireUser(ctx)
@@ -96,6 +292,62 @@ export const save = mutation({
         message: "Commande introuvable.",
       })
     }
+    const linkedTransaction = existing?.transactionId
+      ? await ctx.db.get(existing.transactionId)
+      : undefined
+    if (existing?.transactionId && !linkedTransaction) {
+      throw new ConvexError({
+        code: "LINKED_TRANSACTION_MISSING",
+        message:
+          "La transaction liée à cette commande est introuvable. Aucune correction n’a été appliquée.",
+      })
+    }
+    if (
+      linkedTransaction?.orderId &&
+      linkedTransaction.orderId !== existing?._id
+    ) {
+      throw new ConvexError({
+        code: "INVALID_LINKED_TRANSACTION",
+        message: "La transaction est liée à une autre commande.",
+      })
+    }
+    if (
+      !linkedTransaction &&
+      (args.actorCharacterId !== undefined || args.processedAt !== undefined)
+    ) {
+      throw new ConvexError({
+        code: "INVALID_OPERATION",
+        message:
+          "Le personnage et la date ne peuvent être corrigés qu’après le traitement de la commande.",
+      })
+    }
+    if (
+      linkedTransaction &&
+      (args.actorCharacterId === undefined) !== (args.processedAt === undefined)
+    ) {
+      throw new ConvexError({
+        code: "INVALID_INPUT",
+        message:
+          "Le personnage et la date de la transaction doivent être corrigés ensemble.",
+      })
+    }
+    if (args.processedAt !== undefined) {
+      assertFiniteRange(
+        args.processedAt,
+        0,
+        Date.now() + 86_400_000,
+        "La date de transaction"
+      )
+    }
+    const correctedCharacter = args.actorCharacterId
+      ? await ctx.db.get(args.actorCharacterId)
+      : undefined
+    if (args.actorCharacterId && !correctedCharacter?.active) {
+      throw new ConvexError({
+        code: "NOT_FOUND",
+        message: "Personnage introuvable ou archivé.",
+      })
+    }
 
     const seenProducts = new Set<string>()
     const preparedLines = await Promise.all(
@@ -113,6 +365,13 @@ export const save = mutation({
           throw new ConvexError({
             code: "NOT_FOUND",
             message: "Une référence est introuvable ou indisponible.",
+          })
+        }
+        if (args.kind === "supplier" && !product.tracksStock) {
+          throw new ConvexError({
+            code: "INVALID_OPERATION",
+            message:
+              "Une commande fournisseur ne peut pas contenir un service.",
           })
         }
         if (line.unitPrice !== null) {
@@ -152,12 +411,15 @@ export const save = mutation({
         unitPrice: number
       } => line.total !== undefined
     )
-    const total =
+    const gross = pricedLines.reduce((sum, line) => sum + line.total, 0)
+    if (args.total !== null) {
+      assertWholeNumberRange(args.total, 0, MAX_PRICE, "Le total convenu")
+    }
+    const automaticTotal =
       pricedLines.length === preparedLines.length
-        ? roundSeptimsDown(
-            pricedLines.reduce((sum, line) => sum + line.total, 0)
-          )
+        ? roundSeptimsDown(gross)
         : undefined
+    const total = args.total ?? automaticTotal
     const details = {
       contactId,
       contactName,
@@ -165,8 +427,14 @@ export const save = mutation({
       kind: args.kind,
       ...(existing?.legacyKey ? { legacyKey: existing.legacyKey } : {}),
       ...(notes ? { notes } : {}),
+      ...(existing?.processedAt === undefined && args.processedAt === undefined
+        ? {}
+        : { processedAt: args.processedAt ?? existing?.processedAt }),
       status: args.status,
       ...(total === undefined ? {} : { total }),
+      ...(existing?.transactionId
+        ? { transactionId: existing.transactionId }
+        : {}),
     }
     let orderId: Id<"orders">
     if (existing) {
@@ -186,11 +454,39 @@ export const save = mutation({
         ctx.db.insert("orderLines", { orderId, ...line })
       )
     )
+    let synchronizedTotal: number | undefined
+    if (linkedTransaction) {
+      if (total === undefined) {
+        throw new ConvexError({
+          code: "ORDER_PRICE_REQUIRED",
+          message:
+            "Renseignez le total convenu avant de corriger cette commande.",
+        })
+      }
+      const exchangeLines = exchangeLinesFromOrder(args.kind, preparedLines)
+      const synchronized = await synchronizeLinkedTransaction(
+        ctx,
+        linkedTransaction,
+        orderId,
+        args.kind,
+        contactName,
+        exchangeLines,
+        total,
+        correctedCharacter && args.processedAt !== undefined
+          ? {
+              actorCharacterId: correctedCharacter._id,
+              actorName: correctedCharacter.name,
+              occurredAt: args.processedAt,
+            }
+          : undefined
+      )
+      synchronizedTotal = synchronized.total
+    }
     await ctx.db.insert("auditLogs", {
       action: existing ? "order.updated" : "order.created",
       actorUserId: String(user._id),
       createdAt: Date.now(),
-      detail: `${contactName}:${preparedLines.length}`,
+      detail: `${contactName}:${preparedLines.length}${synchronizedTotal === undefined ? "" : `:${synchronizedTotal}`}`,
       entityId: orderId,
       entityType: "order",
     })
@@ -207,6 +503,12 @@ export const remove = mutation({
       throw new ConvexError({
         code: "NOT_FOUND",
         message: "Commande introuvable.",
+      })
+    }
+    if (order.transactionId) {
+      throw new ConvexError({
+        code: "ORDER_ALREADY_PROCESSED",
+        message: "Supprimez d’abord la transaction liée à cette commande.",
       })
     }
     const lines = await ctx.db
@@ -250,5 +552,164 @@ export const updateStatus = mutation({
       entityId: order._id,
       entityType: "order",
     })
+  },
+})
+
+export const process = mutation({
+  args: {
+    characterId: v.id("characters"),
+    occurredAt: v.number(),
+    orderId: v.id("orders"),
+  },
+  handler: async (ctx, args) => {
+    const user = await requireUser(ctx)
+    const [order, character] = await Promise.all([
+      ctx.db.get(args.orderId),
+      ctx.db.get(args.characterId),
+    ])
+    if (!order) {
+      throw new ConvexError({
+        code: "NOT_FOUND",
+        message: "Commande introuvable.",
+      })
+    }
+    if (!order.transactionId && order.status === "cancelled") {
+      throw new ConvexError({
+        code: "INVALID_OPERATION",
+        message: "Une commande annulée ne peut pas être traitée.",
+      })
+    }
+    if (!character?.active) {
+      throw new ConvexError({
+        code: "NOT_FOUND",
+        message: "Personnage introuvable ou archivé.",
+      })
+    }
+    assertFiniteRange(args.occurredAt, 0, Date.now() + 86_400_000, "La date")
+    if (order.transactionId) {
+      const transaction = await ctx.db.get(order.transactionId)
+      if (transaction?.orderId !== order._id) {
+        throw new ConvexError({
+          code: "LINKED_TRANSACTION_MISSING",
+          message:
+            "La transaction liée à cette commande est introuvable. Aucune correction n’a été appliquée.",
+        })
+      }
+      const movements = await ctx.db
+        .query("stockMovements")
+        .withIndex("by_transaction", (index) =>
+          index.eq("transactionId", transaction._id)
+        )
+        .collect()
+      await ctx.db.patch(transaction._id, {
+        actorCharacterId: character._id,
+        actorName: character.name,
+        actorUserId: String(user._id),
+        occurredAt: args.occurredAt,
+      })
+      await Promise.all(
+        movements.map((movement) =>
+          ctx.db.patch(movement._id, { occurredAt: args.occurredAt })
+        )
+      )
+      await ctx.db.patch(order._id, { processedAt: args.occurredAt })
+      await ctx.db.insert("auditLogs", {
+        action:
+          order.kind === "client"
+            ? "order.payment_updated"
+            : "order.reception_updated",
+        actorUserId: String(user._id),
+        createdAt: Date.now(),
+        detail: `${order.contactName}:${transaction.total}`,
+        entityId: order._id,
+        entityType: "order",
+      })
+      return {
+        total: transaction.total,
+        transactionId: transaction._id,
+        updated: true,
+      }
+    }
+    const orderLines = await ctx.db
+      .query("orderLines")
+      .withIndex("by_order", (index) => index.eq("orderId", order._id))
+      .collect()
+    if (
+      orderLines.length === 0 ||
+      orderLines.some((line) => line.unitPrice === undefined)
+    ) {
+      throw new ConvexError({
+        code: "ORDER_PRICE_REQUIRED",
+        message:
+          "Renseignez le prix de chaque ligne avant de traiter la commande.",
+      })
+    }
+    const exchangeLines = exchangeLinesFromOrder(order.kind, orderLines)
+    const preparedFromLines = await prepareExchange(ctx, exchangeLines)
+    const agreedTotal = order.total ?? Math.abs(preparedFromLines.total)
+    assertWholeNumberRange(agreedTotal, 0, MAX_PRICE, "Le total convenu")
+    const prepared = withOrderTotal(preparedFromLines, order.kind, agreedTotal)
+    const firstLine = prepared.lines[0]
+    const transactionId = await ctx.db.insert("transactions", {
+      actorCharacterId: character._id,
+      actorName: character.name,
+      actorUserId: String(user._id),
+      counterparty: order.contactName,
+      incomingTotal: prepared.incomingTotal,
+      kind: prepared.kind,
+      lineCount: prepared.lines.length,
+      occurredAt: args.occurredAt,
+      orderId: order._id,
+      outgoingTotal: prepared.outgoingTotal,
+      productName: orderTransactionLabel(order.kind, order.contactName),
+      quantity: prepared.lines.reduce((sum, line) => sum + line.quantity, 0),
+      source: "web",
+      total: prepared.total,
+      ...(prepared.lines.length === 1 && firstLine
+        ? { unitPrice: firstLine.unitPrice }
+        : {}),
+    })
+    for (const line of prepared.lines) {
+      await ctx.db.insert("transactionLines", {
+        ...(line.bundleId ? { bundleId: line.bundleId } : {}),
+        direction: line.direction,
+        kind: line.kind,
+        ...(line.productId ? { productId: line.productId } : {}),
+        productName: line.productName,
+        quantity: line.quantity,
+        total: line.total,
+        transactionId,
+        unitPrice: line.unitPrice,
+      })
+    }
+    for (const { delta, product } of prepared.deltas.values()) {
+      const resultingStock = product.currentStock + delta
+      await ctx.db.patch(product._id, { currentStock: resultingStock })
+      await ctx.db.insert("stockMovements", {
+        delta,
+        occurredAt: args.occurredAt,
+        previousStock: product.currentStock,
+        productId: product._id,
+        reason: prepared.kind,
+        resultingStock,
+        transactionId,
+      })
+    }
+    await ctx.db.patch(order._id, {
+      processedAt: args.occurredAt,
+      ...(order.kind === "supplier" ? { status: "delivered" as const } : {}),
+      transactionId,
+    })
+    await ctx.db.insert("auditLogs", {
+      action:
+        order.kind === "client" ? "order.payment_recorded" : "order.received",
+      actorUserId: String(user._id),
+      createdAt: Date.now(),
+      detail: `${order.contactName}:${prepared.total}`,
+      entityId: order._id,
+      entityType: "order",
+    })
+
+    return { total: prepared.total, transactionId, updated: false }
   },
 })

@@ -4,6 +4,13 @@ import seedData from "../data/inventaire.seed.json"
 import { type Doc, type Id } from "./_generated/dataModel"
 import { mutation } from "./_generated/server"
 import { normalizeName } from "./lib/text"
+import { isLootOnlyLegacyProduct } from "./lib/products"
+import { canonicalRecipeFamily } from "./lib/recipeFamilies"
+import {
+  canonicalProductName,
+  convertLegacyOperationsData,
+  repairRecipeReferencesData,
+} from "./migrations"
 
 const SEED_KEY = "workbook-seed-version"
 
@@ -23,6 +30,7 @@ type TransactionKind = Doc<"transactions">["kind"]
 function parseProductCategory(value: string): ProductCategory {
   switch (value) {
     case "annexe":
+      return "potion"
     case "ingredient":
     case "potion":
     case "service":
@@ -74,12 +82,16 @@ export const importWorkbook = mutation({
 
     const products = new Map<
       string,
-      { id: Id<"products">; tracksStock: boolean }
+      { id: Id<"products">; name: string; tracksStock: boolean }
     >()
     for (const product of seedData.products) {
+      const category = parseProductCategory(product.category)
       const id = await ctx.db.insert("products", {
         active: true,
-        category: parseProductCategory(product.category),
+        category,
+        ...(category === "potion"
+          ? { craftable: !isLootOnlyLegacyProduct(product.legacyKey) }
+          : {}),
         currentStock: product.currentStock,
         legacyKey: product.legacyKey,
         minimumStock: product.minimumStock,
@@ -95,6 +107,7 @@ export const importWorkbook = mutation({
       })
       products.set(product.normalizedName, {
         id,
+        name: product.name,
         tracksStock: product.tracksStock,
       })
     }
@@ -193,26 +206,45 @@ export const importWorkbook = mutation({
     }
 
     for (const recipe of seedData.recipes) {
-      const product = products.get(normalizeName(recipe.name))
+      const product = products.get(canonicalProductName(recipe.name))
+      if (!product?.tracksStock) {
+        throw new ConvexError({
+          code: "SEED_REFERENCE_MISSING",
+          message: `La recette « ${recipe.name} » ne correspond à aucun article fabriqué.`,
+        })
+      }
+      const family = canonicalRecipeFamily(recipe.family)
+      if (!family) {
+        throw new ConvexError({
+          code: "SEED_REFERENCE_MISSING",
+          message: `La catégorie « ${recipe.family} » de la recette « ${recipe.name} » est inconnue.`,
+        })
+      }
       const recipeId = await ctx.db.insert("recipes", {
         active: true,
         ...(recipe.cost === undefined ? {} : { cost: recipe.cost }),
         ...(recipe.effect ? { effect: recipe.effect } : {}),
-        family: recipe.family,
+        family,
         legacyKey: recipe.legacyKey,
-        name: recipe.name,
-        ...(product ? { productId: product.id } : {}),
+        name: product.name,
+        productId: product.id,
       })
       for (const ingredient of recipe.ingredients) {
         const ingredientProduct = products.get(
-          normalizeName(ingredient.ingredientName)
+          canonicalProductName(ingredient.ingredientName)
         )
+        if (!ingredientProduct?.tracksStock) {
+          throw new ConvexError({
+            code: "SEED_REFERENCE_MISSING",
+            message: `L’ingrédient « ${ingredient.ingredientName} » est introuvable.`,
+          })
+        }
         await ctx.db.insert("recipeIngredients", {
-          ingredientName: ingredient.ingredientName,
+          ingredientName: ingredientProduct.name,
           legacyKey: ingredient.legacyKey,
-          ...(ingredientProduct ? { productId: ingredientProduct.id } : {}),
+          productId: ingredientProduct.id,
           quantity: ingredient.quantity,
-          raw: ingredient.raw,
+          raw: `${ingredient.quantity} ${ingredientProduct.name}`,
           recipeId,
         })
       }
@@ -237,6 +269,9 @@ export const importWorkbook = mutation({
       }
     }
 
+    const migration = await convertLegacyOperationsData(ctx)
+    const recipeMigration = await repairRecipeReferencesData(ctx)
+
     const updatedAt = Date.parse(seedData.metadata.sourceModifiedAt)
     await ctx.db.insert("systemSettings", {
       key: SEED_KEY,
@@ -247,6 +282,8 @@ export const importWorkbook = mutation({
     return {
       imported: true,
       message: "Les données ont été initialisées depuis le classeur.",
+      migration,
+      recipeMigration,
       stats: seedData.metadata.stats,
     }
   },

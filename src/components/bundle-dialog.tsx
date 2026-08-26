@@ -48,6 +48,7 @@ import { ScrollArea } from "@/components/ui/scroll-area"
 import { Separator } from "@/components/ui/separator"
 import { api } from "../../convex/_generated/api"
 import { type Doc } from "../../convex/_generated/dataModel"
+import { getUserFacingErrorMessage } from "@/lib/errors"
 import { formatSeptims } from "@/lib/format"
 import {
   priceDraftFromValue,
@@ -185,9 +186,7 @@ export function BundleDialog({
       setOpen(false)
     } catch (error) {
       toast.error(
-        error instanceof Error
-          ? error.message
-          : "Impossible d’enregistrer le lot."
+        getUserFacingErrorMessage(error, "Impossible d’enregistrer le lot.")
       )
     } finally {
       setIsSubmitting(false)
@@ -203,7 +202,7 @@ export function BundleDialog({
       setOpen(false)
     } catch (error) {
       toast.error(
-        error instanceof Error ? error.message : "Impossible d’archiver le lot."
+        getUserFacingErrorMessage(error, "Impossible d’archiver le lot.")
       )
     } finally {
       setIsSubmitting(false)
@@ -399,9 +398,7 @@ export function BundleArchivesDialog() {
       toast.success(`« ${bundle.name} » est de nouveau disponible.`)
     } catch (error) {
       toast.error(
-        error instanceof Error
-          ? error.message
-          : "Impossible de réactiver le lot."
+        getUserFacingErrorMessage(error, "Impossible de réactiver le lot.")
       )
     } finally {
       setRestoringId(undefined)

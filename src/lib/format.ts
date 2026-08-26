@@ -33,6 +33,11 @@ export function formatSeptims(value: number): string {
   return `${sign}${amount} sept.`
 }
 
+export function formatDecimalSeptims(value: number): string {
+  const sign = value < 0 ? "−" : ""
+  return `${sign}${formatNumber(Math.abs(value))} sept.`
+}
+
 export function formatUnitPrice(value: number): string {
   const ratio = priceRatioFromValue(value)
   const septimLabel = ratio.septims === 1 ? "septim" : "septims"
@@ -47,7 +52,7 @@ export function formatDate(value: number): string {
 }
 
 export const categoryLabels = {
-  annexe: "Annexe",
+  annexe: "Potion",
   ingredient: "Ingrédient",
   potion: "Potion",
   service: "Service",
@@ -56,6 +61,7 @@ export const categoryLabels = {
 export const operationLabels = {
   adjustment: "Ajustement",
   bundle: "Lot",
+  exchange: "Échange",
   order: "Commande",
   production: "Production",
   purchase: "Achat",

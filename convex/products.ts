@@ -4,6 +4,7 @@ import { type Id } from "./_generated/dataModel"
 import { mutation, query } from "./_generated/server"
 import { requireAdmin, requireUser } from "./lib/auth"
 import { assertFiniteRange, assertWholeNumberRange } from "./lib/numbers"
+import { canonicalProductCategory } from "./lib/products"
 import { normalizeName } from "./lib/text"
 import { productCategory } from "./lib/validators"
 
@@ -96,6 +97,7 @@ export const save = mutation({
     active: v.boolean(),
     adjustmentReason: v.optional(v.string()),
     category: productCategory,
+    craftable: v.optional(v.boolean()),
     minimumStock: v.number(),
     name: v.string(),
     productId: v.optional(v.id("products")),
@@ -129,7 +131,8 @@ export const save = mutation({
 
     const purchasePrice = optionalPrice(args.purchasePrice)
     const salePrice = optionalPrice(args.salePrice)
-    const tracksStock = args.category !== "service"
+    const category = canonicalProductCategory(args.category)
+    const tracksStock = category !== "service"
     const minimumStock = tracksStock ? args.minimumStock : 0
     const targetStock = tracksStock ? args.targetStock : 0
     assertWholeNumberRange(minimumStock, 0, MAX_STOCK, "Le seuil minimum")
@@ -143,6 +146,23 @@ export const save = mutation({
         code: "NOT_FOUND",
         message: "Référence introuvable.",
       })
+    }
+    const craftable =
+      category === "potion"
+        ? (args.craftable ?? existing?.craftable ?? true)
+        : undefined
+    if (existing && (category !== "potion" || craftable === false)) {
+      const linkedRecipes = await ctx.db
+        .query("recipes")
+        .withIndex("by_product", (index) => index.eq("productId", existing._id))
+        .collect()
+      if (linkedRecipes.some((recipe) => recipe.active !== false)) {
+        throw new ConvexError({
+          code: "INVALID_OPERATION",
+          message:
+            "Archivez d’abord la recette active avant de rendre cette potion non fabricable.",
+        })
+      }
     }
 
     const previousStock = existing?.currentStock ?? 0
@@ -163,7 +183,8 @@ export const save = mutation({
 
     const details = {
       active: args.active,
-      category: args.category,
+      category,
+      ...(craftable === undefined ? {} : { craftable }),
       currentStock: targetStock,
       ...(existing?.legacyKey ? { legacyKey: existing.legacyKey } : {}),
       minimumStock,
@@ -177,6 +198,35 @@ export const save = mutation({
     if (existing) {
       await ctx.db.replace(existing._id, details)
       productId = existing._id
+      if (existing.name !== name) {
+        const [linkedRecipes, linkedRecipeIngredients, linkedBundleItems] =
+          await Promise.all([
+            ctx.db
+              .query("recipes")
+              .filter((query) => query.eq(query.field("productId"), productId))
+              .collect(),
+            ctx.db
+              .query("recipeIngredients")
+              .filter((query) => query.eq(query.field("productId"), productId))
+              .collect(),
+            ctx.db
+              .query("bundleItems")
+              .filter((query) => query.eq(query.field("productId"), productId))
+              .collect(),
+          ])
+        await Promise.all([
+          ...linkedRecipes.map((recipe) => ctx.db.patch(recipe._id, { name })),
+          ...linkedRecipeIngredients.map((ingredient) =>
+            ctx.db.patch(ingredient._id, {
+              ingredientName: name,
+              raw: `${ingredient.quantity} ${name}`,
+            })
+          ),
+          ...linkedBundleItems.map((item) =>
+            ctx.db.patch(item._id, { productName: name })
+          ),
+        ])
+      }
     } else {
       productId = await ctx.db.insert("products", details)
     }

@@ -26,7 +26,7 @@ describe("orders", () => {
     const secondProductId = await backend.run((ctx) =>
       ctx.db.insert("products", {
         active: true,
-        category: "annexe",
+        category: "potion",
         currentStock: 5,
         minimumStock: 1,
         name: "Flacon de transport",
@@ -45,6 +45,7 @@ describe("orders", () => {
       ],
       notes: "Remise au comptoir.",
       status: "open",
+      total: null,
     })
     await employee.mutation(api.orders.save, {
       contactName: "Client de passage",
@@ -54,7 +55,10 @@ describe("orders", () => {
       notes: "Prévenir lorsque la commande est prête.",
       orderId,
       status: "ready",
+      total: null,
     })
+
+    const details = await employee.query(api.orders.getById, { orderId })
 
     const state = await backend.run(async (ctx) => ({
       audits: await ctx.db.query("auditLogs").collect(),
@@ -67,6 +71,12 @@ describe("orders", () => {
       product: await ctx.db.get(firstProductId),
     }))
     expect(state.order).toMatchObject({ status: "ready", total: 1 })
+    expect(details).toMatchObject({
+      contactName: "Client de passage",
+      linkedTransaction: null,
+      status: "ready",
+    })
+    expect(details?.lines).toHaveLength(1)
     expect(state.lines).toHaveLength(1)
     expect(state.contacts).toHaveLength(1)
     expect(state.product?.currentStock).toBe(10)
@@ -76,7 +86,7 @@ describe("orders", () => {
     ])
   })
 
-  it("permet à un administrateur de supprimer une commande et ses lignes", async () => {
+  it("permet à un administrateur de supprimer une commande annulée et ses lignes", async () => {
     const backend = createTestBackend()
     const admin = await asAuthenticatedUser(backend, "admin")
     const productId = await seedOrderProduct(backend)
@@ -86,7 +96,8 @@ describe("orders", () => {
       kind: "supplier",
       lines: [{ productId, quantity: 2, unitPrice: null }],
       notes: "",
-      status: "open",
+      status: "cancelled",
+      total: null,
     })
 
     await admin.mutation(api.orders.remove, { orderId })
@@ -115,5 +126,262 @@ describe("orders", () => {
     await expect(
       employee.mutation(api.orders.remove, { orderId })
     ).rejects.toThrowError("réservée aux administrateurs")
+  })
+
+  it("corrige une commande payée, sa transaction et son stock sans doublon", async () => {
+    const backend = createTestBackend()
+    const employee = await asAuthenticatedUser(backend)
+    const productId = await seedOrderProduct(backend)
+    const characterId = await backend.run((ctx) =>
+      ctx.db.insert("characters", {
+        active: true,
+        name: "Caissière test",
+      })
+    )
+    const correctedCharacterId = await backend.run((ctx) =>
+      ctx.db.insert("characters", {
+        active: true,
+        name: "Responsable correction",
+      })
+    )
+    const orderId = await employee.mutation(api.orders.save, {
+      contactName: "Client du test",
+      dueAt: null,
+      kind: "client",
+      lines: [{ productId, quantity: 8, unitPrice: 1 / 4 }],
+      notes: "",
+      status: "ready",
+      total: 1,
+    })
+    const occurredAt = Date.now() - 1_000
+
+    const result = await employee.mutation(api.orders.process, {
+      characterId,
+      occurredAt,
+      orderId,
+    })
+    expect(result.updated).toBe(false)
+
+    const correctedPaymentDate = Date.now()
+    const correctedPayment = await employee.mutation(api.orders.process, {
+      characterId: correctedCharacterId,
+      occurredAt: correctedPaymentDate,
+      orderId,
+    })
+    expect(correctedPayment).toMatchObject({
+      transactionId: result.transactionId,
+      updated: true,
+    })
+
+    const processed = await backend.run(async (ctx) => ({
+      order: await ctx.db.get(orderId),
+      product: await ctx.db.get(productId),
+      movements: await ctx.db
+        .query("stockMovements")
+        .withIndex("by_transaction", (index) =>
+          index.eq("transactionId", result.transactionId)
+        )
+        .collect(),
+      transaction: await ctx.db.get(result.transactionId),
+      transactions: await ctx.db.query("transactions").collect(),
+    }))
+    expect(processed.order).toMatchObject({
+      processedAt: correctedPaymentDate,
+      transactionId: result.transactionId,
+    })
+    expect(processed.product?.currentStock).toBe(2)
+    expect(processed.transaction).toMatchObject({
+      actorCharacterId: correctedCharacterId,
+      orderId,
+      occurredAt: correctedPaymentDate,
+      productName: "Commande de Client du test",
+      total: 1,
+    })
+    expect(processed.transaction?.discount).toBeUndefined()
+    expect(processed.transactions).toHaveLength(1)
+    expect(processed.movements).toEqual([
+      expect.objectContaining({ occurredAt: correctedPaymentDate }),
+    ])
+
+    await expect(
+      employee.mutation(api.orders.save, {
+        contactName: "Correction impossible",
+        dueAt: null,
+        kind: "client",
+        lines: [{ productId, quantity: 11, unitPrice: 1 / 4 }],
+        notes: "",
+        orderId,
+        status: "ready",
+        total: 2,
+      })
+    ).rejects.toThrowError("Stock insuffisant")
+    const unchangedAfterFailedCorrection = await backend.run(async (ctx) => ({
+      lines: await ctx.db
+        .query("orderLines")
+        .withIndex("by_order", (index) => index.eq("orderId", orderId))
+        .collect(),
+      order: await ctx.db.get(orderId),
+      product: await ctx.db.get(productId),
+      transaction: await ctx.db.get(result.transactionId),
+    }))
+    expect(unchangedAfterFailedCorrection.order).toMatchObject({
+      contactName: "Client du test",
+      total: 1,
+    })
+    expect(unchangedAfterFailedCorrection.lines).toEqual([
+      expect.objectContaining({ quantity: 8 }),
+    ])
+    expect(unchangedAfterFailedCorrection.product?.currentStock).toBe(2)
+    expect(unchangedAfterFailedCorrection.transaction).toMatchObject({
+      total: 1,
+    })
+
+    const savedCorrectionDate = Date.now() - 750
+    await employee.mutation(api.orders.save, {
+      actorCharacterId: characterId,
+      contactName: "Client corrigé",
+      dueAt: null,
+      kind: "client",
+      lines: [{ productId, quantity: 8, unitPrice: 1 / 4 }],
+      notes: "Quantité corrigée après paiement.",
+      orderId,
+      processedAt: savedCorrectionDate,
+      status: "ready",
+      total: 1,
+    })
+    const correctedOrderState = await backend.run(async (ctx) => ({
+      lines: await ctx.db
+        .query("transactionLines")
+        .withIndex("by_transaction", (index) =>
+          index.eq("transactionId", result.transactionId)
+        )
+        .collect(),
+      order: await ctx.db.get(orderId),
+      product: await ctx.db.get(productId),
+      movements: await ctx.db
+        .query("stockMovements")
+        .withIndex("by_transaction", (index) =>
+          index.eq("transactionId", result.transactionId)
+        )
+        .collect(),
+      transaction: await ctx.db.get(result.transactionId),
+    }))
+    expect(correctedOrderState.order).toMatchObject({
+      contactName: "Client corrigé",
+      processedAt: savedCorrectionDate,
+      total: 1,
+      transactionId: result.transactionId,
+    })
+    expect(correctedOrderState.transaction).toMatchObject({
+      counterparty: "Client corrigé",
+      actorCharacterId: characterId,
+      actorName: "Caissière test",
+      occurredAt: savedCorrectionDate,
+      productName: "Commande de Client corrigé",
+      total: 1,
+    })
+    expect(correctedOrderState.lines).toEqual([
+      expect.objectContaining({ quantity: 8, total: 2 }),
+    ])
+    expect(correctedOrderState.product?.currentStock).toBe(2)
+    expect(correctedOrderState.movements).toEqual([
+      expect.objectContaining({ occurredAt: savedCorrectionDate }),
+    ])
+
+    const correctedDate = Date.now() - 500
+    await employee.mutation(api.transactions.updateExchange, {
+      agreedTotal: 1,
+      characterId: correctedCharacterId,
+      counterparty: "Client corrigé depuis le journal",
+      lines: [
+        {
+          direction: "outgoing",
+          kind: "product",
+          productId,
+          quantity: 5,
+          unitPrice: 1 / 4,
+        },
+      ],
+      occurredAt: correctedDate,
+      transactionId: result.transactionId,
+    })
+    const correctedJournalState = await backend.run(async (ctx) => ({
+      lines: await ctx.db
+        .query("orderLines")
+        .withIndex("by_order", (index) => index.eq("orderId", orderId))
+        .collect(),
+      order: await ctx.db.get(orderId),
+      product: await ctx.db.get(productId),
+    }))
+    expect(correctedJournalState.order).toMatchObject({
+      contactName: "Client corrigé depuis le journal",
+      processedAt: correctedDate,
+      total: 1,
+    })
+    expect(correctedJournalState.lines).toEqual([
+      expect.objectContaining({ quantity: 5, total: 5 / 4 }),
+    ])
+    expect(correctedJournalState.product?.currentStock).toBe(5)
+
+    await employee.mutation(api.transactions.remove, {
+      transactionId: result.transactionId,
+    })
+    const reverted = await backend.run(async (ctx) => ({
+      order: await ctx.db.get(orderId),
+      product: await ctx.db.get(productId),
+    }))
+    expect(reverted.product?.currentStock).toBe(10)
+    expect(reverted.order?.transactionId).toBeUndefined()
+    expect(reverted.order?.processedAt).toBeUndefined()
+  })
+
+  it("refuse de traiter une commande annulée", async () => {
+    const backend = createTestBackend()
+    const employee = await asAuthenticatedUser(backend)
+    const productId = await seedOrderProduct(backend)
+    const characterId = await backend.run((ctx) =>
+      ctx.db.insert("characters", {
+        active: true,
+        name: "Caissière test",
+      })
+    )
+    const orderId = await employee.mutation(api.orders.save, {
+      contactName: "Commande annulée",
+      dueAt: null,
+      kind: "client",
+      lines: [{ productId, quantity: 4, unitPrice: 1 / 4 }],
+      notes: "",
+      status: "cancelled",
+      total: null,
+    })
+
+    await expect(
+      employee.mutation(api.orders.process, {
+        characterId,
+        occurredAt: Date.now(),
+        orderId,
+      })
+    ).rejects.toThrowError("annulée ne peut pas être traitée")
+  })
+
+  it("refuse un total convenu fractionnaire", async () => {
+    const backend = createTestBackend()
+    const employee = await asAuthenticatedUser(backend)
+    const productId = await seedOrderProduct(backend)
+
+    await expect(
+      employee.mutation(api.orders.save, {
+        contactName: "Client du total fractionnaire",
+        dueAt: null,
+        kind: "client",
+        lines: [{ productId, quantity: 4, unitPrice: 1 / 4 }],
+        notes: "",
+        status: "open",
+        total: 1.5,
+      })
+    ).rejects.toThrowError("nombre entier")
+
+    const orders = await backend.run((ctx) => ctx.db.query("orders").collect())
+    expect(orders).toHaveLength(0)
   })
 })
