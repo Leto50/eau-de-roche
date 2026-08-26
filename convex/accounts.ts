@@ -4,9 +4,12 @@ import { type Doc } from "./_generated/dataModel"
 import { mutation, query } from "./_generated/server"
 import { requireAdmin, requireUser } from "./lib/auth"
 import { assertFiniteRange, assertWholeNumberRange } from "./lib/numbers"
+import {
+  DAY_IN_MILLISECONDS,
+  startOfUtcWeek,
+  WEEK_IN_MILLISECONDS,
+} from "./lib/time"
 
-const DAY_IN_MILLISECONDS = 24 * 60 * 60 * 1_000
-const WEEK_IN_MILLISECONDS = 7 * DAY_IN_MILLISECONDS
 const WEEK_COUNT = 8
 const MAX_AMOUNT = 1_000_000_000
 
@@ -21,14 +24,13 @@ const DEFAULT_SETTINGS = {
   weeklyRent: 500,
 }
 
-function startOfUtcWeek(timestamp: number): number {
-  const date = new Date(timestamp)
-  const dayFromMonday = (date.getUTCDay() + 6) % 7
-  return Date.UTC(
-    date.getUTCFullYear(),
-    date.getUTCMonth(),
-    date.getUTCDate() - dayFromMonday
-  )
+function transactionFlows(transaction: Doc<"transactions">) {
+  // Exchange directions describe merchandise: outgoing goods generate revenue,
+  // while incoming goods generate an expense for the boutique.
+  const incoming = transaction.outgoingTotal ?? Math.max(transaction.total, 0)
+  const outgoing =
+    transaction.incomingTotal ?? Math.abs(Math.min(transaction.total, 0))
+  return { incoming, net: incoming - outgoing, outgoing }
 }
 
 function summarizeActors(transactions: readonly Doc<"transactions">[]) {
@@ -45,7 +47,8 @@ function summarizeActors(transactions: readonly Doc<"transactions">[]) {
   >()
 
   for (const transaction of transactions) {
-    if (transaction.total === 0) continue
+    const flows = transactionFlows(transaction)
+    if (flows.incoming === 0 && flows.outgoing === 0) continue
     const key = transaction.actorCharacterId ?? `name:${transaction.actorName}`
     const actor = actors.get(key) ?? {
       ...(transaction.actorCharacterId
@@ -57,9 +60,9 @@ function summarizeActors(transactions: readonly Doc<"transactions">[]) {
       outgoing: 0,
       transactionCount: 0,
     }
-    actor.incoming += Math.max(transaction.total, 0)
-    actor.net += transaction.total
-    actor.outgoing += Math.abs(Math.min(transaction.total, 0))
+    actor.incoming += flows.incoming
+    actor.net += flows.net
+    actor.outgoing += flows.outgoing
     actor.transactionCount += 1
     actors.set(key, actor)
   }
@@ -95,12 +98,11 @@ export const overview = query({
           transaction.occurredAt < nextWeekStartsAt
       )
       const incoming = weeklyTransactions.reduce(
-        (total, transaction) => total + Math.max(transaction.total, 0),
+        (total, transaction) => total + transactionFlows(transaction).incoming,
         0
       )
       const outgoing = weeklyTransactions.reduce(
-        (total, transaction) =>
-          total + Math.abs(Math.min(transaction.total, 0)),
+        (total, transaction) => total + transactionFlows(transaction).outgoing,
         0
       )
       return {
