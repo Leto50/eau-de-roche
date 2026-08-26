@@ -2,10 +2,18 @@ import { convexQuery } from "@convex-dev/react-query"
 import { useSuspenseQuery } from "@tanstack/react-query"
 import { createFileRoute } from "@tanstack/react-router"
 import { type FunctionReturnType } from "convex/server"
-import { BookMarked, PackageOpen, Pencil, Search, Sparkles } from "lucide-react"
+import {
+  BookMarked,
+  Hammer,
+  PackageOpen,
+  Pencil,
+  Search,
+  Sparkles,
+} from "lucide-react"
 import { useState } from "react"
 
 import { BundleArchivesDialog, BundleDialog } from "@/components/bundle-dialog"
+import { OperationDialog } from "@/components/operation-dialog"
 import { PageError } from "@/components/page-error"
 import { PageHeader } from "@/components/page-header"
 import { PageSkeleton } from "@/components/page-skeleton"
@@ -52,6 +60,7 @@ export const Route = createFileRoute("/_app/recettes")({
       context.queryClient.ensureQueryData(
         convexQuery(api.products.selectable, {})
       ),
+      context.queryClient.ensureQueryData(convexQuery(api.characters.list, {})),
       context.queryClient.ensureQueryData(
         convexQuery(api.recipes.listLinkedProductIds, {})
       ),
@@ -70,6 +79,9 @@ function RecipesPage() {
   const { data: products } = useSuspenseQuery(
     convexQuery(api.products.selectable, {})
   )
+  const { data: characters } = useSuspenseQuery(
+    convexQuery(api.characters.list, {})
+  )
   const { data: linkedProductIds } = useSuspenseQuery(
     convexQuery(api.recipes.listLinkedProductIds, {})
   )
@@ -77,6 +89,8 @@ function RecipesPage() {
     isHydrated && (session?.user.role?.split(",").includes("admin") ?? false)
   const [search, setSearch] = useState("")
   const [family, setFamily] = useState("all")
+  const [productionProductId, setProductionProductId] =
+    useState<Doc<"products">["_id"]>()
   const families = recipeFamilies.filter((entry) =>
     recipes.some((recipe) => recipe.family === entry)
   )
@@ -160,6 +174,7 @@ function RecipesPage() {
                 isAdmin={isAdmin}
                 key={recipe._id}
                 linkedProductIds={linkedProductIds}
+                onProduce={setProductionProductId}
                 products={products}
                 recipe={recipe}
               />
@@ -175,6 +190,22 @@ function RecipesPage() {
           </Alert>
         )}
       </section>
+
+      {productionProductId ? (
+        <OperationDialog
+          characters={characters}
+          initialKind="production"
+          initialProductId={productionProductId}
+          key={productionProductId}
+          onOpenChange={(nextOpen) => {
+            if (!nextOpen) setProductionProductId(undefined)
+          }}
+          open
+          products={products}
+          recipes={recipes}
+          trigger={null}
+        />
+      ) : null}
 
       <Separator className="mt-12 bg-border" />
       <section aria-labelledby="bundles-title" className="pt-8">
@@ -218,11 +249,13 @@ function RecipesPage() {
 function RecipeEntry({
   isAdmin,
   linkedProductIds,
+  onProduce,
   products,
   recipe,
 }: Readonly<{
   isAdmin: boolean
   linkedProductIds: readonly Doc<"products">["_id"][]
+  onProduce: (productId: Doc<"products">["_id"]) => void
   products: readonly Doc<"products">[]
   recipe: Recipe
 }>) {
@@ -261,7 +294,7 @@ function RecipeEntry({
           ) : null}
         </CardAction>
       </CardHeader>
-      <CardContent className="p-4 pt-3">
+      <CardContent className="flex flex-1 flex-col p-4 pt-3">
         {recipe.effect ? (
           <p className="flex gap-2 text-xs leading-relaxed text-muted-foreground italic">
             <Sparkles
@@ -314,6 +347,24 @@ function RecipeEntry({
             )
           })}
         </div>
+        {recipe.productId ? (
+          <div className="mt-auto pt-4">
+            <Button
+              className="w-full"
+              onClick={() => onProduce(recipe.productId!)}
+              size="sm"
+              type="button"
+              variant="outline"
+            >
+              <Hammer aria-hidden="true" />
+              Produire cette recette
+            </Button>
+          </div>
+        ) : (
+          <p className="mt-auto pt-4 text-xs text-muted-foreground">
+            Reliez cette recette à une potion pour pouvoir la produire.
+          </p>
+        )}
       </CardContent>
     </Card>
   )
