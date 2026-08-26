@@ -67,9 +67,7 @@ export const Route = createFileRoute("/_app/")({
       context.queryClient.ensureQueryData(
         convexQuery(api.recipes.listBundles, {})
       ),
-      context.queryClient.ensureQueryData(
-        convexQuery(api.recipes.listCraftableProductIds, {})
-      ),
+      context.queryClient.ensureQueryData(convexQuery(api.recipes.list, {})),
     ])
   },
   pendingComponent: PageSkeleton,
@@ -86,9 +84,7 @@ function DashboardPage() {
   const { data: bundles } = useSuspenseQuery(
     convexQuery(api.recipes.listBundles, {})
   )
-  const { data: craftableProductIds } = useSuspenseQuery(
-    convexQuery(api.recipes.listCraftableProductIds, {})
-  )
+  const { data: recipes } = useSuspenseQuery(convexQuery(api.recipes.list, {}))
 
   return (
     <div className="animate-in duration-300 fade-in slide-in-from-bottom-1 motion-reduce:animate-none">
@@ -122,9 +118,9 @@ function DashboardPage() {
           <OperationDialog
             bundles={bundles}
             characters={characters}
-            craftableProductIds={craftableProductIds}
             initialKind="production"
             products={products}
+            recipes={recipes}
             trigger={
               <Button
                 className="h-20 w-full flex-col gap-1.5 border-[#6a5436]/40 bg-background/35 px-3 text-center text-sm whitespace-normal"

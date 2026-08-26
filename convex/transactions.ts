@@ -15,6 +15,7 @@ import {
   prepareExchange,
 } from "./lib/exchange"
 import { orderTransactionLabel, withOrderTotal } from "./lib/order"
+import { prepareProduction } from "./lib/production"
 import { stockOperationKind } from "./lib/validators"
 
 const MAX_TEXT_LENGTH = 500
@@ -89,22 +90,6 @@ function cleanOptionalText(value: string | undefined): string | undefined {
     })
   }
   return cleaned
-}
-
-async function requireCraftableProduct(
-  ctx: QueryCtx,
-  productId: Id<"products">
-): Promise<void> {
-  const recipes = await ctx.db
-    .query("recipes")
-    .withIndex("by_product", (index) => index.eq("productId", productId))
-    .collect()
-  if (recipes.some((recipe) => recipe.active !== false)) return
-
-  throw new ConvexError({
-    code: "INVALID_OPERATION",
-    message: "Ce produit ne possède aucune recette active.",
-  })
 }
 
 async function withTransactionDetails(
@@ -581,17 +566,6 @@ export const record = mutation({
         message: "Personnage introuvable ou archivé.",
       })
     }
-    if (args.kind === "production" && product.craftable === false) {
-      throw new ConvexError({
-        code: "INVALID_OPERATION",
-        message:
-          "Cette potion est trouvée uniquement et ne peut pas être fabriquée.",
-      })
-    }
-    if (args.kind === "production") {
-      await requireCraftableProduct(ctx, product._id)
-    }
-
     assertWholeNumberRange(args.quantity, 1, MAX_QUANTITY, "La quantité")
     assertFiniteRange(args.occurredAt, 0, Date.now() + 86_400_000, "La date")
     const fallbackPrice =
@@ -614,14 +588,22 @@ export const record = mutation({
       })
     }
 
+    const production =
+      args.kind === "production"
+        ? await prepareProduction(ctx, product._id, args.quantity)
+        : undefined
     const delta =
       args.kind === "sale"
         ? -args.quantity
-        : args.kind === "purchase" || args.kind === "production"
+        : args.kind === "purchase"
           ? args.quantity
           : 0
-    const resultingStock = product.currentStock + delta
-    if (resultingStock < 0) {
+    const stockDeltas =
+      production?.deltas ??
+      new Map(delta === 0 ? [] : [[product._id, { delta, product }] as const])
+    const resultingStock =
+      product.currentStock + (stockDeltas.get(product._id)?.delta ?? 0)
+    if (!production && resultingStock < 0) {
       throw new ConvexError({
         code: "INSUFFICIENT_STOCK",
         message: `Stock insuffisant : ${product.currentStock} ${Math.abs(product.currentStock) === 1 ? "disponible" : "disponibles"}.`,
@@ -663,15 +645,16 @@ export const record = mutation({
       unitPrice,
     })
 
-    if (delta !== 0) {
-      await ctx.db.patch(product._id, { currentStock: resultingStock })
+    for (const change of stockDeltas.values()) {
+      const changedStock = change.product.currentStock + change.delta
+      await ctx.db.patch(change.product._id, { currentStock: changedStock })
       await ctx.db.insert("stockMovements", {
-        delta,
+        delta: change.delta,
         occurredAt: args.occurredAt,
-        previousStock: product.currentStock,
-        productId: product._id,
+        previousStock: change.product.currentStock,
+        productId: change.product._id,
         reason: args.kind,
-        resultingStock,
+        resultingStock: changedStock,
         transactionId,
       })
     }
@@ -1232,20 +1215,6 @@ export const update = mutation({
           message: "Produit introuvable ou archivé.",
         })
       }
-      if (
-        args.kind === "production" &&
-        (transaction.kind !== "production" ||
-          transaction.productId !== product._id)
-      ) {
-        if (product.craftable === false) {
-          throw new ConvexError({
-            code: "INVALID_OPERATION",
-            message:
-              "Cette potion est trouvée uniquement et ne peut pas être fabriquée.",
-          })
-        }
-        await requireCraftableProduct(ctx, product._id)
-      }
       assertWholeNumberRange(args.quantity, 1, MAX_QUANTITY, "La quantité")
       const fallbackPrice = product.salePrice
       const unitPrice = args.unitPrice ?? fallbackPrice ?? 0
@@ -1269,8 +1238,20 @@ export const update = mutation({
           message: "La remise ne peut pas dépasser le montant brut.",
         })
       }
-      const delta = args.kind === "production" ? args.quantity : 0
-      if (delta !== 0) addDelta(product, delta)
+      if (args.kind === "production") {
+        const baseStocks = new Map(
+          [...states].map(([productId, state]) => [productId, state.baseStock])
+        )
+        const production = await prepareProduction(
+          ctx,
+          product._id,
+          args.quantity,
+          { baseStocks }
+        )
+        for (const change of production.deltas.values()) {
+          addDelta(change.product, change.delta)
+        }
+      }
       const total =
         args.kind === "production" ? 0 : roundSeptimsDown(gross - discount)
       details = {

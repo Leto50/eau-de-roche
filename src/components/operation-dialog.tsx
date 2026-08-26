@@ -1,6 +1,7 @@
 import { useMutation } from "convex/react"
 import { type FunctionReturnType } from "convex/server"
 import {
+  AlertTriangle,
   ArrowDownToLine,
   ChevronDown,
   ChevronsUpDown,
@@ -78,6 +79,7 @@ import {
   type PriceDraft,
 } from "@/lib/prices"
 import { cn } from "@/lib/utils"
+import { calculateProductionPlan } from "../../shared/production"
 import { api } from "../../convex/_generated/api"
 import { type Doc, type Id } from "../../convex/_generated/dataModel"
 
@@ -85,6 +87,7 @@ export type OperationKind =
   "exchange" | "production" | "purchase" | "sale" | "service"
 
 type Bundle = FunctionReturnType<typeof api.recipes.listBundles>[number]
+type Recipe = FunctionReturnType<typeof api.recipes.list>[number]
 type Transaction = NonNullable<
   FunctionReturnType<typeof api.transactions.getDetails>
 >
@@ -591,21 +594,23 @@ function TradeCart({
 export function OperationDialog({
   bundles = [],
   characters,
-  craftableProductIds = [],
   initialKind = "exchange",
+  initialProductId,
   onOpenChange,
   open: controlledOpen,
   products,
+  recipes = [],
   transaction,
   trigger,
 }: Readonly<{
   bundles?: readonly Bundle[]
   characters: readonly Doc<"characters">[]
-  craftableProductIds?: readonly Id<"products">[]
   initialKind?: OperationKind
+  initialProductId?: Id<"products">
   onOpenChange?: (open: boolean) => void
   open?: boolean
   products: readonly Doc<"products">[]
+  recipes?: readonly Recipe[]
   transaction?: Transaction
   trigger?: ReactElement | null
 }>) {
@@ -619,7 +624,9 @@ export function OperationDialog({
   const linkedOrderMode = Boolean(transaction?.orderId)
   const [internalOpen, setInternalOpen] = useState(false)
   const open = controlledOpen ?? internalOpen
-  const [productId, setProductId] = useState(transaction?.productId ?? "")
+  const [productId, setProductId] = useState(
+    transaction?.productId ?? initialProductId ?? ""
+  )
   const [characterId, setCharacterId] = useState(
     transaction?.actorCharacterId ?? ""
   )
@@ -657,7 +664,9 @@ export function OperationDialog({
       ? product
       : { ...product, currentStock: product.currentStock - previousDelta }
   })
-  const craftableProducts = new Set(craftableProductIds)
+  const craftableProducts = new Set(
+    recipes.flatMap((recipe) => (recipe.productId ? [recipe.productId] : []))
+  )
   const productionProducts = correctedProducts.filter(
     (product) =>
       product.tracksStock &&
@@ -667,9 +676,19 @@ export function OperationDialog({
   const selectedProduct = productionProducts.find(
     (product) => product._id === productId
   )
+  const selectedRecipe = recipes.find(
+    (recipe) => recipe.productId === selectedProduct?._id
+  )
   const parsedQuantity = Number(quantity)
   const previewQuantity =
     Number.isFinite(parsedQuantity) && parsedQuantity > 0 ? parsedQuantity : 0
+  const validProductionQuantity =
+    Number.isInteger(parsedQuantity) && parsedQuantity > 0
+  const productionPlan = calculateProductionPlan(
+    selectedRecipe,
+    correctedProducts,
+    parsedQuantity
+  )
   const parsedDiscount = discount.trim() ? Number(discount) : 0
   const previewDiscount = Number.isFinite(parsedDiscount) ? parsedDiscount : 0
   const parsedAgreedTotal = Number(agreedTotal)
@@ -760,7 +779,7 @@ export function OperationDialog({
     (!Number.isSafeInteger(parsedAgreedTotal) || parsedAgreedTotal < 0)
 
   function resetForm() {
-    setProductId(transaction?.productId ?? "")
+    setProductId(transaction?.productId ?? initialProductId ?? "")
     setCharacterId(transaction?.actorCharacterId ?? "")
     setQuantity(transaction?.quantity.toString() ?? "1")
     setTradeLines(initialTradeLines(transaction, initialKind))
@@ -923,7 +942,7 @@ export function OperationDialog({
         transaction
           ? "Opération mise à jour."
           : productionMode
-            ? "Production ajoutée au stock."
+            ? "Production enregistrée : ingrédients consommés et stock mis à jour."
             : "Échange enregistré."
       )
       if (controlledOpen === undefined) setInternalOpen(false)
@@ -980,7 +999,7 @@ export function OperationDialog({
             {transaction
               ? "Le stock et les montants seront recalculés à partir de cette correction."
               : productionMode
-                ? "Ajoutez les articles fabriqués au stock disponible."
+                ? "Fabriquez depuis une recette : les ingrédients seront consommés et le produit fini ajouté au stock."
                 : "Réunissez dans le même panier tout ce qui entre et sort de la boutique."}
           </DialogDescription>
         </DialogHeader>
@@ -1027,11 +1046,72 @@ export function OperationDialog({
                 </div>
               </div>
               {selectedProduct ? (
-                <Alert className="border-primary/25 bg-primary/[0.045]">
-                  <Hammer aria-hidden="true" />
-                  <AlertTitle>Après production</AlertTitle>
-                  <AlertDescription>
-                    Stock : {formatNumber(productionStock ?? 0)}
+                <Alert
+                  className={cn(
+                    productionPlan.complete &&
+                      (!validProductionQuantity || productionPlan.canProduce)
+                      ? "border-primary/25 bg-primary/[0.045]"
+                      : "border-destructive/35 bg-destructive/[0.045]"
+                  )}
+                  variant={
+                    productionPlan.complete &&
+                    (!validProductionQuantity || productionPlan.canProduce)
+                      ? "default"
+                      : "destructive"
+                  }
+                >
+                  {productionPlan.complete &&
+                  (!validProductionQuantity || productionPlan.canProduce) ? (
+                    <Hammer aria-hidden="true" />
+                  ) : (
+                    <AlertTriangle aria-hidden="true" />
+                  )}
+                  <AlertTitle>
+                    {!productionPlan.complete
+                      ? "Recette incomplète"
+                      : validProductionQuantity && !productionPlan.canProduce
+                        ? "Ingrédients insuffisants"
+                        : `${formatNumber(productionPlan.maximumQuantity)} fabricable${productionPlan.maximumQuantity === 1 ? "" : "s"} au maximum`}
+                  </AlertTitle>
+                  <AlertDescription className="grid gap-2">
+                    <span>
+                      Stock du produit fini :{" "}
+                      {formatNumber(selectedProduct.currentStock)} →{" "}
+                      {formatNumber(
+                        productionStock ?? selectedProduct.currentStock
+                      )}
+                    </span>
+                    <span className="grid gap-1 border-t border-current/15 pt-2">
+                      {productionPlan.requirements.map((requirement) => {
+                        const insufficient =
+                          requirement.available === undefined ||
+                          (validProductionQuantity &&
+                            requirement.required > requirement.available)
+                        return (
+                          <span
+                            className={cn(
+                              "flex justify-between gap-3",
+                              insufficient && "font-semibold"
+                            )}
+                            key={
+                              requirement.productId ??
+                              requirement.ingredientName
+                            }
+                          >
+                            <span>{requirement.ingredientName}</span>
+                            <span className="text-right tabular-nums">
+                              {validProductionQuantity
+                                ? `${formatNumber(requirement.required)} requis`
+                                : `${formatNumber(requirement.requiredPerUnit)} par unité`}{" "}
+                              ·{" "}
+                              {requirement.available === undefined
+                                ? "stock introuvable"
+                                : `${formatNumber(requirement.available)} en stock`}
+                            </span>
+                          </span>
+                        )
+                      })}
+                    </span>
                   </AlertDescription>
                 </Alert>
               ) : null}
@@ -1238,6 +1318,10 @@ export function OperationDialog({
             <Button
               disabled={
                 isSubmitting ||
+                (productionMode &&
+                  (!selectedProduct ||
+                    !validProductionQuantity ||
+                    !productionPlan.canProduce)) ||
                 insufficientProducts.length > 0 ||
                 (!productionMode &&
                   (tradeLines.length === 0 ||
@@ -1259,7 +1343,7 @@ export function OperationDialog({
               ) : productionMode ? (
                 <>
                   <Hammer aria-hidden="true" />
-                  Ajouter au stock
+                  Enregistrer la production
                 </>
               ) : (
                 submitLabel

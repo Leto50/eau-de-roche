@@ -618,9 +618,7 @@ function OperationActivityEditor({
   const products = useConvexQuery(api.products.selectable)
   const characters = useConvexQuery(api.characters.list)
   const bundles = useConvexQuery(api.recipes.listBundles)
-  const craftableProductIds = useConvexQuery(
-    api.recipes.listCraftableProductIds
-  )
+  const recipes = useConvexQuery(api.recipes.list)
   const transaction = useConvexQuery(
     api.transactions.getDetails,
     request.transactionId ? { transactionId: request.transactionId } : "skip"
@@ -630,7 +628,7 @@ function OperationActivityEditor({
     products === undefined ||
     characters === undefined ||
     bundles === undefined ||
-    craftableProductIds === undefined ||
+    recipes === undefined ||
     (request.transactionId !== undefined && transaction === undefined)
   const missingEntity =
     !isLoading && request.transactionId !== undefined && transaction === null
@@ -642,7 +640,6 @@ function OperationActivityEditor({
     <OperationDialog
       bundles={bundles}
       characters={characters}
-      craftableProductIds={craftableProductIds}
       initialKind={request.initialKind}
       key={request.transactionId ?? request.initialKind}
       onOpenChange={(nextOpen) => {
@@ -650,6 +647,7 @@ function OperationActivityEditor({
       }}
       open
       products={products}
+      recipes={recipes}
       transaction={transaction ?? undefined}
       trigger={null}
     />

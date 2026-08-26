@@ -40,15 +40,32 @@ describe("transactions.record", () => {
       })
     ).rejects.toThrowError("aucune recette active")
 
-    await backend.run((ctx) =>
-      ctx.db.insert("recipes", {
+    const ingredientId = await backend.run(async (ctx) => {
+      const nextIngredientId = await ctx.db.insert("products", {
+        active: true,
+        category: "ingredient",
+        currentStock: 5,
+        minimumStock: 1,
+        name: "Lys bleu",
+        normalizedName: "lys bleu",
+        tracksStock: true,
+      })
+      const recipeId = await ctx.db.insert("recipes", {
         active: true,
         family: "Soins",
         name: "Potion de soin",
         productId,
       })
-    )
-    await member.mutation(api.transactions.record, {
+      await ctx.db.insert("recipeIngredients", {
+        ingredientName: "Lys bleu",
+        productId: nextIngredientId,
+        quantity: 2,
+        raw: "2 Lys bleu",
+        recipeId,
+      })
+      return nextIngredientId
+    })
+    const recorded = await member.mutation(api.transactions.record, {
       characterId,
       kind: "production",
       occurredAt: Date.now(),
@@ -56,8 +73,25 @@ describe("transactions.record", () => {
       quantity: 2,
     })
 
-    const product = await backend.run((ctx) => ctx.db.get(productId))
-    expect(product?.currentStock).toBe(12)
+    const production = await backend.run(async (ctx) => ({
+      ingredient: await ctx.db.get(ingredientId),
+      movements: await ctx.db
+        .query("stockMovements")
+        .withIndex("by_transaction", (index) =>
+          index.eq("transactionId", recorded.transactionId)
+        )
+        .collect(),
+      product: await ctx.db.get(productId),
+    }))
+    expect(production.product?.currentStock).toBe(12)
+    expect(production.ingredient?.currentStock).toBe(1)
+    expect(production.movements).toHaveLength(2)
+    expect(production.movements).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ delta: 2, productId }),
+        expect.objectContaining({ delta: -4, productId: ingredientId }),
+      ])
+    )
 
     await backend.run((ctx) => ctx.db.patch(productId, { craftable: false }))
     await expect(
@@ -69,6 +103,139 @@ describe("transactions.record", () => {
         quantity: 1,
       })
     ).rejects.toThrowError("trouvée uniquement")
+  })
+
+  it("refuse atomiquement une production dont un ingrédient est insuffisant", async () => {
+    const backend = createTestBackend()
+    const member = await asAuthenticatedUser(backend)
+    const { characterId, productId } = await seedStock(backend)
+    const ingredientId = await backend.run(async (ctx) => {
+      const nextIngredientId = await ctx.db.insert("products", {
+        active: true,
+        category: "ingredient",
+        currentStock: 3,
+        minimumStock: 1,
+        name: "Sel de feu",
+        normalizedName: "sel de feu",
+        tracksStock: true,
+      })
+      const recipeId = await ctx.db.insert("recipes", {
+        active: true,
+        family: "Résistance",
+        name: "Potion de soin",
+        productId,
+      })
+      await ctx.db.insert("recipeIngredients", {
+        ingredientName: "Sel de feu",
+        productId: nextIngredientId,
+        quantity: 2,
+        raw: "2 Sel de feu",
+        recipeId,
+      })
+      return nextIngredientId
+    })
+
+    await expect(
+      member.mutation(api.transactions.record, {
+        characterId,
+        kind: "production",
+        occurredAt: Date.now(),
+        productId,
+        quantity: 2,
+      })
+    ).rejects.toThrowError("Stock insuffisant")
+
+    const state = await backend.run(async (ctx) => ({
+      audits: await ctx.db.query("auditLogs").collect(),
+      ingredient: await ctx.db.get(ingredientId),
+      movements: await ctx.db.query("stockMovements").collect(),
+      product: await ctx.db.get(productId),
+      transactions: await ctx.db.query("transactions").collect(),
+    }))
+    expect(state.product?.currentStock).toBe(10)
+    expect(state.ingredient?.currentStock).toBe(3)
+    expect(state.transactions).toHaveLength(0)
+    expect(state.movements).toHaveLength(0)
+    expect(state.audits).toHaveLength(0)
+  })
+
+  it("corrige puis supprime une production en restaurant tous les stocks", async () => {
+    const backend = createTestBackend()
+    const member = await asAuthenticatedUser(backend)
+    const { characterId, productId } = await seedStock(backend)
+    const ingredientId = await backend.run(async (ctx) => {
+      const nextIngredientId = await ctx.db.insert("products", {
+        active: true,
+        category: "ingredient",
+        currentStock: 10,
+        minimumStock: 1,
+        name: "Poudre minérale",
+        normalizedName: "poudre minerale",
+        tracksStock: true,
+      })
+      const recipeId = await ctx.db.insert("recipes", {
+        active: true,
+        family: "Soins",
+        name: "Potion de soin",
+        productId,
+      })
+      await ctx.db.insert("recipeIngredients", {
+        ingredientName: "Poudre minérale",
+        productId: nextIngredientId,
+        quantity: 2,
+        raw: "2 Poudre minérale",
+        recipeId,
+      })
+      return nextIngredientId
+    })
+    const recorded = await member.mutation(api.transactions.record, {
+      characterId,
+      kind: "production",
+      occurredAt: Date.now(),
+      productId,
+      quantity: 2,
+    })
+
+    await member.mutation(api.transactions.update, {
+      characterId,
+      kind: "production",
+      occurredAt: Date.now(),
+      productId,
+      quantity: 3,
+      transactionId: recorded.transactionId,
+    })
+    const corrected = await backend.run(async (ctx) => ({
+      ingredient: await ctx.db.get(ingredientId),
+      movements: await ctx.db
+        .query("stockMovements")
+        .withIndex("by_transaction", (index) =>
+          index.eq("transactionId", recorded.transactionId)
+        )
+        .collect(),
+      product: await ctx.db.get(productId),
+    }))
+    expect(corrected.product?.currentStock).toBe(13)
+    expect(corrected.ingredient?.currentStock).toBe(4)
+    expect(corrected.movements).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ delta: 3, productId }),
+        expect.objectContaining({ delta: -6, productId: ingredientId }),
+      ])
+    )
+
+    await member.mutation(api.transactions.remove, {
+      transactionId: recorded.transactionId,
+    })
+    const restored = await backend.run(async (ctx) => ({
+      ingredient: await ctx.db.get(ingredientId),
+      movements: await ctx.db.query("stockMovements").collect(),
+      product: await ctx.db.get(productId),
+      transaction: await ctx.db.get(recorded.transactionId),
+    }))
+    expect(restored.product?.currentStock).toBe(10)
+    expect(restored.ingredient?.currentStock).toBe(10)
+    expect(restored.transaction).toBeNull()
+    expect(restored.movements).toHaveLength(0)
   })
 
   it("écrit atomiquement la vente, le mouvement, l'audit et le nouveau stock", async () => {
