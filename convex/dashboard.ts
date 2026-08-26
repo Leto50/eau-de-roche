@@ -1,8 +1,7 @@
 import { query } from "./_generated/server"
 import { requireUser } from "./lib/auth"
 import { calculateRecipeCost } from "./lib/recipeCost"
-
-const WEEK_IN_MILLISECONDS = 7 * 24 * 60 * 60 * 1_000
+import { startOfUtcWeek } from "./lib/time"
 
 export const overview = query({
   args: {},
@@ -69,7 +68,7 @@ export const overview = query({
     const weeklyTransactions = await ctx.db
       .query("transactions")
       .withIndex("by_occurred_at", (index) =>
-        index.gte("occurredAt", now - WEEK_IN_MILLISECONDS)
+        index.gte("occurredAt", startOfUtcWeek(now))
       )
       .collect()
     const weeklyBalance = weeklyTransactions.reduce(

@@ -73,6 +73,45 @@ describe("accounts", () => {
     expect(account.journalBalance).toBe(115)
   })
 
+  it("sépare les entrées et sorties brutes d’un échange mixte", async () => {
+    const backend = createTestBackend()
+    const employee = await asAuthenticatedUser(backend)
+
+    await backend.run((ctx) =>
+      ctx.db.insert("transactions", {
+        actorName: "Alixard Veliane",
+        incomingTotal: 80,
+        kind: "exchange",
+        occurredAt: Date.now(),
+        outgoingTotal: 100,
+        productName: "Échange mixte",
+        quantity: 2,
+        source: "web",
+        total: 20,
+      })
+    )
+
+    const account = await employee.query(api.accounts.overview, {})
+
+    expect(account.weeks[0]).toMatchObject({
+      actors: [
+        {
+          actorName: "Alixard Veliane",
+          incoming: 100,
+          net: 20,
+          outgoing: 80,
+          transactionCount: 1,
+        },
+      ],
+      incoming: 100,
+      net: 20,
+      outgoing: 80,
+      transactionCount: 1,
+    })
+    expect(account.charges.tax).toBe(20)
+    expect(account.journalBalance).toBe(20)
+  })
+
   it("permet à un administrateur de modifier les paramètres", async () => {
     const backend = createTestBackend()
     const admin = await asAuthenticatedUser(backend, "admin")

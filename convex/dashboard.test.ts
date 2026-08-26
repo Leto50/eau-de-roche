@@ -1,6 +1,6 @@
 import betterAuthTest from "@convex-dev/better-auth/test"
 import { convexTest } from "convex-test"
-import { describe, expect, it } from "vitest"
+import { afterEach, describe, expect, it, vi } from "vitest"
 
 import { api, components } from "./_generated/api"
 import schema from "./schema"
@@ -72,6 +72,8 @@ async function asAuthenticatedMember(
 }
 
 describe("dashboard.overview", () => {
+  afterEach(() => vi.useRealTimers())
+
   it("valorise un article fabriqué avec le coût courant de sa recette", async () => {
     const backend = createTestBackend()
     const member = await asAuthenticatedMember(backend)
@@ -146,5 +148,34 @@ describe("dashboard.overview", () => {
     const overview = await member.query(api.dashboard.overview, {})
 
     expect(overview.stockValue).toBe(81)
+  })
+
+  it("utilise la semaine calendaire du lundi au dimanche", async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date("2026-08-26T12:00:00.000Z"))
+    const backend = createTestBackend()
+    const member = await asAuthenticatedMember(backend)
+
+    await backend.run(async (ctx) => {
+      for (const occurredAt of [
+        Date.parse("2026-08-23T23:59:59.000Z"),
+        Date.parse("2026-08-24T00:00:00.000Z"),
+      ]) {
+        await ctx.db.insert("transactions", {
+          actorName: "Comptable test",
+          kind: "sale",
+          occurredAt,
+          productName: "Écriture test",
+          quantity: 1,
+          source: "web",
+          total: 25,
+        })
+      }
+    })
+
+    const overview = await member.query(api.dashboard.overview, {})
+
+    expect(overview.weeklyTransactionCount).toBe(1)
+    expect(overview.weeklyBalance).toBe(25)
   })
 })
