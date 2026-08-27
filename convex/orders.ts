@@ -20,6 +20,7 @@ import {
 } from "./lib/numbers"
 import { orderTransactionLabel, withOrderTotal } from "./lib/order"
 import { normalizeName } from "./lib/text"
+import { buildTransactionSearchText } from "./lib/transactionSearch"
 import { orderKind, orderStatus } from "./lib/validators"
 
 const MAX_CONTACT_NAME_LENGTH = 100
@@ -134,6 +135,8 @@ async function synchronizeLinkedTransaction(
 
   const firstLine = prepared.lines[0]
   const occurredAt = correction?.occurredAt ?? transaction.occurredAt
+  const actorName = correction?.actorName ?? transaction.actorName
+  const productName = orderTransactionLabel(orderKind, contactName)
   await ctx.db.replace(transaction._id, {
     ...((correction?.actorCharacterId ?? transaction.actorCharacterId)
       ? {
@@ -141,7 +144,7 @@ async function synchronizeLinkedTransaction(
             correction?.actorCharacterId ?? transaction.actorCharacterId,
         }
       : {}),
-    actorName: correction?.actorName ?? transaction.actorName,
+    actorName,
     ...(transaction.actorUserId
       ? { actorUserId: transaction.actorUserId }
       : {}),
@@ -157,8 +160,14 @@ async function synchronizeLinkedTransaction(
     ...(prepared.lines.length === 1 && firstLine?.productId
       ? { productId: firstLine.productId }
       : {}),
-    productName: orderTransactionLabel(orderKind, contactName),
+    productName,
     quantity: prepared.lines.reduce((sum, line) => sum + line.quantity, 0),
+    searchText: buildTransactionSearchText({
+      actorName,
+      comment: transaction.comment,
+      counterparty: contactName,
+      productName,
+    }),
     source: transaction.source,
     total: prepared.total,
     ...(prepared.lines.length === 1 && firstLine
@@ -606,6 +615,10 @@ export const process = mutation({
         actorName: character.name,
         actorUserId: String(user._id),
         occurredAt: args.occurredAt,
+        searchText: buildTransactionSearchText({
+          ...transaction,
+          actorName: character.name,
+        }),
       })
       await Promise.all(
         movements.map((movement) =>
@@ -650,6 +663,7 @@ export const process = mutation({
     assertWholeNumberRange(agreedTotal, 0, MAX_PRICE, "Le total convenu")
     const prepared = withOrderTotal(preparedFromLines, order.kind, agreedTotal)
     const firstLine = prepared.lines[0]
+    const productName = orderTransactionLabel(order.kind, order.contactName)
     const transactionId = await ctx.db.insert("transactions", {
       actorCharacterId: character._id,
       actorName: character.name,
@@ -661,8 +675,13 @@ export const process = mutation({
       occurredAt: args.occurredAt,
       orderId: order._id,
       outgoingTotal: prepared.outgoingTotal,
-      productName: orderTransactionLabel(order.kind, order.contactName),
+      productName,
       quantity: prepared.lines.reduce((sum, line) => sum + line.quantity, 0),
+      searchText: buildTransactionSearchText({
+        actorName: character.name,
+        counterparty: order.contactName,
+        productName,
+      }),
       source: "web",
       total: prepared.total,
       ...(prepared.lines.length === 1 && firstLine

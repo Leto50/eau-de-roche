@@ -315,9 +315,14 @@ function DashboardPage() {
                             <DirectionIcon aria-hidden="true" />
                           </div>
                           <div className="min-w-0">
-                            <p className="truncate font-semibold">
+                            <Link
+                              aria-label={`Voir les mouvements liés à ${transaction.productName}`}
+                              className="block truncate font-semibold underline-offset-4 hover:underline"
+                              search={{ q: transaction.productName }}
+                              to="/journal"
+                            >
                               {transaction.productName}
-                            </p>
+                            </Link>
                             <p className="text-xs text-muted-foreground">
                               {operationLabels[transaction.kind]} ·{" "}
                               {formatQuantity(transaction.quantity)}

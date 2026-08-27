@@ -154,14 +154,15 @@ pnpm convex run --prod migrations:repairRecipeReferences
 pnpm convex run --prod migrations:reclassifyAnnexePotions
 pnpm convex run --prod migrations:classifyPotionCraftability
 pnpm convex run --prod migrations:normalizeRecipeFamilies
+pnpm convex run --prod migrations:indexTransactionSearch
 ```
 
 Ces migrations sont idempotentes. La première ne rejoue aucun mouvement sur le
 stock courant ; la seconde rattache les recettes et leurs ingrédients aux
-articles canoniques, puis recalcule les coûts matière disponibles. Les trois
+articles canoniques, puis recalcule les coûts matière disponibles. Les quatre
 dernières réunissent toutes les potions dans la même catégorie, distinguent les
-potions fabricables de celles trouvées uniquement et normalisent les catégories
-de recettes proposées dans l’interface.
+potions fabricables de celles trouvées uniquement, normalisent les catégories
+de recettes et préparent la recherche du journal.
 
 Après la première connexion, l’administrateur crée les comptes employés depuis
 le menu « Administration ». Il n’existe aucune page d’inscription publique.
@@ -183,6 +184,7 @@ sont isolées de la production.
 | `pnpm convex run --prod migrations:reclassifyAnnexePotions`    | Réunit toutes les potions dans la catégorie « Potion » |
 | `pnpm convex run --prod migrations:classifyPotionCraftability` | Renseigne le mode d’obtention des potions              |
 | `pnpm convex run --prod migrations:normalizeRecipeFamilies`    | Normalise les catégories de recettes                   |
+| `pnpm convex run --prod migrations:indexTransactionSearch`     | Indexe la recherche textuelle du journal               |
 | `pnpm lint`                                                    | ESLint strict, zéro avertissement                      |
 | `pnpm typecheck`                                               | Vérification TypeScript sans émission                  |
 | `pnpm test`                                                    | Tests métier Convex + Better Auth                      |

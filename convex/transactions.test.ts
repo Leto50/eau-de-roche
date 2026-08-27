@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest"
 
 import { api } from "./_generated/api"
+import { buildTransactionSearchText } from "./lib/transactionSearch"
 import { asAuthenticatedUser, createTestBackend } from "./test.helpers"
 
 async function seedStock(backend: ReturnType<typeof createTestBackend>) {
@@ -790,6 +791,130 @@ describe("transactions.listPage et getDetails", () => {
     expect(firstPage.page[0]).not.toHaveProperty("lines")
     expect(firstPage.page[0]).not.toHaveProperty("stockDeltas")
     expect(secondPage.page).toHaveLength(1)
+    expect(secondPage.isDone).toBe(true)
+  })
+
+  it("filtre le journal côté serveur par texte, période, type et personnage", async () => {
+    const backend = createTestBackend()
+    const member = await asAuthenticatedUser(backend)
+    const { characterId } = await seedStock(backend)
+    const secondCharacterId = await backend.run((ctx) =>
+      ctx.db.insert("characters", {
+        active: true,
+        name: "Bérénice de Verre",
+      })
+    )
+    const day = 86_400_000
+    const now = Date.now()
+    await backend.run(async (ctx) => {
+      for (const transaction of [
+        {
+          actorCharacterId: characterId,
+          actorName: "Alixard Veliane",
+          counterparty: "Maison d’Ambre",
+          kind: "sale" as const,
+          occurredAt: now - day,
+          productName: "Potion d’éclat",
+        },
+        {
+          actorCharacterId: characterId,
+          actorName: "Alixard Veliane",
+          comment: "Livraison pour la Maison d’Ambre",
+          kind: "purchase" as const,
+          occurredAt: now - day * 2,
+          productName: "Lys bleu",
+        },
+        {
+          actorCharacterId: secondCharacterId,
+          actorName: "Bérénice de Verre",
+          counterparty: "Maison d’Ambre",
+          kind: "sale" as const,
+          occurredAt: now - day * 3,
+          productName: "Potion d’éclat",
+        },
+      ]) {
+        await ctx.db.insert("transactions", {
+          ...transaction,
+          quantity: 1,
+          searchText: buildTransactionSearchText(transaction),
+          source: "web",
+          total: 12,
+        })
+      }
+    })
+
+    const filtered = await member.query(api.transactions.listPage, {
+      characterId,
+      from: now - day * 1.5,
+      kind: "sale",
+      paginationOpts: { cursor: null, numItems: 10 },
+      q: "maison eclat",
+      to: now,
+    })
+    const byComment = await member.query(api.transactions.listPage, {
+      paginationOpts: { cursor: null, numItems: 10 },
+      q: "livraison",
+    })
+
+    expect(filtered.page).toHaveLength(1)
+    expect(filtered.page[0]).toMatchObject({
+      actorCharacterId: characterId,
+      kind: "sale",
+      productName: "Potion d’éclat",
+    })
+    expect(byComment.page).toHaveLength(1)
+    expect(byComment.page[0]?.kind).toBe("purchase")
+  })
+
+  it("pagine une recherche sans perdre les résultats séparés par des non-correspondances", async () => {
+    const backend = createTestBackend()
+    const member = await asAuthenticatedUser(backend)
+    const { characterId } = await seedStock(backend)
+    const now = Date.now()
+    await backend.run(async (ctx) => {
+      for (const [offset, productName] of [
+        [1, "Potion solaire"],
+        [2, "Sel de lune"],
+        [3, "Potion lunaire"],
+        [4, "Fiole vide"],
+        [5, "Potion minérale"],
+      ] as const) {
+        await ctx.db.insert("transactions", {
+          actorCharacterId: characterId,
+          actorName: "Alixard Veliane",
+          kind: "sale",
+          occurredAt: now - offset,
+          productName,
+          quantity: 1,
+          searchText: buildTransactionSearchText({
+            actorName: "Alixard Veliane",
+            productName,
+          }),
+          source: "web",
+          total: 12,
+        })
+      }
+    })
+
+    const firstPage = await member.query(api.transactions.listPage, {
+      paginationOpts: { cursor: null, numItems: 2 },
+      q: "potion",
+    })
+    const secondPage = await member.query(api.transactions.listPage, {
+      paginationOpts: {
+        cursor: firstPage.continueCursor,
+        numItems: 2,
+      },
+      q: "potion",
+    })
+
+    expect(
+      firstPage.page.map((transaction) => transaction.productName)
+    ).toEqual(["Potion solaire", "Potion lunaire"])
+    expect(firstPage.isDone).toBe(false)
+    expect(
+      secondPage.page.map((transaction) => transaction.productName)
+    ).toEqual(["Potion minérale"])
     expect(secondPage.isDone).toBe(true)
   })
 

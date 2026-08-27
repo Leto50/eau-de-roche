@@ -4,6 +4,7 @@ import seedData from "../data/inventaire.seed.json"
 import { type Doc, type Id } from "./_generated/dataModel"
 import { mutation } from "./_generated/server"
 import { normalizeName } from "./lib/text"
+import { buildTransactionSearchText } from "./lib/transactionSearch"
 import { isLootOnlyLegacyProduct } from "./lib/products"
 import { canonicalRecipeFamily } from "./lib/recipeFamilies"
 import {
@@ -153,6 +154,7 @@ export const importWorkbook = mutation({
         ...(product ? { productId: product.id } : {}),
         productName: transaction.productName,
         quantity: transaction.quantity,
+        searchText: buildTransactionSearchText(transaction),
         source: "workbook",
         total: transaction.total,
         ...(transaction.unitPrice === undefined

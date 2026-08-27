@@ -197,3 +197,38 @@ describe("migrations.normalizeRecipeFamilies", () => {
     ])
   })
 })
+
+describe("migrations.indexTransactionSearch", () => {
+  it("indexe les opérations historiques de façon idempotente", async () => {
+    const backend = convexTest(schema, modules)
+    const transactionId = await backend.run((ctx) =>
+      ctx.db.insert("transactions", {
+        actorName: "Éléonore",
+        comment: "Livraison urgente",
+        counterparty: "Maison d’Ambre",
+        kind: "sale",
+        occurredAt: Date.now(),
+        productName: "Potion d’éclat",
+        quantity: 2,
+        source: "workbook",
+        total: 24,
+      })
+    )
+
+    const result = await backend.mutation(
+      internal.migrations.indexTransactionSearch,
+      {}
+    )
+    const second = await backend.mutation(
+      internal.migrations.indexTransactionSearch,
+      {}
+    )
+    const transaction = await backend.run((ctx) => ctx.db.get(transactionId))
+
+    expect(result).toEqual({ indexed: true, indexedTransactions: 1 })
+    expect(second).toMatchObject({ indexed: false })
+    expect(transaction?.searchText).toBe(
+      "potion d eclat eleonore maison d ambre livraison urgente"
+    )
+  })
+})

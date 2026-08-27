@@ -4,15 +4,19 @@ import { createFileRoute } from "@tanstack/react-router"
 import { useMutation, useQuery as useConvexQuery } from "convex/react"
 import { type FunctionReturnType } from "convex/server"
 import {
+  CalendarRange,
   ChevronDown,
   ChevronLeft,
   ChevronRight,
+  Ellipsis,
   Hammer,
   LoaderCircle,
   Pencil,
   Plus,
+  Search,
   ScrollText,
   Trash2,
+  X,
 } from "lucide-react"
 import { useState, type MouseEvent } from "react"
 import { toast } from "sonner"
@@ -35,7 +39,6 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-  AlertDialogTrigger,
 } from "@/components/ui/alert-dialog"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -52,6 +55,20 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
+import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
 import { Skeleton } from "@/components/ui/skeleton"
 import {
   Table,
@@ -61,11 +78,6 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from "@/components/ui/tooltip"
 import { useHydrated } from "@/hooks/use-hydrated"
 import { authClient } from "@/lib/auth-client"
 import { getUserFacingErrorMessage } from "@/lib/errors"
@@ -81,7 +93,23 @@ import { api } from "../../../convex/_generated/api"
 import { type Doc, type Id } from "../../../convex/_generated/dataModel"
 
 const PAGE_SIZE = 30
-const initialPagination = { cursor: null, numItems: PAGE_SIZE } as const
+const transactionKinds = Object.keys(operationLabels) as Array<
+  Doc<"transactions">["kind"]
+>
+
+interface JournalRouteSearch {
+  character?: string
+  from?: string
+  kind?: Doc<"transactions">["kind"]
+  q?: string
+  to?: string
+}
+
+interface PaginationState {
+  cursor: string | null
+  filterKey: string
+  previousCursors: Array<string | null>
+}
 
 type Transaction = FunctionReturnType<
   typeof api.transactions.listPage
@@ -98,17 +126,90 @@ type EditorRequest =
       type: "order"
     }
 
+function isTransactionKind(
+  value: string
+): value is Doc<"transactions">["kind"] {
+  return transactionKinds.includes(value as Doc<"transactions">["kind"])
+}
+
+function isDateInput(value: string): boolean {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value)
+  if (!match) return false
+  const year = Number(match[1])
+  const month = Number(match[2])
+  const day = Number(match[3])
+  const date = new Date(year, month - 1, day)
+  return (
+    date.getFullYear() === year &&
+    date.getMonth() === month - 1 &&
+    date.getDate() === day
+  )
+}
+
+function validateJournalSearch(
+  search: Record<string, unknown>
+): JournalRouteSearch {
+  const q =
+    typeof search.q === "string" && search.q.trim()
+      ? search.q.slice(0, 100)
+      : undefined
+  const kind =
+    typeof search.kind === "string" && isTransactionKind(search.kind)
+      ? search.kind
+      : undefined
+  const character =
+    typeof search.character === "string" && search.character
+      ? search.character
+      : undefined
+  const from =
+    typeof search.from === "string" && isDateInput(search.from)
+      ? search.from
+      : undefined
+  const to =
+    typeof search.to === "string" && isDateInput(search.to)
+      ? search.to
+      : undefined
+  return {
+    ...(character ? { character } : {}),
+    ...(from ? { from } : {}),
+    ...(kind ? { kind } : {}),
+    ...(q ? { q } : {}),
+    ...(to ? { to } : {}),
+  }
+}
+
+function dateBoundary(value: string, nextDay = false): number {
+  const [year, month, day] = value.split("-").map(Number)
+  return new Date(year!, month! - 1, day! + Number(nextDay)).getTime()
+}
+
+function journalQueryArgs(filters: JournalRouteSearch, cursor: string | null) {
+  return {
+    ...(filters.character
+      ? { characterId: filters.character as Id<"characters"> }
+      : {}),
+    ...(filters.from ? { from: dateBoundary(filters.from) } : {}),
+    ...(filters.kind ? { kind: filters.kind } : {}),
+    paginationOpts: { cursor, numItems: PAGE_SIZE },
+    ...(filters.q ? { q: filters.q } : {}),
+    ...(filters.to ? { to: dateBoundary(filters.to, true) } : {}),
+  }
+}
+
 export const Route = createFileRoute("/_app/journal")({
   component: JournalPage,
   errorComponent: PageError,
-  loader: async ({ context }) => {
-    await context.queryClient.ensureQueryData(
-      convexQuery(api.transactions.listPage, {
-        paginationOpts: initialPagination,
-      })
-    )
+  loader: async ({ context, deps }) => {
+    await Promise.all([
+      context.queryClient.ensureQueryData(
+        convexQuery(api.transactions.listPage, journalQueryArgs(deps, null))
+      ),
+      context.queryClient.ensureQueryData(convexQuery(api.characters.list, {})),
+    ])
   },
+  loaderDeps: ({ search }) => search,
   pendingComponent: PageSkeleton,
+  validateSearch: validateJournalSearch,
 })
 
 const operationToneClasses: Readonly<
@@ -125,24 +226,36 @@ const operationToneClasses: Readonly<
 }
 
 function JournalPage() {
+  const filters = Route.useSearch()
+  const navigate = Route.useNavigate()
   const { data: session } = authClient.useSession()
   const isHydrated = useHydrated()
-  const [cursor, setCursor] = useState<string | null>(null)
-  const [previousCursors, setPreviousCursors] = useState<Array<string | null>>(
-    []
-  )
+  const filterKey = JSON.stringify(filters)
+  const [pagination, setPagination] = useState<PaginationState>({
+    cursor: null,
+    filterKey,
+    previousCursors: [],
+  })
+  const activePagination =
+    pagination.filterKey === filterKey
+      ? pagination
+      : { cursor: null, filterKey, previousCursors: [] }
   const [editor, setEditor] = useState<EditorRequest | null>(null)
   const { data: initialPage } = useSuspenseQuery(
-    convexQuery(api.transactions.listPage, {
-      paginationOpts: initialPagination,
-    })
+    convexQuery(api.transactions.listPage, journalQueryArgs(filters, null))
   )
-  const livePage = useConvexQuery(api.transactions.listPage, {
-    paginationOpts: { cursor, numItems: PAGE_SIZE },
-  })
-  const page = livePage ?? (cursor === null ? initialPage : undefined)
+  const { data: characters } = useSuspenseQuery(
+    convexQuery(api.characters.list, {})
+  )
+  const livePage = useConvexQuery(
+    api.transactions.listPage,
+    journalQueryArgs(filters, activePagination.cursor)
+  )
+  const page =
+    livePage ?? (activePagination.cursor === null ? initialPage : undefined)
   const isFetchingPage = livePage === undefined
   const transactions = page?.page ?? []
+  const hasFilters = Object.keys(filters).length > 0
   const isAdmin =
     isHydrated && (session?.user.role?.split(",").includes("admin") ?? false)
   const showActions = transactions.some(
@@ -150,16 +263,48 @@ function JournalPage() {
   )
 
   function showPreviousPage() {
-    const previousCursor = previousCursors.at(-1)
+    const previousCursor = activePagination.previousCursors.at(-1)
     if (previousCursor === undefined) return
-    setPreviousCursors((current) => current.slice(0, -1))
-    setCursor(previousCursor)
+    setPagination({
+      cursor: previousCursor,
+      filterKey,
+      previousCursors: activePagination.previousCursors.slice(0, -1),
+    })
   }
 
   function showNextPage() {
     if (!page || page.isDone) return
-    setPreviousCursors((current) => [...current, cursor])
-    setCursor(page.continueCursor)
+    setPagination({
+      cursor: page.continueCursor,
+      filterKey,
+      previousCursors: [
+        ...activePagination.previousCursors,
+        activePagination.cursor,
+      ],
+    })
+  }
+
+  function updateFilter(next: Partial<JournalRouteSearch>) {
+    void navigate({
+      replace: true,
+      search: (previous) => ({ ...previous, ...next }),
+    })
+  }
+
+  function updateDate(field: "from" | "to", value: string) {
+    void navigate({
+      replace: true,
+      search: (previous) => {
+        const next = { ...previous, [field]: value || undefined }
+        if (field === "from" && next.to && value > next.to) {
+          next.to = undefined
+        }
+        if (field === "to" && next.from && value < next.from) {
+          next.from = undefined
+        }
+        return next
+      },
+    })
   }
 
   return (
@@ -193,6 +338,128 @@ function JournalPage() {
       >
         Retrouvez les ventes, achats, services et productions déjà enregistrés.
       </PageHeader>
+
+      <section
+        aria-label="Filtres du journal"
+        className="mt-6 border-y border-border/70 py-3"
+      >
+        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-[minmax(15rem,1.5fr)_minmax(10rem,0.8fr)_minmax(12rem,1fr)_auto] xl:items-end">
+          <div className="space-y-1.5 md:col-span-2 xl:col-span-1">
+            <Label htmlFor="journal-search">Recherche</Label>
+            <div className="relative">
+              <Search
+                aria-hidden="true"
+                className="absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground"
+              />
+              <Input
+                className="h-9 bg-background/50 pl-9"
+                id="journal-search"
+                onChange={(event) =>
+                  updateFilter({ q: event.target.value || undefined })
+                }
+                placeholder="Référence, contrepartie, commentaire…"
+                type="search"
+                value={filters.q ?? ""}
+              />
+            </div>
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="journal-kind">Type</Label>
+            <Select
+              onValueChange={(value) =>
+                updateFilter({
+                  kind: isTransactionKind(value) ? value : undefined,
+                })
+              }
+              value={filters.kind ?? "all"}
+            >
+              <SelectTrigger
+                className="w-full bg-background/50"
+                id="journal-kind"
+              >
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">Tous les types</SelectItem>
+                {transactionKinds.map((kind) => (
+                  <SelectItem key={kind} value={kind}>
+                    {operationLabels[kind]}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="journal-character">Personnage</Label>
+            <Select
+              onValueChange={(value) =>
+                updateFilter({
+                  character: value === "all" ? undefined : value,
+                })
+              }
+              value={filters.character ?? "all"}
+            >
+              <SelectTrigger
+                className="w-full bg-background/50"
+                id="journal-character"
+              >
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">Tous les personnages</SelectItem>
+                {characters.map((character) => (
+                  <SelectItem key={character._id} value={character._id}>
+                    {character.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="grid grid-cols-2 gap-2 md:col-span-2 xl:col-span-1">
+            <div className="space-y-1.5">
+              <Label htmlFor="journal-from">Du</Label>
+              <Input
+                className="h-9 bg-background/50"
+                id="journal-from"
+                max={filters.to}
+                onChange={(event) => updateDate("from", event.target.value)}
+                type="date"
+                value={filters.from ?? ""}
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="journal-to">Au</Label>
+              <Input
+                className="h-9 bg-background/50"
+                id="journal-to"
+                min={filters.from}
+                onChange={(event) => updateDate("to", event.target.value)}
+                type="date"
+                value={filters.to ?? ""}
+              />
+            </div>
+          </div>
+        </div>
+        <div className="mt-3 flex min-h-8 flex-wrap items-center justify-between gap-2 border-t border-border/45 pt-3">
+          <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
+            <CalendarRange aria-hidden="true" className="size-3.5" />
+            {hasFilters
+              ? `${transactions.length} résultat${transactions.length === 1 ? "" : "s"} sur cette page`
+              : "Activité la plus récente en premier"}
+          </p>
+          {hasFilters ? (
+            <Button
+              onClick={() => void navigate({ replace: true, search: {} })}
+              size="sm"
+              type="button"
+              variant="ghost"
+            >
+              <X aria-hidden="true" />
+              Effacer les filtres
+            </Button>
+          ) : null}
+        </div>
+      </section>
 
       {!page ? (
         <PageSkeleton />
@@ -252,11 +519,14 @@ function JournalPage() {
 
           <div className="mt-4 flex items-center justify-between gap-3 border-t border-[#5b462b]/20 pt-4">
             <p className="text-xs tracking-wide text-muted-foreground">
-              Page {previousCursors.length + 1}
+              Page {activePagination.previousCursors.length + 1}
             </p>
             <div className="flex gap-2">
               <Button
-                disabled={previousCursors.length === 0 || isFetchingPage}
+                disabled={
+                  activePagination.previousCursors.length === 0 ||
+                  isFetchingPage
+                }
                 onClick={showPreviousPage}
                 size="sm"
                 type="button"
@@ -281,9 +551,15 @@ function JournalPage() {
       ) : (
         <Alert className="mt-7 border-[#6a4f2e]/30 bg-card/35">
           <ScrollText aria-hidden="true" />
-          <AlertTitle>Aucune opération enregistrée</AlertTitle>
+          <AlertTitle>
+            {hasFilters
+              ? "Aucune opération ne correspond"
+              : "Aucune opération enregistrée"}
+          </AlertTitle>
           <AlertDescription>
-            Ajoutez une première opération pour commencer l’historique.
+            {hasFilters
+              ? "Élargissez la période ou effacez un filtre pour retrouver d’autres opérations."
+              : "Ajoutez une première opération pour commencer l’historique."}
           </AlertDescription>
         </Alert>
       )}
@@ -401,39 +677,9 @@ function TransactionActions({
   transaction: Transaction
 }>) {
   const canEdit = transaction.canManage && isEditableTransaction(transaction)
-
-  return (
-    <div className="flex flex-nowrap justify-end gap-1">
-      {canEdit ? (
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <Button
-              aria-label={`Modifier ${operationLabels[transaction.kind]} — ${transaction.productName}`}
-              className="md:size-6 md:px-0"
-              onClick={() => onEdit(transaction)}
-              size="sm"
-              type="button"
-              variant="ghost"
-            >
-              <Pencil aria-hidden="true" />
-              <span className="md:sr-only">Modifier</span>
-            </Button>
-          </TooltipTrigger>
-          <TooltipContent>Modifier</TooltipContent>
-        </Tooltip>
-      ) : null}
-      {transaction.canDelete ? (
-        <TransactionDeletion transaction={transaction} />
-      ) : null}
-    </div>
-  )
-}
-
-function TransactionDeletion({
-  transaction,
-}: Readonly<{ transaction: Transaction }>) {
   const removeTransaction = useMutation(api.transactions.remove)
-  const [open, setOpen] = useState(false)
+  const [actionsOpen, setActionsOpen] = useState(false)
+  const [deleteOpen, setDeleteOpen] = useState(false)
   const [isSubmitting, setIsSubmitting] = useState(false)
 
   async function handleDelete(event: MouseEvent<HTMLButtonElement>) {
@@ -442,7 +688,7 @@ function TransactionDeletion({
     try {
       await removeTransaction({ transactionId: transaction._id })
       toast.success("Opération supprimée et stock corrigé.")
-      setOpen(false)
+      setDeleteOpen(false)
     } catch (error) {
       toast.error(
         getUserFacingErrorMessage(
@@ -456,56 +702,87 @@ function TransactionDeletion({
   }
 
   return (
-    <AlertDialog onOpenChange={setOpen} open={open}>
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <AlertDialogTrigger asChild>
+    <>
+      <Popover onOpenChange={setActionsOpen} open={actionsOpen}>
+        <PopoverTrigger asChild>
+          <Button
+            aria-label={`Gérer ${operationLabels[transaction.kind]} — ${transaction.productName}`}
+            className="h-8 px-2"
+            size="sm"
+            type="button"
+            variant="ghost"
+          >
+            <Ellipsis aria-hidden="true" />
+            <span className="md:sr-only">Gérer</span>
+          </Button>
+        </PopoverTrigger>
+        <PopoverContent align="end" className="w-44 gap-1 p-1.5">
+          {canEdit ? (
             <Button
-              aria-label={`Supprimer ${operationLabels[transaction.kind]} — ${transaction.productName}`}
-              className="md:size-6 md:px-0"
+              className="justify-start"
+              onClick={() => {
+                setActionsOpen(false)
+                onEdit(transaction)
+              }}
               size="sm"
+              type="button"
+              variant="ghost"
+            >
+              <Pencil aria-hidden="true" />
+              Modifier
+            </Button>
+          ) : null}
+          {transaction.canDelete ? (
+            <Button
+              className="justify-start text-destructive hover:text-destructive"
+              onClick={() => {
+                setActionsOpen(false)
+                setDeleteOpen(true)
+              }}
+              size="sm"
+              type="button"
+              variant="ghost"
+            >
+              <Trash2 aria-hidden="true" />
+              Supprimer
+            </Button>
+          ) : null}
+        </PopoverContent>
+      </Popover>
+      <AlertDialog onOpenChange={setDeleteOpen} open={deleteOpen}>
+        <AlertDialogContent className="rounded-[0.2rem] border-[#6a5436] bg-[#eee1c7]">
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              Supprimer définitivement cette opération ?
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              Elle disparaîtra du journal avec ses lignes et ses mouvements. Le
+              stock sera corrigé et seule une trace d’audit sera conservée.
+              Cette action est irréversible.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel type="button">Conserver</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={isSubmitting}
+              onClick={handleDelete}
               type="button"
               variant="destructive"
             >
-              <Trash2 aria-hidden="true" />
-              <span className="md:sr-only">Supprimer</span>
-            </Button>
-          </AlertDialogTrigger>
-        </TooltipTrigger>
-        <TooltipContent>Supprimer</TooltipContent>
-      </Tooltip>
-      <AlertDialogContent className="rounded-[0.2rem] border-[#6a5436] bg-[#eee1c7]">
-        <AlertDialogHeader>
-          <AlertDialogTitle>
-            Supprimer définitivement cette opération ?
-          </AlertDialogTitle>
-          <AlertDialogDescription>
-            Elle disparaîtra du journal avec ses lignes et ses mouvements. Le
-            stock sera corrigé et seule une trace d’audit sera conservée. Cette
-            action est irréversible.
-          </AlertDialogDescription>
-        </AlertDialogHeader>
-        <AlertDialogFooter>
-          <AlertDialogCancel type="button">Conserver</AlertDialogCancel>
-          <AlertDialogAction
-            disabled={isSubmitting}
-            onClick={handleDelete}
-            type="button"
-            variant="destructive"
-          >
-            {isSubmitting ? (
-              <LoaderCircle
-                aria-hidden="true"
-                className="animate-spin motion-reduce:animate-none"
-              />
-            ) : (
-              <Trash2 aria-hidden="true" />
-            )}
-            Supprimer définitivement
-          </AlertDialogAction>
-        </AlertDialogFooter>
-      </AlertDialogContent>
-    </AlertDialog>
+              {isSubmitting ? (
+                <LoaderCircle
+                  aria-hidden="true"
+                  className="animate-spin motion-reduce:animate-none"
+                />
+              ) : (
+                <Trash2 aria-hidden="true" />
+              )}
+              Supprimer définitivement
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </>
   )
 }
 
@@ -517,7 +794,7 @@ function TransactionLines({
   transactionId: Id<"transactions">
 }>) {
   const [open, setOpen] = useState(false)
-  if (lineCount === 0) return null
+  if (lineCount <= 1) return null
 
   return (
     <Collapsible onOpenChange={setOpen} open={open}>
@@ -527,7 +804,7 @@ function TransactionLines({
           type="button"
           variant="link"
         >
-          {lineCount} {lineCount === 1 ? "ligne" : "lignes"}
+          Voir le détail · {lineCount} lignes
           <ChevronDown
             aria-hidden="true"
             className={cn("transition-transform", open && "rotate-180")}
