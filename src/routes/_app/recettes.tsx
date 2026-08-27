@@ -37,16 +37,42 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
-import { Separator } from "@/components/ui/separator"
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { api } from "../../../convex/_generated/api"
 import { type Doc } from "../../../convex/_generated/dataModel"
 import { useHydrated } from "@/hooks/use-hydrated"
 import { authClient } from "@/lib/auth-client"
 import { formatDecimalSeptims, formatNumber, formatSeptims } from "@/lib/format"
-import { recipeFamilies } from "@/lib/recipe-families"
+import {
+  isRecipeFamily,
+  recipeFamilies,
+  type RecipeFamily,
+} from "@/lib/recipe-families"
+import { bundleMatchesSearch, recipeMatchesSearch } from "@/lib/recipe-catalog"
 
 type Recipe = FunctionReturnType<typeof api.recipes.list>[number]
 type Bundle = FunctionReturnType<typeof api.recipes.listBundles>[number]
+type CatalogView = "bundles" | "recipes"
+
+interface CatalogSearch {
+  family?: RecipeFamily
+  q?: string
+  view: CatalogView
+}
+
+function validateCatalogSearch(search: Record<string, unknown>): CatalogSearch {
+  const q =
+    typeof search.q === "string" && search.q.trim()
+      ? search.q.slice(0, 100)
+      : undefined
+  return {
+    ...(typeof search.family === "string" && isRecipeFamily(search.family)
+      ? { family: search.family }
+      : {}),
+    ...(q ? { q } : {}),
+    view: search.view === "bundles" ? "bundles" : "recipes",
+  }
+}
 
 export const Route = createFileRoute("/_app/recettes")({
   component: RecipesPage,
@@ -67,9 +93,12 @@ export const Route = createFileRoute("/_app/recettes")({
     ])
   },
   pendingComponent: PageSkeleton,
+  validateSearch: validateCatalogSearch,
 })
 
 function RecipesPage() {
+  const filters = Route.useSearch()
+  const navigate = Route.useNavigate()
   const { data: session } = authClient.useSession()
   const isHydrated = useHydrated()
   const { data: recipes } = useSuspenseQuery(convexQuery(api.recipes.list, {}))
@@ -87,109 +116,230 @@ function RecipesPage() {
   )
   const isAdmin =
     isHydrated && (session?.user.role?.split(",").includes("admin") ?? false)
-  const [search, setSearch] = useState("")
-  const [family, setFamily] = useState("all")
   const [productionProductId, setProductionProductId] =
     useState<Doc<"products">["_id"]>()
+  const search = filters.q ?? ""
+  const family = filters.family ?? "all"
+  const view = filters.view
   const families = recipeFamilies.filter((entry) =>
     recipes.some((recipe) => recipe.family === entry)
   )
-  const normalizedSearch = search.trim().toLocaleLowerCase("fr")
   const visibleRecipes = recipes.filter(
     (recipe) =>
       (family === "all" || recipe.family === family) &&
-      (!normalizedSearch ||
-        recipe.name.toLocaleLowerCase("fr").includes(normalizedSearch) ||
-        recipe.effect?.toLocaleLowerCase("fr").includes(normalizedSearch))
+      recipeMatchesSearch(recipe, search)
   )
+  const visibleBundles = bundles.filter((bundle) =>
+    bundleMatchesSearch(bundle, search)
+  )
+
+  function handleViewChange(value: string) {
+    if (value !== "recipes" && value !== "bundles") return
+    void navigate({
+      replace: true,
+      search: (previous) => ({ ...previous, view: value }),
+    })
+  }
   return (
     <div className="animate-in duration-300 fade-in slide-in-from-bottom-1 motion-reduce:animate-none">
       <PageHeader eyebrow="Production" title="Recettes & lots">
         Les ingrédients nécessaires aux recettes et les lots vendus en boutique.
       </PageHeader>
 
-      <div className="mt-7 grid gap-3 border-y border-border/70 py-3 sm:grid-cols-[1fr_14rem]">
+      <div className="mt-7 flex flex-wrap items-center justify-between gap-3 border-y border-border/70 py-3">
+        <Tabs onValueChange={handleViewChange} value={view}>
+          <TabsList aria-label="Vue du catalogue" className="bg-[#6e5330]/8">
+            <TabsTrigger value="recipes">
+              <BookMarked aria-hidden="true" />
+              Recettes
+            </TabsTrigger>
+            <TabsTrigger value="bundles">
+              <PackageOpen aria-hidden="true" />
+              Lots
+            </TabsTrigger>
+          </TabsList>
+        </Tabs>
+        <p className="text-sm text-muted-foreground">
+          <strong className="font-display text-lg text-foreground">
+            {view === "recipes" ? visibleRecipes.length : visibleBundles.length}
+          </strong>{" "}
+          {view === "recipes"
+            ? visibleRecipes.length === 1
+              ? "recette affichée"
+              : "recettes affichées"
+            : visibleBundles.length === 1
+              ? "lot affiché"
+              : "lots affichés"}
+        </p>
+      </div>
+
+      <div
+        className={
+          view === "recipes"
+            ? "mt-4 grid gap-3 sm:grid-cols-[1fr_14rem]"
+            : "mt-4"
+        }
+      >
         <div className="relative">
           <Search
             aria-hidden="true"
             className="absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted-foreground"
           />
           <Input
-            aria-label="Rechercher une recette"
+            aria-label={
+              view === "recipes"
+                ? "Rechercher une recette"
+                : "Rechercher un lot"
+            }
             className="h-9 bg-background/50 pl-9"
-            onChange={(event) => setSearch(event.target.value)}
-            placeholder="Effet, potion ou ingrédient…"
+            onChange={(event) => {
+              const value = event.target.value
+              void navigate({
+                replace: true,
+                search: (previous) => ({
+                  ...previous,
+                  q: value || undefined,
+                }),
+              })
+            }}
+            placeholder={
+              view === "recipes"
+                ? "Nom, effet ou ingrédient…"
+                : "Nom ou composition du lot…"
+            }
             type="search"
             value={search}
           />
         </div>
-        <Select onValueChange={setFamily} value={family}>
-          <SelectTrigger
-            aria-label="Famille de recettes"
-            className="w-full bg-background/50"
+        {view === "recipes" ? (
+          <Select
+            onValueChange={(value) => {
+              if (value !== "all" && !isRecipeFamily(value)) return
+              void navigate({
+                replace: true,
+                search: (previous) => ({
+                  ...previous,
+                  family: value === "all" ? undefined : value,
+                }),
+              })
+            }}
+            value={family}
           >
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">Toutes les familles</SelectItem>
-            {families.map((entry) => (
-              <SelectItem key={entry} value={entry}>
-                {entry}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+            <SelectTrigger
+              aria-label="Famille de recettes"
+              className="w-full bg-background/50"
+            >
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">Toutes les familles</SelectItem>
+              {families.map((entry) => (
+                <SelectItem key={entry} value={entry}>
+                  {entry}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        ) : null}
       </div>
 
-      <section aria-labelledby="recipes-title" className="mt-7">
-        <div className="mb-4 flex items-start justify-between gap-4">
-          <div>
-            <p className="text-[0.66rem] font-bold tracking-[0.2em] text-primary uppercase">
-              {visibleRecipes.length} recettes
-            </p>
-            <h2
-              className="mt-1 font-display text-xl font-[580] text-[#3b2f22]"
-              id="recipes-title"
-            >
-              Recettes
-            </h2>
+      {view === "recipes" ? (
+        <section aria-labelledby="recipes-title" className="mt-7">
+          <div className="mb-4 flex items-start justify-between gap-4">
+            <div>
+              <p className="text-[0.66rem] font-bold tracking-[0.2em] text-primary uppercase">
+                {visibleRecipes.length} recettes
+              </p>
+              <h2
+                className="mt-1 font-display text-xl font-[580] text-[#3b2f22]"
+                id="recipes-title"
+              >
+                Recettes
+              </h2>
+            </div>
+            <div className="flex items-center gap-2">
+              {isAdmin ? (
+                <>
+                  <RecipeArchivesDialog />
+                  <RecipeDialog
+                    linkedProductIds={linkedProductIds}
+                    products={products}
+                  />
+                </>
+              ) : null}
+              <BookMarked aria-hidden="true" className="size-5 text-primary" />
+            </div>
           </div>
-          <div className="flex items-center gap-2">
-            {isAdmin ? (
-              <>
-                <RecipeArchivesDialog />
-                <RecipeDialog
+          {visibleRecipes.length > 0 ? (
+            <div className="grid grid-cols-3 gap-3 max-xl:grid-cols-2 max-md:grid-cols-1">
+              {visibleRecipes.map((recipe) => (
+                <RecipeEntry
+                  isAdmin={isAdmin}
+                  key={recipe._id}
                   linkedProductIds={linkedProductIds}
+                  onProduce={setProductionProductId}
+                  products={products}
+                  recipe={recipe}
+                />
+              ))}
+            </div>
+          ) : (
+            <Alert className="border-[#6a4f2e]/30 bg-card/35">
+              <Search aria-hidden="true" />
+              <AlertTitle>Aucune recette trouvée</AlertTitle>
+              <AlertDescription>
+                Modifiez la recherche ou choisissez une autre famille.
+              </AlertDescription>
+            </Alert>
+          )}
+        </section>
+      ) : (
+        <section aria-labelledby="bundles-title" className="mt-7">
+          <div className="mb-4 flex items-start justify-between gap-4">
+            <div>
+              <p className="text-[0.66rem] font-bold tracking-[0.2em] text-primary uppercase">
+                Vente groupée
+              </p>
+              <h2
+                className="mt-1 font-display text-xl font-[580] text-[#3b2f22]"
+                id="bundles-title"
+              >
+                Lots préparés
+              </h2>
+            </div>
+            <div className="flex items-center gap-2">
+              {isAdmin ? (
+                <>
+                  <BundleArchivesDialog />
+                  <BundleDialog products={products} />
+                </>
+              ) : null}
+              <PackageOpen aria-hidden="true" className="size-5 text-primary" />
+            </div>
+          </div>
+          {visibleBundles.length > 0 ? (
+            <div className="grid grid-cols-4 gap-3 max-xl:grid-cols-2 max-md:grid-cols-1">
+              {visibleBundles.map((bundle) => (
+                <BundleEntry
+                  bundle={bundle}
+                  isAdmin={isAdmin}
+                  key={bundle._id}
                   products={products}
                 />
-              </>
-            ) : null}
-            <BookMarked aria-hidden="true" className="size-5 text-primary" />
-          </div>
-        </div>
-        {visibleRecipes.length > 0 ? (
-          <div className="grid grid-cols-3 gap-3 max-xl:grid-cols-2 max-md:grid-cols-1">
-            {visibleRecipes.map((recipe) => (
-              <RecipeEntry
-                isAdmin={isAdmin}
-                key={recipe._id}
-                linkedProductIds={linkedProductIds}
-                onProduce={setProductionProductId}
-                products={products}
-                recipe={recipe}
-              />
-            ))}
-          </div>
-        ) : (
-          <Alert className="border-[#6a4f2e]/30 bg-card/35">
-            <Search aria-hidden="true" />
-            <AlertTitle>Aucune recette trouvée</AlertTitle>
-            <AlertDescription>
-              Modifiez la recherche ou choisissez une autre famille.
-            </AlertDescription>
-          </Alert>
-        )}
-      </section>
+              ))}
+            </div>
+          ) : (
+            <Alert className="border-[#6a4f2e]/30 bg-card/35">
+              <Search aria-hidden="true" />
+              <AlertTitle>Aucun lot trouvé</AlertTitle>
+              <AlertDescription>
+                Modifiez la recherche pour retrouver un lot par son nom ou sa
+                composition.
+              </AlertDescription>
+            </Alert>
+          )}
+        </section>
+      )}
 
       {productionProductId ? (
         <OperationDialog
@@ -206,42 +356,6 @@ function RecipesPage() {
           trigger={null}
         />
       ) : null}
-
-      <Separator className="mt-12 bg-border" />
-      <section aria-labelledby="bundles-title" className="pt-8">
-        <div className="mb-4 flex items-start justify-between gap-4">
-          <div>
-            <p className="text-[0.66rem] font-bold tracking-[0.2em] text-primary uppercase">
-              Vente groupée
-            </p>
-            <h2
-              className="mt-1 font-display text-xl font-[580] text-[#3b2f22]"
-              id="bundles-title"
-            >
-              Lots préparés
-            </h2>
-          </div>
-          <div className="flex items-center gap-2">
-            {isAdmin ? (
-              <>
-                <BundleArchivesDialog />
-                <BundleDialog products={products} />
-              </>
-            ) : null}
-            <PackageOpen aria-hidden="true" className="size-5 text-primary" />
-          </div>
-        </div>
-        <div className="grid grid-cols-4 gap-3 max-xl:grid-cols-2 max-md:grid-cols-1">
-          {bundles.map((bundle) => (
-            <BundleEntry
-              bundle={bundle}
-              isAdmin={isAdmin}
-              key={bundle._id}
-              products={products}
-            />
-          ))}
-        </div>
-      </section>
     </div>
   )
 }
