@@ -9,7 +9,3 @@ updates:
       time: "06:00"
       timezone: Europe/Paris
     open-pull-requests-limit: 10
-    groups:
-      netlify:
-        patterns:
-          - "@netlify/*"
