@@ -4,6 +4,7 @@ import { paginationOptsValidator } from "convex/server"
 import { type Doc, type Id } from "./_generated/dataModel"
 import { mutation, query, type QueryCtx } from "./_generated/server"
 import { requireUser } from "./lib/auth"
+import { resolveOrderContact } from "./lib/contacts"
 import {
   assertFiniteRange,
   assertWholeNumberRange,
@@ -934,11 +935,27 @@ export const updateExchange = mutation({
 
     const comment = cleanOptionalText(args.comment)
     const counterparty = cleanOptionalText(args.counterparty)
+    const resolvedLinkedContact = linkedOrder
+      ? await resolveOrderContact(ctx, {
+          ...(linkedOrder.contactId &&
+          linkedOrder.kind === linkedOrderKind &&
+          (!counterparty ||
+            normalizeName(counterparty) ===
+              normalizeName(linkedOrder.contactName))
+            ? { contactId: linkedOrder.contactId }
+            : {}),
+          existingOrder: linkedOrder,
+          kind: linkedOrderKind,
+          name: counterparty ?? linkedOrder.contactName,
+        })
+      : undefined
+    const resolvedCounterparty =
+      resolvedLinkedContact?.contactName ?? counterparty
     const firstLine = prepared.lines[0]
     const productName = linkedOrder
       ? orderTransactionLabel(
           linkedOrderKind,
-          counterparty ?? linkedOrder.contactName
+          resolvedLinkedContact!.contactName
         )
       : prepared.lines.length === 1 && firstLine
         ? firstLine.productName
@@ -948,7 +965,7 @@ export const updateExchange = mutation({
       actorName: character.name,
       actorUserId: transaction.actorUserId ?? String(user._id),
       ...(comment ? { comment } : {}),
-      ...(counterparty ? { counterparty } : {}),
+      ...(resolvedCounterparty ? { counterparty: resolvedCounterparty } : {}),
       ...(!linkedOrder && discount > 0 ? { discount } : {}),
       incomingTotal: prepared.incomingTotal,
       kind: prepared.kind,
@@ -962,7 +979,7 @@ export const updateExchange = mutation({
       searchText: buildTransactionSearchText({
         actorName: character.name,
         comment,
-        counterparty,
+        counterparty: resolvedCounterparty,
         productName,
       }),
       source: transaction.source,
@@ -1004,7 +1021,8 @@ export const updateExchange = mutation({
         )
       )
       await ctx.db.patch(linkedOrder._id, {
-        contactName: counterparty ?? linkedOrder.contactName,
+        contactId: resolvedLinkedContact!.contactId,
+        contactName: resolvedLinkedContact!.contactName,
         discount: undefined,
         kind: linkedOrderKind,
         processedAt: args.occurredAt,

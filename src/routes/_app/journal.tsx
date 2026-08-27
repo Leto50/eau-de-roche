@@ -942,6 +942,7 @@ function OrderActivityEditor({
 }>) {
   const products = useConvexQuery(api.products.selectable)
   const characters = useConvexQuery(api.characters.list)
+  const contacts = useConvexQuery(api.contacts.list)
   const recipes = useConvexQuery(api.recipes.list)
   const order = useConvexQuery(api.orders.getById, {
     orderId: request.orderId,
@@ -949,6 +950,7 @@ function OrderActivityEditor({
   const isLoading =
     products === undefined ||
     characters === undefined ||
+    contacts === undefined ||
     recipes === undefined ||
     order === undefined
   const missingEntity = !isLoading && order === null
@@ -963,6 +965,7 @@ function OrderActivityEditor({
   return (
     <OrderDialog
       characters={characters}
+      contacts={contacts}
       isAdmin={isAdmin}
       key={request.orderId}
       onOpenChange={(nextOpen) => {

@@ -19,6 +19,69 @@ async function seedOrderProduct(backend: ReturnType<typeof createTestBackend>) {
 }
 
 describe("orders", () => {
+  it("réutilise les contacts normalisés et valide leur type", async () => {
+    const backend = createTestBackend()
+    const employee = await asAuthenticatedUser(backend)
+    const productId = await seedOrderProduct(backend)
+    const firstOrderId = await employee.mutation(api.orders.save, {
+      contactName: "Élodie",
+      dueAt: null,
+      kind: "client",
+      lines: [{ productId, quantity: 1, unitPrice: 1 }],
+      notes: "",
+      status: "open",
+      total: null,
+    })
+    const firstOrder = await backend.run((ctx) => ctx.db.get(firstOrderId))
+    await employee.mutation(api.orders.save, {
+      contactName: "  elodie ",
+      dueAt: null,
+      kind: "client",
+      lines: [{ productId, quantity: 1, unitPrice: 1 }],
+      notes: "",
+      status: "open",
+      total: null,
+    })
+    await employee.mutation(api.orders.save, {
+      contactName: "Élodie",
+      dueAt: null,
+      kind: "supplier",
+      lines: [{ productId, quantity: 1, unitPrice: 1 }],
+      notes: "",
+      status: "open",
+      total: null,
+    })
+
+    const contacts = await backend.run((ctx) =>
+      ctx.db.query("contacts").collect()
+    )
+    expect(contacts).toHaveLength(2)
+    expect(contacts).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          active: true,
+          kind: "client",
+          name: "Élodie",
+          normalizedName: "elodie",
+        }),
+        expect.objectContaining({ kind: "supplier", name: "Élodie" }),
+      ])
+    )
+
+    await expect(
+      employee.mutation(api.orders.save, {
+        contactId: firstOrder?.contactId,
+        contactName: "Élodie",
+        dueAt: null,
+        kind: "supplier",
+        lines: [{ productId, quantity: 1, unitPrice: 1 }],
+        notes: "",
+        status: "open",
+        total: null,
+      })
+    ).rejects.toThrowError("type de commande")
+  })
+
   it("crée puis modifie une commande multi-produits sans toucher au stock", async () => {
     const backend = createTestBackend()
     const employee = await asAuthenticatedUser(backend)
@@ -306,6 +369,7 @@ describe("orders", () => {
       transactionId: result.transactionId,
     })
     const correctedJournalState = await backend.run(async (ctx) => ({
+      contacts: await ctx.db.query("contacts").collect(),
       lines: await ctx.db
         .query("orderLines")
         .withIndex("by_order", (index) => index.eq("orderId", orderId))
@@ -317,6 +381,15 @@ describe("orders", () => {
       contactName: "Client corrigé depuis le journal",
       processedAt: correctedDate,
       total: 1,
+    })
+    expect(
+      correctedJournalState.contacts.find(
+        (contact) => contact._id === correctedJournalState.order?.contactId
+      )
+    ).toMatchObject({
+      kind: "client",
+      name: "Client corrigé depuis le journal",
+      normalizedName: "client corrige depuis le journal",
     })
     expect(correctedJournalState.lines).toEqual([
       expect.objectContaining({ quantity: 5, total: 5 / 4 }),

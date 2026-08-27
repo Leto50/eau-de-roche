@@ -17,6 +17,7 @@ import {
 import { useState } from "react"
 import { toast } from "sonner"
 
+import { ContactManagerDialog } from "@/components/contact-manager-dialog"
 import { OrderDialog } from "@/components/order-dialog"
 import { OrderPreparationDetails } from "@/components/order-preparation-details"
 import { PageError } from "@/components/page-error"
@@ -128,6 +129,7 @@ export const Route = createFileRoute("/_app/commandes")({
   loader: async ({ context }) => {
     await Promise.all([
       context.queryClient.ensureQueryData(convexQuery(api.orders.list, {})),
+      context.queryClient.ensureQueryData(convexQuery(api.contacts.list, {})),
       context.queryClient.ensureQueryData(
         convexQuery(api.products.selectable, {})
       ),
@@ -145,6 +147,9 @@ function OrdersPage() {
   const { data: session } = authClient.useSession()
   const isHydrated = useHydrated()
   const { data: orders } = useSuspenseQuery(convexQuery(api.orders.list, {}))
+  const { data: contacts } = useSuspenseQuery(
+    convexQuery(api.contacts.list, {})
+  )
   const { data: products } = useSuspenseQuery(
     convexQuery(api.products.selectable, {})
   )
@@ -207,13 +212,17 @@ function OrdersPage() {
     <div className="animate-in duration-300 fade-in slide-in-from-bottom-1 motion-reduce:animate-none">
       <PageHeader
         action={
-          <OrderDialog
-            characters={characters}
-            initialKind={kind}
-            isAdmin={isAdmin}
-            products={products}
-            recipes={recipes}
-          />
+          <div className="flex flex-wrap items-center gap-2">
+            {isAdmin ? <ContactManagerDialog /> : null}
+            <OrderDialog
+              characters={characters}
+              contacts={contacts}
+              initialKind={kind}
+              isAdmin={isAdmin}
+              products={products}
+              recipes={recipes}
+            />
+          </div>
         }
         eyebrow="Suivi des commandes"
         title="Commandes"
@@ -250,6 +259,7 @@ function OrdersPage() {
           {visibleOrders.map((order) => (
             <OrderEntry
               characters={characters}
+              contacts={contacts}
               isAdmin={isAdmin}
               key={order._id}
               onStatusChange={(value) => handleStatusChange(order, value)}
@@ -290,6 +300,7 @@ function orderTotal(order: Order): number | undefined {
 
 function OrderEntry({
   characters,
+  contacts,
   isAdmin,
   onStatusChange,
   order,
@@ -297,6 +308,7 @@ function OrderEntry({
   recipes,
 }: Readonly<{
   characters: readonly Doc<"characters">[]
+  contacts: readonly Doc<"contacts">[]
   isAdmin: boolean
   onStatusChange: (value: string) => void
   order: Order
@@ -359,6 +371,7 @@ function OrderEntry({
           </Select>
           <OrderDialog
             characters={characters}
+            contacts={contacts}
             isAdmin={isAdmin}
             order={order}
             products={products}

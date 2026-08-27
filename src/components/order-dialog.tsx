@@ -131,6 +131,7 @@ function initialOrderLines(order: Order | undefined): OrderLineDraft[] {
 
 export function OrderDialog({
   characters,
+  contacts,
   initialKind = "client",
   isAdmin,
   onOpenChange,
@@ -141,6 +142,7 @@ export function OrderDialog({
   trigger,
 }: Readonly<{
   characters: readonly Doc<"characters">[]
+  contacts: readonly Doc<"contacts">[]
   initialKind?: OrderKind
   isAdmin: boolean
   onOpenChange?: (open: boolean) => void
@@ -157,6 +159,7 @@ export function OrderDialog({
   const [internalOpen, setInternalOpen] = useState(false)
   const open = controlledOpen ?? internalOpen
   const [kind, setKind] = useState<OrderKind>(order?.kind ?? initialKind)
+  const [contactId, setContactId] = useState(order?.contactId ?? "")
   const [contactName, setContactName] = useState(order?.contactName ?? "")
   const [agreedTotal, setAgreedTotal] = useState(order?.total?.toString() ?? "")
   const [totalOverridden, setTotalOverridden] = useState(
@@ -182,6 +185,7 @@ export function OrderDialog({
 
   function resetForm() {
     setKind(order?.kind ?? initialKind)
+    setContactId(order?.contactId ?? "")
     setContactName(order?.contactName ?? "")
     setAgreedTotal(order?.total?.toString() ?? "")
     setTotalOverridden(order?.total !== undefined)
@@ -282,6 +286,14 @@ export function OrderDialog({
     products,
     recipes
   )
+  const suggestedContacts = contacts.filter((contact) => contact.kind === kind)
+
+  function updateContactName(value: string) {
+    setContactName(value)
+    setContactId(
+      suggestedContacts.find((contact) => contact.name === value)?._id ?? ""
+    )
+  }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -366,6 +378,9 @@ export function OrderDialog({
                 processedCharacterId as Doc<"characters">["_id"],
               processedAt: submittedProcessedAt!,
             }
+          : {}),
+        ...(contactId
+          ? { contactId: contactId as Doc<"contacts">["_id"] }
           : {}),
         contactName: contactName.trim(),
         dueAt: submittedDueAt,
@@ -469,6 +484,10 @@ export function OrderDialog({
               <Select
                 onValueChange={(value) => {
                   if (value === "client" || value === "supplier") {
+                    if (value !== kind) {
+                      setContactId("")
+                      setContactName("")
+                    }
                     setKind(value)
                   }
                 }}
@@ -489,14 +508,25 @@ export function OrderDialog({
               </Label>
               <Input
                 id={`${fieldId}-contact`}
+                list={`${fieldId}-contact-suggestions`}
                 maxLength={100}
-                onChange={(event) => setContactName(event.target.value)}
+                onChange={(event) => updateContactName(event.target.value)}
                 placeholder={
                   kind === "client" ? "Nom du client" : "Nom du fournisseur"
                 }
                 required
                 value={contactName}
               />
+              <datalist id={`${fieldId}-contact-suggestions`}>
+                {suggestedContacts.map((contact) => (
+                  <option key={contact._id} value={contact.name} />
+                ))}
+              </datalist>
+              <p className="text-xs text-muted-foreground">
+                {suggestedContacts.length > 0
+                  ? "Choisissez un contact existant ou saisissez un nouveau nom."
+                  : "Ce nom sera ajouté au carnet après l’enregistrement."}
+              </p>
             </div>
           </div>
 
