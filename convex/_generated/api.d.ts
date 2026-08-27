@@ -9,12 +9,14 @@
  */
 
 import type * as accounts from "../accounts.js";
+import type * as administration from "../administration.js";
 import type * as auth from "../auth.js";
 import type * as bundles from "../bundles.js";
 import type * as characters from "../characters.js";
 import type * as contacts from "../contacts.js";
 import type * as dashboard from "../dashboard.js";
 import type * as http from "../http.js";
+import type * as lib_accountSecurity from "../lib/accountSecurity.js";
 import type * as lib_auth from "../lib/auth.js";
 import type * as lib_contacts from "../lib/contacts.js";
 import type * as lib_exchange from "../lib/exchange.js";
@@ -43,12 +45,14 @@ import type {
 
 declare const fullApi: ApiFromModules<{
   accounts: typeof accounts;
+  administration: typeof administration;
   auth: typeof auth;
   bundles: typeof bundles;
   characters: typeof characters;
   contacts: typeof contacts;
   dashboard: typeof dashboard;
   http: typeof http;
+  "lib/accountSecurity": typeof lib_accountSecurity;
   "lib/auth": typeof lib_auth;
   "lib/contacts": typeof lib_contacts;
   "lib/exchange": typeof lib_exchange;
