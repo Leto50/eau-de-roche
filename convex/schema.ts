@@ -78,6 +78,7 @@ export default defineSchema({
     productId: v.optional(v.id("products")),
     productName: v.string(),
     quantity: v.number(),
+    searchText: v.optional(v.string()),
     source: v.union(v.literal("web"), v.literal("workbook")),
     total: v.number(),
     unitPrice: v.optional(v.number()),
@@ -85,7 +86,11 @@ export default defineSchema({
     .index("by_kind_and_date", ["kind", "occurredAt"])
     .index("by_legacy_key", ["legacyKey"])
     .index("by_occurred_at", ["occurredAt"])
-    .index("by_product_and_date", ["productId", "occurredAt"]),
+    .index("by_product_and_date", ["productId", "occurredAt"])
+    .searchIndex("search_journal", {
+      filterFields: ["kind", "actorCharacterId"],
+      searchField: "searchText",
+    }),
 
   transactionLines: defineTable({
     bundleId: v.optional(v.id("bundles")),

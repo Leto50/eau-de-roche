@@ -11,12 +11,14 @@ import {
 import { calculateRecipeCost } from "./lib/recipeCost"
 import { canonicalRecipeFamily } from "./lib/recipeFamilies"
 import { normalizeName } from "./lib/text"
+import { buildTransactionSearchText } from "./lib/transactionSearch"
 
 const EXCHANGE_MIGRATION_KEY = "exchange-model-v5"
 const PRODUCT_CATEGORY_MIGRATION_KEY = "product-categories-v1"
 const PRODUCT_CRAFTABILITY_MIGRATION_KEY = "product-craftability-v1"
 const RECIPE_FAMILY_MIGRATION_KEY = "recipe-families-v1"
 const RECIPE_REFERENCE_MIGRATION_KEY = "recipe-references-v1"
+const TRANSACTION_SEARCH_MIGRATION_KEY = "transaction-search-v1"
 
 const productAliases: Readonly<Record<string, string>> = {
   "breuvage mana accru": "breuvage magie accrue",
@@ -567,6 +569,38 @@ export async function normalizeRecipeFamiliesData(ctx: MutationCtx) {
   return result
 }
 
+export async function indexTransactionSearchData(ctx: MutationCtx) {
+  const existingMigration = await ctx.db
+    .query("systemSettings")
+    .withIndex("by_key", (index) =>
+      index.eq("key", TRANSACTION_SEARCH_MIGRATION_KEY)
+    )
+    .unique()
+  if (existingMigration) {
+    return {
+      indexed: false,
+      message: "La recherche du journal est déjà indexée.",
+    }
+  }
+
+  const transactions = await ctx.db.query("transactions").collect()
+  let indexedTransactions = 0
+  for (const transaction of transactions) {
+    const searchText = buildTransactionSearchText(transaction)
+    if (transaction.searchText !== searchText) {
+      await ctx.db.patch(transaction._id, { searchText })
+      indexedTransactions += 1
+    }
+  }
+  const result = { indexed: true, indexedTransactions }
+  await ctx.db.insert("systemSettings", {
+    key: TRANSACTION_SEARCH_MIGRATION_KEY,
+    updatedAt: Date.now(),
+    value: JSON.stringify(result),
+  })
+  return result
+}
+
 export async function convertLegacyOperationsData(ctx: MutationCtx) {
   const existingMigration = await ctx.db
     .query("systemSettings")
@@ -877,4 +911,9 @@ export const classifyPotionCraftability = internalMutation({
 export const normalizeRecipeFamilies = internalMutation({
   args: {},
   handler: normalizeRecipeFamiliesData,
+})
+
+export const indexTransactionSearch = internalMutation({
+  args: {},
+  handler: indexTransactionSearchData,
 })

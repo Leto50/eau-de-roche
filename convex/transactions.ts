@@ -16,9 +16,12 @@ import {
 } from "./lib/exchange"
 import { orderTransactionLabel, withOrderTotal } from "./lib/order"
 import { prepareProduction } from "./lib/production"
-import { stockOperationKind } from "./lib/validators"
+import { normalizeName } from "./lib/text"
+import { buildTransactionSearchText } from "./lib/transactionSearch"
+import { stockOperationKind, transactionKind } from "./lib/validators"
 
 const MAX_TEXT_LENGTH = 500
+const MAX_SEARCH_LENGTH = 100
 const MAX_QUANTITY = 1_000_000
 const MAX_PRICE = 1_000_000_000
 
@@ -135,10 +138,35 @@ async function withTransactionDetails(
 
 export const listPage = query({
   args: {
+    characterId: v.optional(v.id("characters")),
+    from: v.optional(v.number()),
+    kind: v.optional(transactionKind),
     paginationOpts: paginationOptsValidator,
+    q: v.optional(v.string()),
+    to: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
     const user = await requireUser(ctx)
+    const from = args.from
+    const to = args.to
+    if (
+      (from !== undefined && (!Number.isFinite(from) || from < 0)) ||
+      (to !== undefined && (!Number.isFinite(to) || to < 0)) ||
+      (from !== undefined && to !== undefined && from >= to)
+    ) {
+      throw new ConvexError({
+        code: "INVALID_INPUT",
+        message: "La période du journal est invalide.",
+      })
+    }
+    const rawSearch = args.q?.trim()
+    if (rawSearch && rawSearch.length > MAX_SEARCH_LENGTH) {
+      throw new ConvexError({
+        code: "INVALID_INPUT",
+        message: `La recherche est limitée à ${MAX_SEARCH_LENGTH} caractères.`,
+      })
+    }
+    const normalizedSearch = rawSearch ? normalizeName(rawSearch) : undefined
     const paginationOpts = {
       ...args.paginationOpts,
       numItems: Math.min(
@@ -146,11 +174,87 @@ export const listPage = query({
         Math.max(1, Math.round(args.paginationOpts.numItems))
       ),
     }
-    const result = await ctx.db
-      .query("transactions")
-      .withIndex("by_occurred_at")
-      .order("desc")
-      .paginate(paginationOpts)
+
+    function buildQuery() {
+      if (normalizedSearch) {
+        let searchQuery = ctx.db
+          .query("transactions")
+          .withSearchIndex("search_journal", (search) => {
+            let filters = search.search("searchText", normalizedSearch)
+            if (args.kind) filters = filters.eq("kind", args.kind)
+            if (args.characterId) {
+              filters = filters.eq("actorCharacterId", args.characterId)
+            }
+            return filters
+          })
+        if (from !== undefined) {
+          searchQuery = searchQuery.filter((filter) =>
+            filter.gte(filter.field("occurredAt"), from)
+          )
+        }
+        if (to !== undefined) {
+          searchQuery = searchQuery.filter((filter) =>
+            filter.lt(filter.field("occurredAt"), to)
+          )
+        }
+        return searchQuery
+      }
+
+      const indexedQuery = args.kind
+        ? from !== undefined && to !== undefined
+          ? ctx.db
+              .query("transactions")
+              .withIndex("by_kind_and_date", (index) =>
+                index
+                  .eq("kind", args.kind!)
+                  .gte("occurredAt", from)
+                  .lt("occurredAt", to)
+              )
+          : from !== undefined
+            ? ctx.db
+                .query("transactions")
+                .withIndex("by_kind_and_date", (index) =>
+                  index.eq("kind", args.kind!).gte("occurredAt", from)
+                )
+            : to !== undefined
+              ? ctx.db
+                  .query("transactions")
+                  .withIndex("by_kind_and_date", (index) =>
+                    index.eq("kind", args.kind!).lt("occurredAt", to)
+                  )
+              : ctx.db
+                  .query("transactions")
+                  .withIndex("by_kind_and_date", (index) =>
+                    index.eq("kind", args.kind!)
+                  )
+        : from !== undefined && to !== undefined
+          ? ctx.db
+              .query("transactions")
+              .withIndex("by_occurred_at", (index) =>
+                index.gte("occurredAt", from).lt("occurredAt", to)
+              )
+          : from !== undefined
+            ? ctx.db
+                .query("transactions")
+                .withIndex("by_occurred_at", (index) =>
+                  index.gte("occurredAt", from)
+                )
+            : to !== undefined
+              ? ctx.db
+                  .query("transactions")
+                  .withIndex("by_occurred_at", (index) =>
+                    index.lt("occurredAt", to)
+                  )
+              : ctx.db.query("transactions").withIndex("by_occurred_at")
+      let filteredQuery = indexedQuery.order("desc")
+      if (args.characterId) {
+        filteredQuery = filteredQuery.filter((filter) =>
+          filter.eq(filter.field("actorCharacterId"), args.characterId)
+        )
+      }
+      return filteredQuery
+    }
+    const result = await buildQuery().paginate(paginationOpts)
 
     return {
       ...result,
@@ -222,6 +326,10 @@ export const recordExchange = mutation({
     const comment = cleanOptionalText(args.comment)
     const counterparty = cleanOptionalText(args.counterparty)
     const firstLine = prepared.lines[0]
+    const productName =
+      prepared.lines.length === 1 && firstLine
+        ? firstLine.productName
+        : `${prepared.lines.length} références`
     const transactionId = await ctx.db.insert("transactions", {
       actorCharacterId: character._id,
       actorName: character.name,
@@ -234,11 +342,14 @@ export const recordExchange = mutation({
       lineCount: prepared.lines.length,
       occurredAt: args.occurredAt,
       outgoingTotal: prepared.outgoingTotal,
-      productName:
-        prepared.lines.length === 1 && firstLine
-          ? firstLine.productName
-          : `${prepared.lines.length} références`,
+      productName,
       quantity: prepared.lines.reduce((sum, line) => sum + line.quantity, 0),
+      searchText: buildTransactionSearchText({
+        actorName: character.name,
+        comment,
+        counterparty,
+        productName,
+      }),
       source: "web",
       total: prepared.total,
       ...(prepared.lines.length === 1 && firstLine
@@ -472,6 +583,10 @@ export const recordTrade = mutation({
         : roundedTotal
     const firstLine = preparedLines[0]
     const occurredAt = args.occurredAt
+    const productName =
+      preparedLines.length === 1 && firstLine
+        ? firstLine.productName
+        : `${preparedLines.length} références`
     const transactionId = await ctx.db.insert("transactions", {
       actorCharacterId: character._id,
       actorName: character.name,
@@ -482,11 +597,14 @@ export const recordTrade = mutation({
       kind: args.kind,
       lineCount: preparedLines.length,
       occurredAt,
-      productName:
-        preparedLines.length === 1 && firstLine
-          ? firstLine.productName
-          : `${preparedLines.length} références`,
+      productName,
       quantity: preparedLines.reduce((sum, line) => sum + line.quantity, 0),
+      searchText: buildTransactionSearchText({
+        actorName: character.name,
+        comment,
+        counterparty,
+        productName,
+      }),
       source: "web",
       total,
       ...(preparedLines.length === 1 && firstLine
@@ -640,6 +758,12 @@ export const record = mutation({
       productId: product._id,
       productName: product.name,
       quantity: args.quantity,
+      searchText: buildTransactionSearchText({
+        actorName: character.name,
+        comment,
+        counterparty,
+        productName: product.name,
+      }),
       source: "web",
       total,
       unitPrice,
@@ -811,6 +935,14 @@ export const updateExchange = mutation({
     const comment = cleanOptionalText(args.comment)
     const counterparty = cleanOptionalText(args.counterparty)
     const firstLine = prepared.lines[0]
+    const productName = linkedOrder
+      ? orderTransactionLabel(
+          linkedOrderKind,
+          counterparty ?? linkedOrder.contactName
+        )
+      : prepared.lines.length === 1 && firstLine
+        ? firstLine.productName
+        : `${prepared.lines.length} références`
     await ctx.db.replace(transaction._id, {
       actorCharacterId: character._id,
       actorName: character.name,
@@ -825,15 +957,14 @@ export const updateExchange = mutation({
       occurredAt: args.occurredAt,
       ...(transaction.orderId ? { orderId: transaction.orderId } : {}),
       outgoingTotal: prepared.outgoingTotal,
-      productName: linkedOrder
-        ? orderTransactionLabel(
-            linkedOrderKind,
-            counterparty ?? linkedOrder.contactName
-          )
-        : prepared.lines.length === 1 && firstLine
-          ? firstLine.productName
-          : `${prepared.lines.length} références`,
+      productName,
       quantity: prepared.lines.reduce((sum, line) => sum + line.quantity, 0),
+      searchText: buildTransactionSearchText({
+        actorName: character.name,
+        comment,
+        counterparty,
+        productName,
+      }),
       source: transaction.source,
       total: prepared.total,
       ...(prepared.lines.length === 1 && firstLine
@@ -1301,6 +1432,7 @@ export const update = mutation({
       ...oldLines.map((line) => ctx.db.delete(line._id)),
       ...oldMovements.map((movement) => ctx.db.delete(movement._id)),
     ])
+    details.searchText = buildTransactionSearchText(details)
     await ctx.db.replace(transaction._id, details)
     await Promise.all(
       preparedLines.map((line) =>

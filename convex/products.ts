@@ -6,6 +6,7 @@ import { requireAdmin, requireUser } from "./lib/auth"
 import { assertFiniteRange, assertWholeNumberRange } from "./lib/numbers"
 import { canonicalProductCategory } from "./lib/products"
 import { normalizeName } from "./lib/text"
+import { buildTransactionSearchText } from "./lib/transactionSearch"
 import { productCategory } from "./lib/validators"
 
 const MAX_NAME_LENGTH = 100
@@ -242,6 +243,11 @@ export const save = mutation({
         productId,
         productName: name,
         quantity: Math.abs(stockDelta),
+        searchText: buildTransactionSearchText({
+          actorName: user.name,
+          comment: adjustmentReason ?? "Stock initial",
+          productName: name,
+        }),
         source: "web",
         total: 0,
       })
