@@ -1,15 +1,21 @@
 import { createClient, type GenericCtx } from "@convex-dev/better-auth"
 import { convex } from "@convex-dev/better-auth/plugins"
-import { APIError, createAuthMiddleware } from "better-auth/api"
+import {
+  APIError,
+  createAuthMiddleware,
+  getSessionFromCtx,
+} from "better-auth/api"
 import { betterAuth, type BetterAuthOptions } from "better-auth/minimal"
 import { admin } from "better-auth/plugins"
+import type { GenericActionCtx } from "convex/server"
 import { ConvexError, v } from "convex/values"
 
-import { components } from "./_generated/api"
+import { components, internal } from "./_generated/api"
 import { type DataModel } from "./_generated/dataModel"
 import { internalMutation, query } from "./_generated/server"
 import authConfig from "./auth.config"
 import authSchema from "./betterAuth/schema"
+import { wouldRemoveLastActiveAdmin } from "./lib/accountSecurity"
 
 const siteUrl = process.env.SITE_URL ?? "http://localhost:3000"
 
@@ -28,18 +34,82 @@ function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
 
 function bodyString(
   body: unknown,
-  property: "name" | "password" | "role"
+  property: "email" | "name" | "password" | "role" | "userId"
 ): string | undefined {
   if (!isRecord(body)) return undefined
   const value = body[property]
   return typeof value === "string" ? value : undefined
 }
 
-export const createAuthOptions = (ctx: GenericCtx<DataModel>) =>
+function bodyRoleRemovesAdmin(body: unknown): boolean {
+  if (!isRecord(body)) return false
+  const role = body.role
+  if (typeof role === "string") return !role.split(",").includes("admin")
+  if (Array.isArray(role)) return !role.includes("admin")
+  return false
+}
+
+const authAuditActions: Readonly<
+  Record<string, { action: string; detailProperty?: "email" | "role" }>
+> = {
+  "/admin/ban-user": { action: "account.disabled" },
+  "/admin/create-user": {
+    action: "account.created",
+    detailProperty: "email",
+  },
+  "/admin/remove-user": { action: "account.deleted" },
+  "/admin/revoke-user-sessions": { action: "account.sessions_revoked" },
+  "/admin/set-role": { action: "account.role_updated", detailProperty: "role" },
+  "/admin/set-user-password": { action: "account.password_reset" },
+  "/admin/unban-user": { action: "account.reactivated" },
+}
+
+function canRunMutation(
+  ctx: GenericCtx<DataModel>
+): ctx is GenericActionCtx<DataModel> {
+  return "runMutation" in ctx
+}
+
+export async function assertAdminContinuity(requestContext: {
+  body: unknown
+  context: {
+    internalAdapter: {
+      listUsers: (
+        limit?: number,
+        offset?: number
+      ) => Promise<
+        Array<{
+          banned?: boolean | null
+          id: string
+          role?: string | null
+        }>
+      >
+    }
+  }
+  path: string
+}) {
+  const protectsLastAdmin =
+    requestContext.path === "/admin/ban-user" ||
+    requestContext.path === "/admin/remove-user" ||
+    (requestContext.path === "/admin/set-role" &&
+      bodyRoleRemovesAdmin(requestContext.body))
+  if (!protectsLastAdmin) return
+  const userId = bodyString(requestContext.body, "userId")
+  if (!userId) return
+  const users = await requestContext.context.internalAdapter.listUsers(200, 0)
+  if (wouldRemoveLastActiveAdmin(users, userId, true)) {
+    throw new APIError("BAD_REQUEST", {
+      message:
+        "Le dernier administrateur actif ne peut pas être rétrogradé ou désactivé.",
+    })
+  }
+}
+
+export const createAuthOptions = (convexCtx: GenericCtx<DataModel>) =>
   ({
     baseURL: siteUrl,
     trustedOrigins: [siteUrl],
-    database: authComponent.adapter(ctx),
+    database: authComponent.adapter(convexCtx),
     emailAndPassword: {
       disableSignUp: true,
       enabled: true,
@@ -49,6 +119,7 @@ export const createAuthOptions = (ctx: GenericCtx<DataModel>) =>
     },
     hooks: {
       before: createAuthMiddleware(async (requestContext) => {
+        await assertAdminContinuity(requestContext)
         if (requestContext.path !== "/admin/create-user") return
 
         const name = bodyString(requestContext.body, "name")?.trim()
@@ -70,6 +141,25 @@ export const createAuthOptions = (ctx: GenericCtx<DataModel>) =>
             message: "Le rôle doit être employé ou administrateur.",
           })
         }
+      }),
+      after: createAuthMiddleware(async (requestContext) => {
+        const audit = authAuditActions[requestContext.path]
+        if (!audit || !canRunMutation(convexCtx)) return
+        const session = await getSessionFromCtx(requestContext)
+        if (!session) return
+        const entityId =
+          bodyString(requestContext.body, "userId") ??
+          bodyString(requestContext.body, "email")
+        if (!entityId) return
+        const detail = audit.detailProperty
+          ? bodyString(requestContext.body, audit.detailProperty)
+          : undefined
+        await convexCtx.runMutation(internal.administration.logAuthAction, {
+          action: audit.action,
+          actorUserId: session.user.id,
+          ...(detail ? { detail } : {}),
+          entityId,
+        })
       }),
     },
     plugins: [convex({ authConfig }), admin()],
@@ -162,6 +252,21 @@ export const removeUserByEmail = internalMutation({
     const authContext = await createAuth(ctx).$context
     const existing = await authContext.internalAdapter.findUserByEmail(email)
     if (!existing) return { email, removed: false }
+
+    const users = (await authContext.internalAdapter.listUsers(
+      200,
+      0
+    )) as Array<{
+      banned?: boolean | null
+      id: string
+      role?: string | null
+    }>
+    if (wouldRemoveLastActiveAdmin(users, existing.user.id, true)) {
+      throw new ConvexError({
+        code: "LAST_ACTIVE_ADMIN",
+        message: "Le dernier administrateur actif ne peut pas être supprimé.",
+      })
+    }
 
     await authContext.internalAdapter.deleteUser(existing.user.id)
     return { email, removed: true }

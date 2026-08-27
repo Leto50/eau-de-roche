@@ -51,6 +51,11 @@ export function AccountDialog({
     setRole("user")
   }
 
+  function handleOpenChange(nextOpen: boolean) {
+    if (!nextOpen) resetForm()
+    onOpenChange(nextOpen)
+  }
+
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
     const normalizedName = name.trim()
@@ -77,8 +82,7 @@ export function AccountDialog({
       }
 
       toast.success(`Le compte de ${normalizedName} a été créé.`)
-      resetForm()
-      onOpenChange(false)
+      handleOpenChange(false)
     } catch {
       toast.error("Impossible de créer le compte.")
     } finally {
@@ -87,7 +91,7 @@ export function AccountDialog({
   }
 
   return (
-    <Dialog onOpenChange={onOpenChange} open={open}>
+    <Dialog onOpenChange={handleOpenChange} open={open}>
       <DialogContent className="max-h-[92svh] overflow-y-auto rounded-[0.2rem] border-[#6a5436] bg-[#eee1c7] ring-0 sm:max-w-lg">
         <DialogHeader className="pr-8">
           <p className="text-[0.66rem] font-bold tracking-[0.2em] text-primary uppercase">
@@ -172,7 +176,7 @@ export function AccountDialog({
 
           <DialogFooter className="mt-2">
             <Button
-              onClick={() => onOpenChange(false)}
+              onClick={() => handleOpenChange(false)}
               type="button"
               variant="ghost"
             >

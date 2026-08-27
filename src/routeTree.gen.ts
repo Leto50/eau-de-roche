@@ -12,6 +12,7 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as AppRouteImport } from './routes/_app'
 import { Route as ConnexionRouteImport } from './routes/connexion'
 import { Route as AppIndexRouteImport } from './routes/_app/index'
+import { Route as AppAdministrationRouteImport } from './routes/_app/administration'
 import { Route as AppCommandesRouteImport } from './routes/_app/commandes'
 import { Route as AppCompteRouteImport } from './routes/_app/compte'
 import { Route as AppInventaireRouteImport } from './routes/_app/inventaire'
@@ -32,6 +33,11 @@ const ConnexionRoute = ConnexionRouteImport.update({
 const AppIndexRoute = AppIndexRouteImport.update({
   id: '/',
   path: '/',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppAdministrationRoute = AppAdministrationRouteImport.update({
+  id: '/administration',
+  path: '/administration',
   getParentRoute: () => AppRoute,
 } as any)
 const AppCommandesRoute = AppCommandesRouteImport.update({
@@ -73,6 +79,7 @@ const ApiAuthSplatRoute = ApiAuthSplatRouteImport.update({
 export interface FileRoutesByFullPath {
   '/': typeof AppIndexRoute
   '/connexion': typeof ConnexionRoute
+  '/administration': typeof AppAdministrationRoute
   '/commandes': typeof AppCommandesRoute
   '/compte': typeof AppCompteRoute
   '/inventaire': typeof AppInventaireRoute
@@ -83,6 +90,7 @@ export interface FileRoutesByFullPath {
 }
 export interface FileRoutesByTo {
   '/connexion': typeof ConnexionRoute
+  '/administration': typeof AppAdministrationRoute
   '/commandes': typeof AppCommandesRoute
   '/compte': typeof AppCompteRoute
   '/inventaire': typeof AppInventaireRoute
@@ -96,6 +104,7 @@ export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/_app': typeof AppRouteWithChildren
   '/connexion': typeof ConnexionRoute
+  '/_app/administration': typeof AppAdministrationRoute
   '/_app/commandes': typeof AppCommandesRoute
   '/_app/compte': typeof AppCompteRoute
   '/_app/inventaire': typeof AppInventaireRoute
@@ -110,6 +119,7 @@ export interface FileRouteTypes {
   fullPaths:
     | '/'
     | '/connexion'
+    | '/administration'
     | '/commandes'
     | '/compte'
     | '/inventaire'
@@ -120,6 +130,7 @@ export interface FileRouteTypes {
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/connexion'
+    | '/administration'
     | '/commandes'
     | '/compte'
     | '/inventaire'
@@ -132,6 +143,7 @@ export interface FileRouteTypes {
     | '__root__'
     | '/_app'
     | '/connexion'
+    | '/_app/administration'
     | '/_app/commandes'
     | '/_app/compte'
     | '/_app/inventaire'
@@ -169,6 +181,13 @@ declare module '@tanstack/react-router' {
       path: '/'
       fullPath: '/'
       preLoaderRoute: typeof AppIndexRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/administration': {
+      id: '/_app/administration'
+      path: '/administration'
+      fullPath: '/administration'
+      preLoaderRoute: typeof AppAdministrationRouteImport
       parentRoute: typeof AppRoute
     }
     '/_app/commandes': {
@@ -224,6 +243,7 @@ declare module '@tanstack/react-router' {
 }
 
 interface AppRouteChildren {
+  AppAdministrationRoute: typeof AppAdministrationRoute
   AppCommandesRoute: typeof AppCommandesRoute
   AppCompteRoute: typeof AppCompteRoute
   AppInventaireRoute: typeof AppInventaireRoute
@@ -234,6 +254,7 @@ interface AppRouteChildren {
 }
 
 const AppRouteChildren: AppRouteChildren = {
+  AppAdministrationRoute: AppAdministrationRoute,
   AppCommandesRoute: AppCommandesRoute,
   AppCompteRoute: AppCompteRoute,
   AppInventaireRoute: AppInventaireRoute,
