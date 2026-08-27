@@ -18,8 +18,8 @@ import {
   assertWholeNumberRange,
   roundSeptimsDown,
 } from "./lib/numbers"
+import { resolveOrderContact } from "./lib/contacts"
 import { orderTransactionLabel, withOrderTotal } from "./lib/order"
-import { normalizeName } from "./lib/text"
 import { buildTransactionSearchText } from "./lib/transactionSearch"
 import { orderKind, orderStatus } from "./lib/validators"
 
@@ -247,6 +247,7 @@ export const list = query({
 export const save = mutation({
   args: {
     actorCharacterId: v.optional(v.id("characters")),
+    contactId: v.optional(v.id("contacts")),
     contactName: v.string(),
     dueAt: v.union(v.number(), v.null()),
     kind: orderKind,
@@ -265,9 +266,12 @@ export const save = mutation({
   },
   handler: async (ctx, args) => {
     const user = await requireUser(ctx)
-    const contactName = args.contactName.trim()
+    const submittedContactName = args.contactName.trim()
     const notes = args.notes.trim()
-    if (!contactName || contactName.length > MAX_CONTACT_NAME_LENGTH) {
+    if (
+      !submittedContactName ||
+      submittedContactName.length > MAX_CONTACT_NAME_LENGTH
+    ) {
       throw new ConvexError({
         code: "INVALID_INPUT",
         message: `Le nom du contact doit contenir entre 1 et ${MAX_CONTACT_NAME_LENGTH} caractères.`,
@@ -301,6 +305,12 @@ export const save = mutation({
         message: "Commande introuvable.",
       })
     }
+    const { contactId, contactName } = await resolveOrderContact(ctx, {
+      ...(args.contactId ? { contactId: args.contactId } : {}),
+      ...(existing ? { existingOrder: existing } : {}),
+      kind: args.kind,
+      name: submittedContactName,
+    })
     const linkedTransaction = existing?.transactionId
       ? await ctx.db.get(existing.transactionId)
       : undefined
@@ -399,18 +409,6 @@ export const save = mutation({
         }
       })
     )
-
-    const contacts = await ctx.db
-      .query("contacts")
-      .withIndex("by_kind", (index) => index.eq("kind", args.kind))
-      .collect()
-    const normalizedContactName = normalizeName(contactName)
-    const existingContact = contacts.find(
-      (contact) => normalizeName(contact.name) === normalizedContactName
-    )
-    const contactId =
-      existingContact?._id ??
-      (await ctx.db.insert("contacts", { kind: args.kind, name: contactName }))
 
     const pricedLines = preparedLines.filter(
       (

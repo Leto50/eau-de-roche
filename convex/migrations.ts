@@ -14,6 +14,7 @@ import { normalizeName } from "./lib/text"
 import { buildTransactionSearchText } from "./lib/transactionSearch"
 
 const EXCHANGE_MIGRATION_KEY = "exchange-model-v5"
+const CONTACTS_MIGRATION_KEY = "contacts-v1"
 const PRODUCT_CATEGORY_MIGRATION_KEY = "product-categories-v1"
 const PRODUCT_CRAFTABILITY_MIGRATION_KEY = "product-craftability-v1"
 const RECIPE_FAMILY_MIGRATION_KEY = "recipe-families-v1"
@@ -601,6 +602,75 @@ export async function indexTransactionSearchData(ctx: MutationCtx) {
   return result
 }
 
+export async function normalizeContactsData(ctx: MutationCtx) {
+  const existingMigration = await ctx.db
+    .query("systemSettings")
+    .withIndex("by_key", (index) => index.eq("key", CONTACTS_MIGRATION_KEY))
+    .unique()
+  if (existingMigration) {
+    return {
+      normalized: false,
+      message: "Les contacts sont déjà normalisés.",
+    }
+  }
+
+  const [contacts, orders] = await Promise.all([
+    ctx.db.query("contacts").collect(),
+    ctx.db.query("orders").collect(),
+  ])
+  const groups = new Map<string, Array<Doc<"contacts">>>()
+  for (const contact of contacts) {
+    const key = `${contact.kind}:${normalizeName(contact.name)}`
+    groups.set(key, [...(groups.get(key) ?? []), contact])
+  }
+
+  let mergedContacts = 0
+  let normalizedContacts = 0
+  let rewiredOrders = 0
+  for (const group of groups.values()) {
+    const sorted = [...group].sort(
+      (left, right) =>
+        Number(right.active !== false) - Number(left.active !== false) ||
+        Number(Boolean(right.legacyKey)) - Number(Boolean(left.legacyKey)) ||
+        left._creationTime - right._creationTime
+    )
+    const canonical = sorted[0]
+    if (!canonical) continue
+    const normalizedName = normalizeName(canonical.name)
+    const active = group.some((contact) => contact.active !== false)
+    if (
+      canonical.active !== active ||
+      canonical.normalizedName !== normalizedName
+    ) {
+      await ctx.db.patch(canonical._id, { active, normalizedName })
+      normalizedContacts += 1
+    }
+
+    for (const duplicate of sorted.slice(1)) {
+      for (const order of orders) {
+        if (order.contactId !== duplicate._id) continue
+        await ctx.db.patch(order._id, { contactId: canonical._id })
+        rewiredOrders += 1
+      }
+      await ctx.db.delete(duplicate._id)
+      mergedContacts += 1
+    }
+  }
+
+  const result = {
+    mergedContacts,
+    normalized: true,
+    normalizedContacts,
+    rewiredOrders,
+  }
+  await ctx.db.insert("systemSettings", {
+    key: CONTACTS_MIGRATION_KEY,
+    updatedAt: Date.now(),
+    value: JSON.stringify(result),
+  })
+  return result
+}
+
 export async function convertLegacyOperationsData(ctx: MutationCtx) {
   const existingMigration = await ctx.db
     .query("systemSettings")
@@ -916,4 +986,9 @@ export const normalizeRecipeFamilies = internalMutation({
 export const indexTransactionSearch = internalMutation({
   args: {},
   handler: indexTransactionSearchData,
+})
+
+export const normalizeContacts = internalMutation({
+  args: {},
+  handler: normalizeContactsData,
 })

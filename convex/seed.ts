@@ -127,9 +127,11 @@ export const importWorkbook = mutation({
     for (const contact of seedData.contacts) {
       const kind = contact.kind === "supplier" ? "supplier" : "client"
       const id = await ctx.db.insert("contacts", {
+        active: true,
         kind,
         legacyKey: contact.legacyKey,
         name: contact.name,
+        normalizedName: normalizeName(contact.name),
       })
       contacts.set(contactKey(kind, contact.name), id)
     }

@@ -54,11 +54,14 @@ export default defineSchema({
     .index("by_name", ["name"]),
 
   contacts: defineTable({
+    active: v.optional(v.boolean()),
     kind: orderKind,
     legacyKey: v.optional(v.string()),
     name: v.string(),
+    normalizedName: v.optional(v.string()),
   })
     .index("by_kind", ["kind"])
+    .index("by_kind_and_normalized_name", ["kind", "normalizedName"])
     .index("by_legacy_key", ["legacyKey"]),
 
   transactions: defineTable({

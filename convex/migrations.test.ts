@@ -232,3 +232,59 @@ describe("migrations.indexTransactionSearch", () => {
     )
   })
 })
+
+describe("migrations.normalizeContacts", () => {
+  it("fusionne les doublons sans modifier les noms historiques des commandes", async () => {
+    const backend = convexTest(schema, modules)
+    const state = await backend.run(async (ctx) => {
+      const canonicalId = await ctx.db.insert("contacts", {
+        kind: "client",
+        legacyKey: "contact:maison-ambre",
+        name: "Maison d’Ambre",
+      })
+      const duplicateId = await ctx.db.insert("contacts", {
+        kind: "client",
+        name: " maison d ambre ",
+      })
+      const orderId = await ctx.db.insert("orders", {
+        contactId: duplicateId,
+        contactName: "Maison d ambre (historique)",
+        kind: "client",
+        status: "open",
+      })
+      return { canonicalId, duplicateId, orderId }
+    })
+
+    const result = await backend.mutation(
+      internal.migrations.normalizeContacts,
+      {}
+    )
+    const second = await backend.mutation(
+      internal.migrations.normalizeContacts,
+      {}
+    )
+    const migrated = await backend.run(async (ctx) => ({
+      contacts: await ctx.db.query("contacts").collect(),
+      duplicate: await ctx.db.get(state.duplicateId),
+      order: await ctx.db.get(state.orderId),
+    }))
+
+    expect(result).toMatchObject({
+      mergedContacts: 1,
+      normalized: true,
+      rewiredOrders: 1,
+    })
+    expect(second).toMatchObject({ normalized: false })
+    expect(migrated.contacts).toHaveLength(1)
+    expect(migrated.contacts[0]).toMatchObject({
+      _id: state.canonicalId,
+      active: true,
+      normalizedName: "maison d ambre",
+    })
+    expect(migrated.duplicate).toBeNull()
+    expect(migrated.order).toMatchObject({
+      contactId: state.canonicalId,
+      contactName: "Maison d ambre (historique)",
+    })
+  })
+})
