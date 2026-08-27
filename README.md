@@ -15,12 +15,11 @@ registre d’apothicaire.
   Tailwind CSS pour conserver la direction artistique Skyrim.
 - ESLint flat strict de type T3 (`recommendedTypeChecked` et
   `stylisticTypeChecked`), TypeScript strict et Vitest.
-- Adaptateur officiel TanStack Start pour Netlify.
+- Génération d’un point d’entrée SSR minimal pour le déploiement Netlify.
 
 ## Développement local
 
-Prérequis : Node.js 22, pnpm 11 et le fichier source
-`~/Téléchargements/Inventaire 2.xlsx` si le seed doit être régénéré.
+Prérequis : Node.js 22 et pnpm 11.
 
 ```bash
 pnpm install
@@ -66,21 +65,14 @@ contenir entre 12 et 128 caractères.
 `pnpm dev` lance Convex et Vite ensemble une fois la configuration initiale
 terminée.
 
-## Migration du classeur
+## Initialisation des données
 
-Le script ne reproduit pas les cellules Excel en erreur. Il extrait les lignes
-métier, normalise les noms, rattache les relations connues et produit un seed
-déterministe :
-
-```bash
-pnpm extract:workbook
-pnpm seed -- '{"seedSecret":"votre-secret-de-seed"}'
-```
-
-Le jeu actuel contient 84 produits, 111 opérations valides, 12 commandes,
-35 recettes, 8 lots, 5 personnages et 11 contacts. L’import Convex est
-idempotent : un `systemSetting` empêche de dupliquer un jeu déjà initialisé.
-La mutation d’import refuse toute requête qui ne présente pas `SEED_SECRET`.
+Le classeur historique a déjà été converti dans le seed versionné
+`data/inventaire.seed.json`. Le jeu actuel contient 84 produits, 111 opérations
+valides, 12 commandes, 35 recettes, 8 lots, 5 personnages et 11 contacts.
+L’import Convex est idempotent : un `systemSetting` empêche de dupliquer un jeu
+déjà initialisé. La mutation d’import refuse toute requête qui ne présente pas
+`SEED_SECRET`.
 
 ## Règles métier importantes
 
@@ -113,10 +105,11 @@ négatif et d’accès anonyme.
 
 ## Déploiement Convex + Netlify
 
-Le fichier `netlify.toml` et le plugin officiel Netlify/TanStack Start sont déjà
-configurés. Le build Netlify exécute `convex deploy`, injecte automatiquement
-`VITE_CONVEX_URL` et `VITE_CONVEX_SITE_URL`, déploie les fonctions Convex, puis
-produit le client et la fonction SSR Netlify. Des en-têtes empêchent également
+Le fichier `netlify.toml` est déjà configuré. Le build Netlify exécute
+`convex deploy`, injecte automatiquement `VITE_CONVEX_URL` et
+`VITE_CONVEX_SITE_URL`, déploie les fonctions Convex, puis produit le client et
+le serveur TanStack Start. Le script `scripts/prepare-netlify.mjs` génère ensuite
+le point d’entrée SSR attendu par Netlify. Des en-têtes empêchent également
 l’intégration en iframe, la détection incorrecte des contenus et l’accès aux
 capteurs inutiles.
 
@@ -179,7 +172,6 @@ sont isolées de la production.
 | Commande                                                       | Rôle                                                   |
 | -------------------------------------------------------------- | ------------------------------------------------------ |
 | `pnpm dev`                                                     | Convex et site local en parallèle                      |
-| `pnpm extract:workbook`                                        | Régénère `data/inventaire.seed.json`                   |
 | `pnpm seed -- '{…}'`                                           | Importe le seed avec le secret du déploiement          |
 | `pnpm convex run --prod migrations:convertLegacyOperations`    | Convertit les anciennes opérations                     |
 | `pnpm convex run --prod migrations:repairRecipeReferences`     | Répare les références et les coûts des recettes        |
