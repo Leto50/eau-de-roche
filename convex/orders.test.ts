@@ -194,6 +194,12 @@ describe("orders", () => {
   it("corrige une commande payée, sa transaction et son stock sans doublon", async () => {
     const backend = createTestBackend()
     const employee = await asAuthenticatedUser(backend)
+    const admin = await asAuthenticatedUser(backend, "admin")
+    const employeeAccount = await employee.query(api.auth.getCurrentUser, {})
+    const adminAccount = await admin.query(api.auth.getCurrentUser, {})
+    if (!employeeAccount || !adminAccount) {
+      throw new Error("Comptes de test introuvables")
+    }
     const productId = await seedOrderProduct(backend)
     const characterId = await backend.run((ctx) =>
       ctx.db.insert("characters", {
@@ -226,7 +232,7 @@ describe("orders", () => {
     expect(result.updated).toBe(false)
 
     const correctedPaymentDate = Date.now()
-    const correctedPayment = await employee.mutation(api.orders.process, {
+    const correctedPayment = await admin.mutation(api.orders.process, {
       characterId: correctedCharacterId,
       occurredAt: correctedPaymentDate,
       orderId,
@@ -245,6 +251,7 @@ describe("orders", () => {
           index.eq("transactionId", result.transactionId)
         )
         .collect(),
+      audits: await ctx.db.query("auditLogs").collect(),
       transaction: await ctx.db.get(result.transactionId),
       transactions: await ctx.db.query("transactions").collect(),
     }))
@@ -255,6 +262,7 @@ describe("orders", () => {
     expect(processed.product?.currentStock).toBe(2)
     expect(processed.transaction).toMatchObject({
       actorCharacterId: correctedCharacterId,
+      actorUserId: String(employeeAccount._id),
       orderId,
       occurredAt: correctedPaymentDate,
       productName: "Commande de Client du test",
@@ -265,6 +273,14 @@ describe("orders", () => {
     expect(processed.movements).toEqual([
       expect.objectContaining({ occurredAt: correctedPaymentDate }),
     ])
+    expect(processed.audits.at(-1)).toMatchObject({
+      action: "order.payment_updated",
+      actorUserId: String(adminAccount._id),
+    })
+    expect(processed.audits.at(-1)?.detail).toContain(
+      "personne : « Caissière test » → « Responsable correction »"
+    )
+    expect(processed.audits.at(-1)?.detail).toContain("date :")
 
     await expect(
       employee.mutation(api.orders.save, {
