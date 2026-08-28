@@ -389,11 +389,6 @@ export function RecipeDialog({
                     ) : null}
                   </SelectContent>
                 </Select>
-                <p className="text-xs text-muted-foreground">
-                  {initialProduct
-                    ? "Cette recette sera rattachée à la potion sélectionnée."
-                    : "Choisissez une potion sans recette ou créez-en une nouvelle."}
-                </p>
               </div>
             )}
             <div className="grid gap-2">
