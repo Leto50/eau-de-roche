@@ -137,6 +137,8 @@ export function RecipeDialog({
   const selectedOutputProduct = outputProducts.find(
     (product) => product._id === outputProductId
   )
+  const showOutputProductSelect =
+    !recipe && (initialProduct !== undefined || outputProducts.length > 0)
   const costCalculation = useMemo(() => {
     const missingPrices = new Set<string>()
     let complete = ingredients.length > 0
@@ -344,7 +346,7 @@ export function RecipeDialog({
 
         <form className="grid gap-5" onSubmit={handleSubmit}>
           <div className="grid gap-4 sm:grid-cols-2">
-            {recipe ? (
+            {recipe || !showOutputProductSelect ? (
               <div className="grid gap-2">
                 <Label htmlFor={`${fieldId}-name`}>Nom de la potion</Label>
                 <Input
@@ -387,6 +389,11 @@ export function RecipeDialog({
                     ) : null}
                   </SelectContent>
                 </Select>
+                <p className="text-xs text-muted-foreground">
+                  {initialProduct
+                    ? "Cette recette sera rattachée à la potion sélectionnée."
+                    : "Choisissez une potion sans recette ou créez-en une nouvelle."}
+                </p>
               </div>
             )}
             <div className="grid gap-2">
@@ -409,7 +416,7 @@ export function RecipeDialog({
                 </SelectContent>
               </Select>
             </div>
-            {!recipe && outputProductId === "new" ? (
+            {showOutputProductSelect && outputProductId === "new" ? (
               <div className="grid gap-2 sm:col-span-2">
                 <Label htmlFor={`${fieldId}-name`}>Nom de la potion</Label>
                 <Input
