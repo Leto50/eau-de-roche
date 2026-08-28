@@ -29,6 +29,11 @@ const MAX_NOTES_LENGTH = 1_000
 const MAX_PRICE = 1_000_000_000
 const MAX_QUANTITY = 1_000_000
 
+const auditDateFormatter = new Intl.DateTimeFormat("fr-FR", {
+  dateStyle: "medium",
+  timeZone: "Europe/Paris",
+})
+
 interface OrderLineForExchange {
   bundleId?: Id<"bundles">
   kind?: "bundle" | "product"
@@ -42,6 +47,26 @@ interface LinkedTransactionCorrection {
   actorCharacterId: Id<"characters">
   actorName: string
   occurredAt: number
+}
+
+function orderTransactionCorrectionDetail(
+  contactName: string,
+  transaction: Doc<"transactions">,
+  character: Doc<"characters">,
+  occurredAt: number
+): string {
+  const changes: string[] = []
+  if (transaction.actorName !== character.name) {
+    changes.push(
+      `personne : « ${transaction.actorName} » → « ${character.name} »`
+    )
+  }
+  if (transaction.occurredAt !== occurredAt) {
+    changes.push(
+      `date : ${auditDateFormatter.format(new Date(transaction.occurredAt))} → ${auditDateFormatter.format(new Date(occurredAt))}`
+    )
+  }
+  return [contactName, ...changes].join(" · ")
 }
 
 function exchangeLinesFromOrder(
@@ -608,10 +633,15 @@ export const process = mutation({
           index.eq("transactionId", transaction._id)
         )
         .collect()
+      const correctionDetail = orderTransactionCorrectionDetail(
+        order.contactName,
+        transaction,
+        character,
+        args.occurredAt
+      )
       await ctx.db.patch(transaction._id, {
         actorCharacterId: character._id,
         actorName: character.name,
-        actorUserId: String(user._id),
         occurredAt: args.occurredAt,
         searchText: buildTransactionSearchText({
           ...transaction,
@@ -631,7 +661,7 @@ export const process = mutation({
             : "order.reception_updated",
         actorUserId: String(user._id),
         createdAt: Date.now(),
-        detail: `${order.contactName}:${transaction.total}`,
+        detail: correctionDetail,
         entityId: order._id,
         entityType: "order",
       })
