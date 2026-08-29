@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest"
 
 import {
+  orderIsHistorical,
   orderIsOverdue,
   orderNeedsAttention,
   summarizeOrderAttention,
@@ -29,6 +30,36 @@ describe("order attention", () => {
     ).toBe(false)
     expect(orderNeedsAttention({ kind: "client", status: "cancelled" })).toBe(
       false
+    )
+  })
+
+  it("classe dans l’historique uniquement les commandes terminées ou annulées", () => {
+    expect(
+      orderIsHistorical({
+        kind: "client",
+        status: "delivered",
+        transactionId: "paid",
+      })
+    ).toBe(true)
+    expect(
+      orderIsHistorical({
+        kind: "supplier",
+        status: "delivered",
+        transactionId: "received",
+      })
+    ).toBe(true)
+    expect(
+      orderIsHistorical({
+        kind: "client",
+        status: "ready",
+        transactionId: "paid",
+      })
+    ).toBe(false)
+    expect(orderIsHistorical({ kind: "client", status: "delivered" })).toBe(
+      false
+    )
+    expect(orderIsHistorical({ kind: "supplier", status: "cancelled" })).toBe(
+      true
     )
   })
 
