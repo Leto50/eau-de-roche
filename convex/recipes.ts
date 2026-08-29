@@ -6,7 +6,7 @@ import { requireAdmin, requireUser } from "./lib/auth"
 import { assertWholeNumberRange } from "./lib/numbers"
 import { calculateRecipeCost } from "./lib/recipeCost"
 import { recipeFamily } from "./lib/recipeFamilies"
-import { normalizeName } from "./lib/text"
+import { normalizeCatalogName, normalizeName } from "./lib/text"
 
 const MAX_EFFECT_LENGTH = 500
 const MAX_INGREDIENTS = 50
@@ -148,7 +148,7 @@ export const save = mutation({
   },
   handler: async (ctx, args) => {
     const user = await requireAdmin(ctx)
-    const name = args.name.trim()
+    const name = normalizeCatalogName(args.name)
     const family = args.family
     const effect = args.effect.trim()
     if (!name || name.length > MAX_NAME_LENGTH) {

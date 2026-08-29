@@ -4,7 +4,7 @@ import { type Id } from "./_generated/dataModel"
 import { mutation, query } from "./_generated/server"
 import { requireAdmin } from "./lib/auth"
 import { assertFiniteRange, assertWholeNumberRange } from "./lib/numbers"
-import { normalizeName } from "./lib/text"
+import { normalizeCatalogName, normalizeName } from "./lib/text"
 
 const MAX_ITEMS = 50
 const MAX_NAME_LENGTH = 100
@@ -36,7 +36,7 @@ export const save = mutation({
   },
   handler: async (ctx, args) => {
     const user = await requireAdmin(ctx)
-    const name = args.name.trim()
+    const name = normalizeCatalogName(args.name)
     if (!name || name.length > MAX_NAME_LENGTH) {
       throw new ConvexError({
         code: "INVALID_INPUT",

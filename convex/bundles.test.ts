@@ -33,7 +33,7 @@ describe("bundles.save", () => {
 
     const bundleId = await admin.mutation(api.bundles.save, {
       items: [{ productId: firstProductId, quantity: 2 }],
-      name: "Nécessaire d’exploration",
+      name: "  NÉCESSAIRE D’EXPLORATION  ",
       price: 28,
     })
     await admin.mutation(api.bundles.save, {
@@ -42,7 +42,7 @@ describe("bundles.save", () => {
         { productId: firstProductId, quantity: 3 },
         { productId: secondProductId, quantity: 1 },
       ],
-      name: "Nécessaire d’exploration",
+      name: "NÉCESSAIRE D’EXPLORATION",
       price: 39,
     })
     await admin.mutation(api.bundles.setActive, {

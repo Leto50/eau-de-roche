@@ -168,6 +168,154 @@ describe("migrations.classifyPotionCraftability", () => {
   })
 })
 
+describe("migrations.normalizeCatalogNames", () => {
+  it("normalise le catalogue sans réécrire les opérations historiques", async () => {
+    const backend = convexTest(schema, modules)
+    const state = await backend.run(async (ctx) => {
+      const potionId = await ctx.db.insert("products", {
+        active: true,
+        category: "potion",
+        currentStock: 2,
+        minimumStock: 1,
+        name: "  POTION DE SOIN  ",
+        normalizedName: "potion de soin",
+        tracksStock: true,
+      })
+      const ingredientId = await ctx.db.insert("products", {
+        active: true,
+        category: "ingredient",
+        currentStock: 10,
+        minimumStock: 2,
+        name: "TIGE DE CHARDON",
+        normalizedName: "tige de chardon",
+        tracksStock: true,
+      })
+      const recipeId = await ctx.db.insert("recipes", {
+        family: "Soin",
+        name: "Potion de SOIN",
+        productId: potionId,
+      })
+      const ingredientLineId = await ctx.db.insert("recipeIngredients", {
+        ingredientName: "TIGE DE CHARDON",
+        productId: ingredientId,
+        quantity: 3,
+        raw: "3 TIGE DE CHARDON",
+        recipeId,
+      })
+      const bundleId = await ctx.db.insert("bundles", {
+        active: true,
+        name: " LOT DU SOIGNEUR ",
+      })
+      const bundleItemId = await ctx.db.insert("bundleItems", {
+        bundleId,
+        productId: potionId,
+        productName: "POTION DE SOIN",
+        quantity: 2,
+      })
+      const transactionId = await ctx.db.insert("transactions", {
+        actorName: "Alix",
+        kind: "sale",
+        occurredAt: Date.now(),
+        productName: "POTION DE SOIN (historique)",
+        quantity: 1,
+        source: "web",
+        total: 12,
+      })
+      return {
+        bundleId,
+        bundleItemId,
+        ingredientId,
+        ingredientLineId,
+        potionId,
+        recipeId,
+        transactionId,
+      }
+    })
+
+    const result = await backend.mutation(
+      internal.migrations.normalizeCatalogNames,
+      {}
+    )
+    const second = await backend.mutation(
+      internal.migrations.normalizeCatalogNames,
+      {}
+    )
+    const migrated = await backend.run(async (ctx) => ({
+      bundle: await ctx.db.get(state.bundleId),
+      bundleItem: await ctx.db.get(state.bundleItemId),
+      ingredient: await ctx.db.get(state.ingredientId),
+      ingredientLine: await ctx.db.get(state.ingredientLineId),
+      potion: await ctx.db.get(state.potionId),
+      recipe: await ctx.db.get(state.recipeId),
+      transaction: await ctx.db.get(state.transactionId),
+    }))
+
+    expect(result).toMatchObject({
+      normalized: true,
+      normalizedBundleItems: 1,
+      normalizedBundles: 1,
+      normalizedIngredients: 1,
+      normalizedProducts: 2,
+      normalizedRecipes: 1,
+    })
+    expect(second).toMatchObject({ normalized: false })
+    expect(migrated.potion).toMatchObject({
+      name: "Potion de soin",
+      normalizedName: "potion de soin",
+    })
+    expect(migrated.ingredient).toMatchObject({ name: "Tige de chardon" })
+    expect(migrated.recipe).toMatchObject({ name: "Potion de soin" })
+    expect(migrated.ingredientLine).toMatchObject({
+      ingredientName: "Tige de chardon",
+      raw: "3 Tige de chardon",
+    })
+    expect(migrated.bundle).toMatchObject({ name: "Lot du soigneur" })
+    expect(migrated.bundleItem).toMatchObject({
+      productName: "Potion de soin",
+    })
+    expect(migrated.transaction?.productName).toBe(
+      "POTION DE SOIN (historique)"
+    )
+  })
+
+  it("interrompt la migration avant toute écriture en cas de noms concurrents", async () => {
+    const backend = convexTest(schema, modules)
+    await backend.run(async (ctx) => {
+      await ctx.db.insert("products", {
+        active: true,
+        category: "potion",
+        currentStock: 1,
+        minimumStock: 0,
+        name: "BIÈRE",
+        normalizedName: "biere",
+        tracksStock: true,
+      })
+      await ctx.db.insert("products", {
+        active: true,
+        category: "potion",
+        currentStock: 1,
+        minimumStock: 0,
+        name: "biere",
+        normalizedName: "biere",
+        tracksStock: true,
+      })
+    })
+
+    await expect(
+      backend.mutation(internal.migrations.normalizeCatalogNames, {})
+    ).rejects.toThrowError("en conflit")
+
+    const state = await backend.run(async (ctx) => ({
+      names: (await ctx.db.query("products").collect()).map(
+        (product) => product.name
+      ),
+      settings: await ctx.db.query("systemSettings").collect(),
+    }))
+    expect(state.names).toEqual(["BIÈRE", "biere"])
+    expect(state.settings).toHaveLength(0)
+  })
+})
+
 describe("migrations.normalizeRecipeFamilies", () => {
   it("remplace les variantes libres par les catégories canoniques", async () => {
     const backend = convexTest(schema, modules)

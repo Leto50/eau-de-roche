@@ -85,13 +85,13 @@ describe("recipes", () => {
       effect: "Aide à tenir pendant une longue garde.",
       family: "Fortifiant",
       ingredients: [{ productId: ingredientId, quantity: 2 }],
-      name: "Élixir du veilleur",
+      name: "  ÉLIXIR DU VEILLEUR  ",
     })
     await admin.mutation(api.recipes.save, {
       effect: "Soutient l’effort prolongé.",
       family: "Fortifiant",
       ingredients: [{ productId: ingredientId, quantity: 3 }],
-      name: "Élixir du veilleur renforcé",
+      name: "ÉLIXIR DU VEILLEUR RENFORCÉ",
       recipeId,
     })
     await admin.mutation(api.recipes.setActive, {

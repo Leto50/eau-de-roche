@@ -10,6 +10,7 @@ import { canonicalRecipeFamily } from "./lib/recipeFamilies"
 import {
   canonicalProductName,
   convertLegacyOperationsData,
+  normalizeCatalogNamesData,
   repairRecipeReferencesData,
 } from "./migrations"
 
@@ -275,6 +276,7 @@ export const importWorkbook = mutation({
 
     const migration = await convertLegacyOperationsData(ctx)
     const recipeMigration = await repairRecipeReferencesData(ctx)
+    const catalogNamesMigration = await normalizeCatalogNamesData(ctx)
 
     const updatedAt = Date.parse(seedData.metadata.sourceModifiedAt)
     await ctx.db.insert("systemSettings", {
@@ -285,6 +287,7 @@ export const importWorkbook = mutation({
 
     return {
       imported: true,
+      catalogNamesMigration,
       message: "Les données ont été initialisées depuis le classeur.",
       migration,
       recipeMigration,
