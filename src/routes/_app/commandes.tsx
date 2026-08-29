@@ -8,6 +8,7 @@ import {
   CalendarClock,
   Check,
   Coins,
+  History,
   LoaderCircle,
   MessageSquareText,
   PackageCheck,
@@ -71,6 +72,7 @@ import {
 import { calculateOrderPreparation } from "@/lib/order-preparation"
 import { cn } from "@/lib/utils"
 import {
+  orderIsHistorical,
   orderIsOverdue,
   orderNeedsAttention,
 } from "../../../shared/order-attention"
@@ -79,7 +81,7 @@ type Order = FunctionReturnType<typeof api.orders.list>[number]
 type Recipe = FunctionReturnType<typeof api.recipes.list>[number]
 type OrderStatus = Order["status"]
 type OrderKind = Order["kind"]
-type OrderView = "attention" | OrderKind
+type OrderView = "attention" | "history" | OrderKind
 
 const statusOptions: readonly OrderStatus[] = [
   "open",
@@ -111,7 +113,7 @@ function isOrderKind(value: string): value is OrderKind {
 }
 
 function isOrderView(value: string): value is OrderView {
-  return value === "attention" || isOrderKind(value)
+  return value === "attention" || value === "history" || isOrderKind(value)
 }
 
 function validateOrderSearch(search: Record<string, unknown>) {
@@ -159,12 +161,22 @@ function OrdersPage() {
   const { data: recipes } = useSuspenseQuery(convexQuery(api.recipes.list, {}))
   const updateStatus = useMutation(api.orders.updateStatus)
   const attentionOrders = orders.filter(orderNeedsAttention)
+  const historicalOrders = orders.filter(orderIsHistorical)
   const kind = view === "supplier" ? "supplier" : "client"
   const selectedOrders =
-    view === "attention"
-      ? attentionOrders
-      : orders.filter((order) => order.kind === view)
+    view === "history"
+      ? historicalOrders
+      : view === "attention"
+        ? attentionOrders
+        : attentionOrders.filter((order) => order.kind === view)
   const visibleOrders = [...selectedOrders].sort((left, right) => {
+    if (view === "history") {
+      return (
+        (right.processedAt ?? right._creationTime) -
+        (left.processedAt ?? left._creationTime)
+      )
+    }
+
     const leftNeedsAttention = orderNeedsAttention(left)
     const rightNeedsAttention = orderNeedsAttention(right)
     const attentionOrder =
@@ -181,10 +193,7 @@ function OrdersPage() {
 
     return right._creationTime - left._creationTime
   })
-  const attentionCount =
-    view === "attention"
-      ? visibleOrders.length
-      : visibleOrders.filter(orderNeedsAttention).length
+  const visibleCount = visibleOrders.length
   const isAdmin =
     isHydrated && (session?.user.role?.split(",").includes("admin") ?? false)
 
@@ -192,7 +201,27 @@ function OrdersPage() {
     if (!isOrderStatus(value)) return
     try {
       await updateStatus({ orderId: order._id, status: value })
-      toast.success("L'état de la commande a été mis à jour.")
+      const updatedOrder = { ...order, status: value }
+      if (value === "cancelled") {
+        toast.success("Commande annulée et déplacée dans l’historique.")
+      } else if (
+        orderIsHistorical(order) &&
+        orderNeedsAttention(updatedOrder)
+      ) {
+        toast.success("Commande replacée dans les commandes à traiter.")
+      } else if (!orderNeedsAttention(updatedOrder)) {
+        toast.success("Commande terminée et déplacée dans l’historique.")
+      } else if (
+        order.kind === "client" &&
+        value === "delivered" &&
+        !order.transactionId
+      ) {
+        toast.success(
+          "Commande livrée. Enregistrez le paiement pour la terminer."
+        )
+      } else {
+        toast.success("L’état de la commande a été mis à jour.")
+      }
     } catch (error) {
       toast.error(
         getUserFacingErrorMessage(
@@ -231,8 +260,15 @@ function OrdersPage() {
       </PageHeader>
 
       <div className="mt-7 flex flex-wrap items-center justify-between gap-4 border-y border-border/70 py-3">
-        <Tabs onValueChange={handleViewChange} value={view}>
-          <TabsList aria-label="Type de commande" className="bg-[#6e5330]/8">
+        <Tabs
+          className="max-w-full min-w-0"
+          onValueChange={handleViewChange}
+          value={view}
+        >
+          <TabsList
+            aria-label="Vue des commandes"
+            className="max-w-full [scrollbar-width:none] justify-start overflow-x-auto overflow-y-hidden bg-[#6e5330]/8 max-sm:[&_svg]:hidden [&::-webkit-scrollbar]:hidden"
+          >
             <TabsTrigger value="attention">
               <AlertTriangle aria-hidden="true" />À traiter
             </TabsTrigger>
@@ -244,13 +280,23 @@ function OrdersPage() {
               <Store aria-hidden="true" />
               Fournisseurs
             </TabsTrigger>
+            <TabsTrigger value="history">
+              <History aria-hidden="true" />
+              Historique
+            </TabsTrigger>
           </TabsList>
         </Tabs>
         <p className="text-sm text-muted-foreground">
           <strong className="font-display text-lg text-foreground">
-            {attentionCount}
+            {visibleCount}
           </strong>{" "}
-          {attentionCount === 1 ? "commande à traiter" : "commandes à traiter"}
+          {view === "history"
+            ? visibleCount === 1
+              ? "commande dans l’historique"
+              : "commandes dans l’historique"
+            : visibleCount === 1
+              ? "commande à traiter"
+              : "commandes à traiter"}
         </p>
       </div>
 
@@ -271,16 +317,22 @@ function OrdersPage() {
         </div>
       ) : (
         <Alert className="mt-6 border-[#6a4f2e]/30 bg-card/35">
-          {kind === "client" ? (
+          {view === "history" ? (
+            <History aria-hidden="true" />
+          ) : kind === "client" ? (
             <PackageCheck aria-hidden="true" />
           ) : (
             <Store aria-hidden="true" />
           )}
-          <AlertTitle>Aucune commande</AlertTitle>
+          <AlertTitle>
+            {view === "history" ? "Historique vide" : "Aucune commande"}
+          </AlertTitle>
           <AlertDescription>
-            {view === "attention"
-              ? "Aucune préparation, réception ou paiement ne demande votre attention."
-              : "Les nouvelles commandes apparaîtront ici après leur création."}
+            {view === "history"
+              ? "Les commandes terminées ou annulées apparaîtront ici."
+              : view === "attention"
+                ? "Aucune préparation, réception ou paiement ne demande votre attention."
+                : "Aucune commande de ce type ne demande votre attention."}
           </AlertDescription>
         </Alert>
       )}
@@ -503,6 +555,8 @@ function OrderProcessingDialog({
     setOpen(nextOpen)
   }
 
+  if (!processed && order.status === "cancelled") return null
+
   if (!processed && order.lines.some((line) => line.unitPrice === undefined)) {
     return <Badge variant="outline">Prix à renseigner</Badge>
   }
@@ -523,15 +577,21 @@ function OrderProcessingDialog({
         occurredAt,
         orderId: order._id,
       })
-      toast.success(
-        processed
-          ? clientOrder
-            ? "Paiement corrigé."
-            : "Réception corrigée."
-          : clientOrder
-            ? "Paiement ajouté au journal."
-            : "Réception ajoutée au journal et au stock."
-      )
+      if (processed) {
+        toast.success(clientOrder ? "Paiement corrigé." : "Réception corrigée.")
+      } else if (!clientOrder) {
+        toast.success(
+          "Réception ajoutée au journal et au stock. Commande déplacée dans l’historique."
+        )
+      } else if (order.status === "delivered") {
+        toast.success(
+          "Paiement ajouté au journal. Commande déplacée dans l’historique."
+        )
+      } else {
+        toast.success(
+          "Paiement ajouté au journal. Marquez la commande « Livrée » pour la terminer."
+        )
+      }
       setOpen(false)
     } catch (error) {
       toast.error(
@@ -587,7 +647,11 @@ function OrderProcessingDialog({
             <AlertDialogDescription>
               {processed
                 ? "La transaction existante sera corrigée sans créer de doublon."
-                : "Une transaction liée sera inscrite au journal. Sa date peut être différente de la date prévue de la commande."}
+                : clientOrder
+                  ? order.status === "delivered"
+                    ? "Le paiement sera inscrit au journal et terminera la commande."
+                    : "Le paiement sera inscrit au journal. La commande sera terminée lorsqu’elle sera également marquée « Livrée »."
+                  : "La réception sera inscrite au journal, ajoutée au stock et la commande sera terminée."}
             </AlertDialogDescription>
           </AlertDialogHeader>
 

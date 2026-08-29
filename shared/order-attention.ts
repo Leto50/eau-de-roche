@@ -16,6 +16,10 @@ export function orderNeedsAttention(order: AttentionOrder): boolean {
   return order.transactionId === undefined
 }
 
+export function orderIsHistorical(order: AttentionOrder): boolean {
+  return !orderNeedsAttention(order)
+}
+
 export function orderIsOverdue(
   order: AttentionOrder,
   now = Date.now()
