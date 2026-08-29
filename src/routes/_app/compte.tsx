@@ -16,6 +16,7 @@ import { AccountSettingsDialog } from "@/components/account-settings-dialog"
 import { PageError } from "@/components/page-error"
 import { PageHeader } from "@/components/page-header"
 import { PageSkeleton } from "@/components/page-skeleton"
+import { SortableTableHead } from "@/components/sortable-table-head"
 import { Badge } from "@/components/ui/badge"
 import {
   Card,
@@ -45,7 +46,44 @@ import { api } from "../../../convex/_generated/api"
 import { useHydrated } from "@/hooks/use-hydrated"
 import { authClient } from "@/lib/auth-client"
 import { formatDecimalSeptims, formatNumber, formatSeptims } from "@/lib/format"
+import {
+  sortActorEntries,
+  type ActorSortKey,
+  type SortDirection,
+} from "@/lib/table-sorting"
 import { cn } from "@/lib/utils"
+
+type ActorSortOption =
+  | "incoming-asc"
+  | "incoming-desc"
+  | "name-asc"
+  | "name-desc"
+  | "net-asc"
+  | "net-desc"
+  | "operations-asc"
+  | "operations-desc"
+  | "outgoing-asc"
+  | "outgoing-desc"
+
+const actorSortOptions: readonly {
+  label: string
+  value: ActorSortOption
+}[] = [
+  { label: "Chiffre · plus élevé", value: "incoming-desc" },
+  { label: "Chiffre · plus faible", value: "incoming-asc" },
+  { label: "Nom · A à Z", value: "name-asc" },
+  { label: "Nom · Z à A", value: "name-desc" },
+  { label: "Achats · plus élevés", value: "outgoing-desc" },
+  { label: "Achats · plus faibles", value: "outgoing-asc" },
+  { label: "Solde · plus élevé", value: "net-desc" },
+  { label: "Solde · plus faible", value: "net-asc" },
+  { label: "Opérations · plus", value: "operations-desc" },
+  { label: "Opérations · moins", value: "operations-asc" },
+]
+
+function isActorSortOption(value: string): value is ActorSortOption {
+  return actorSortOptions.some((option) => option.value === value)
+}
 
 const shortDateFormatter = new Intl.DateTimeFormat("fr-FR", {
   day: "2-digit",
@@ -78,10 +116,33 @@ function AccountPage() {
   const [selectedWeekStartsAt, setSelectedWeekStartsAt] = useState(
     currentWeek?.startsAt.toString() ?? ""
   )
+  const [actorSortOption, setActorSortOption] =
+    useState<ActorSortOption>("incoming-desc")
   const selectedWeek =
     data.weeks.find(
       (week) => week.startsAt.toString() === selectedWeekStartsAt
     ) ?? currentWeek
+  const [actorSortKey, actorSortDirection] = actorSortOption.split("-") as [
+    ActorSortKey,
+    SortDirection,
+  ]
+  const sortedActors = sortActorEntries(
+    selectedWeek?.actors ?? [],
+    actorSortKey,
+    actorSortDirection
+  )
+
+  function handleActorSort(key: ActorSortKey) {
+    const direction: SortDirection =
+      actorSortKey === key
+        ? actorSortDirection === "asc"
+          ? "desc"
+          : "asc"
+        : key === "name"
+          ? "asc"
+          : "desc"
+    setActorSortOption(`${key}-${direction}` as ActorSortOption)
+  }
 
   return (
     <div className="animate-in duration-300 fade-in slide-in-from-bottom-1 motion-reduce:animate-none">
@@ -128,7 +189,7 @@ function AccountPage() {
             Le chiffre encaissé et les achats traités par chaque membre de la
             boutique.
           </CardDescription>
-          <CardAction className="max-sm:col-span-2 max-sm:row-start-3">
+          <CardAction className="flex flex-wrap justify-end gap-2 max-sm:col-span-2 max-sm:row-start-3">
             <Select
               onValueChange={setSelectedWeekStartsAt}
               value={selectedWeek?.startsAt.toString() ?? ""}
@@ -151,6 +212,26 @@ function AccountPage() {
                 ))}
               </SelectContent>
             </Select>
+            <Select
+              onValueChange={(value) => {
+                if (isActorSortOption(value)) setActorSortOption(value)
+              }}
+              value={actorSortOption}
+            >
+              <SelectTrigger
+                aria-label="Trier l’activité par personnage"
+                className="w-52 max-w-full bg-background/50 md:hidden"
+              >
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {actorSortOptions.map((option) => (
+                  <SelectItem key={option.value} value={option.value}>
+                    {option.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </CardAction>
         </CardHeader>
 
@@ -160,19 +241,49 @@ function AccountPage() {
               <Table>
                 <TableHeader>
                   <TableRow className="bg-[#684f2d]/8 hover:bg-[#684f2d]/8">
-                    <TableHead className="pl-4">Personnage</TableHead>
-                    <TableHead className="text-right">
-                      Chiffre encaissé
-                    </TableHead>
-                    <TableHead className="text-right">Achats</TableHead>
-                    <TableHead className="text-right">Solde</TableHead>
-                    <TableHead className="pr-4 text-right">
-                      Opérations
-                    </TableHead>
+                    <SortableTableHead
+                      active={actorSortKey === "name"}
+                      className="pl-4"
+                      direction={actorSortDirection}
+                      label="Personnage"
+                      onSort={() => handleActorSort("name")}
+                    />
+                    <SortableTableHead
+                      active={actorSortKey === "incoming"}
+                      className="text-right"
+                      direction={actorSortDirection}
+                      inactiveDirection="desc"
+                      label="Chiffre encaissé"
+                      onSort={() => handleActorSort("incoming")}
+                    />
+                    <SortableTableHead
+                      active={actorSortKey === "outgoing"}
+                      className="text-right"
+                      direction={actorSortDirection}
+                      inactiveDirection="desc"
+                      label="Achats"
+                      onSort={() => handleActorSort("outgoing")}
+                    />
+                    <SortableTableHead
+                      active={actorSortKey === "net"}
+                      className="text-right"
+                      direction={actorSortDirection}
+                      inactiveDirection="desc"
+                      label="Solde"
+                      onSort={() => handleActorSort("net")}
+                    />
+                    <SortableTableHead
+                      active={actorSortKey === "operations"}
+                      className="pr-4 text-right"
+                      direction={actorSortDirection}
+                      inactiveDirection="desc"
+                      label="Opérations"
+                      onSort={() => handleActorSort("operations")}
+                    />
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {selectedWeek.actors.map((actor) => (
+                  {sortedActors.map((actor) => (
                     <TableRow
                       className="border-[#5b462b]/20"
                       key={actor.actorCharacterId ?? actor.actorName}
@@ -205,7 +316,7 @@ function AccountPage() {
             </CardContent>
 
             <CardContent className="grid divide-y divide-border/70 px-0 py-0 md:hidden">
-              {selectedWeek.actors.map((actor) => (
+              {sortedActors.map((actor) => (
                 <div
                   className="grid gap-3 p-4"
                   key={actor.actorCharacterId ?? actor.actorName}

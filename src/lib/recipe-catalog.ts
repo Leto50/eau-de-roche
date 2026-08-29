@@ -1,3 +1,5 @@
+import { normalizeName } from "../../shared/text"
+
 interface SearchableRecipe {
   effect?: string
   ingredients: readonly { ingredientName: string }[]
@@ -10,18 +12,12 @@ interface SearchableBundle {
 }
 
 export function normalizeCatalogSearch(value: string): string {
-  return value
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .trim()
-    .toLocaleLowerCase("fr")
+  return normalizeName(value)
 }
 
 function catalogTextMatches(text: string, search: string): boolean {
   const tokenize = (value: string) =>
-    normalizeCatalogSearch(value)
-      .split(/[^\p{L}\p{N}]+/u)
-      .filter(Boolean)
+    normalizeCatalogSearch(value).split(" ").filter(Boolean)
   const queryTokens = tokenize(search)
   if (queryTokens.length === 0) return true
   const textTokens = tokenize(text)

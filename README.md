@@ -146,6 +146,7 @@ pnpm convex run --prod migrations:convertLegacyOperations
 pnpm convex run --prod migrations:repairRecipeReferences
 pnpm convex run --prod migrations:reclassifyAnnexePotions
 pnpm convex run --prod migrations:classifyPotionCraftability
+pnpm convex run --prod migrations:normalizeCatalogNames
 pnpm convex run --prod migrations:normalizeRecipeFamilies
 pnpm convex run --prod migrations:indexTransactionSearch
 pnpm convex run --prod migrations:normalizeContacts
@@ -153,11 +154,12 @@ pnpm convex run --prod migrations:normalizeContacts
 
 Ces migrations sont idempotentes. La première ne rejoue aucun mouvement sur le
 stock courant ; la seconde rattache les recettes et leurs ingrédients aux
-articles canoniques, puis recalcule les coûts matière disponibles. Les cinq
-dernières réunissent toutes les potions dans la même catégorie, distinguent les
-potions fabricables de celles trouvées uniquement, normalisent les catégories
-de recettes, préparent la recherche du journal et dédupliquent le carnet de
-contacts sans réécrire le nom historique des commandes.
+articles canoniques, puis recalcule les coûts matière disponibles. Les suivantes
+réunissent toutes les potions dans la même catégorie, distinguent les potions
+fabricables de celles trouvées uniquement, uniformisent l’affichage du
+catalogue, normalisent les catégories de recettes, préparent la recherche du
+journal et dédupliquent le carnet de contacts sans réécrire les libellés
+historiques des opérations et commandes.
 
 Après la première connexion, l’administrateur crée les comptes employés depuis
 le menu « Administration ». Il n’existe aucune page d’inscription publique.
@@ -177,6 +179,7 @@ sont isolées de la production.
 | `pnpm convex run --prod migrations:repairRecipeReferences`     | Répare les références et les coûts des recettes        |
 | `pnpm convex run --prod migrations:reclassifyAnnexePotions`    | Réunit toutes les potions dans la catégorie « Potion » |
 | `pnpm convex run --prod migrations:classifyPotionCraftability` | Renseigne le mode d’obtention des potions              |
+| `pnpm convex run --prod migrations:normalizeCatalogNames`      | Uniformise les noms du catalogue                       |
 | `pnpm convex run --prod migrations:normalizeRecipeFamilies`    | Normalise les catégories de recettes                   |
 | `pnpm convex run --prod migrations:indexTransactionSearch`     | Indexe la recherche textuelle du journal               |
 | `pnpm convex run --prod migrations:normalizeContacts`          | Normalise et déduplique les contacts des commandes     |

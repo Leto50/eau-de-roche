@@ -10,9 +10,10 @@ import {
 } from "./lib/products"
 import { calculateRecipeCost } from "./lib/recipeCost"
 import { canonicalRecipeFamily } from "./lib/recipeFamilies"
-import { normalizeName } from "./lib/text"
+import { normalizeCatalogName, normalizeName } from "./lib/text"
 import { buildTransactionSearchText } from "./lib/transactionSearch"
 
+const CATALOG_NAMES_MIGRATION_KEY = "catalog-names-v1"
 const EXCHANGE_MIGRATION_KEY = "exchange-model-v5"
 const CONTACTS_MIGRATION_KEY = "contacts-v1"
 const PRODUCT_CATEGORY_MIGRATION_KEY = "product-categories-v1"
@@ -20,6 +21,31 @@ const PRODUCT_CRAFTABILITY_MIGRATION_KEY = "product-craftability-v1"
 const RECIPE_FAMILY_MIGRATION_KEY = "recipe-families-v1"
 const RECIPE_REFERENCE_MIGRATION_KEY = "recipe-references-v1"
 const TRANSACTION_SEARCH_MIGRATION_KEY = "transaction-search-v1"
+
+function assertUniqueCatalogNames(
+  entries: readonly { id: string; name: string }[],
+  entityLabel: string
+) {
+  const entriesByName = new Map<string, Array<{ id: string; name: string }>>()
+  for (const entry of entries) {
+    const normalizedName = normalizeName(entry.name)
+    entriesByName.set(normalizedName, [
+      ...(entriesByName.get(normalizedName) ?? []),
+      entry,
+    ])
+  }
+  const duplicate = [...entriesByName.values()].find(
+    (matchingEntries) => matchingEntries.length > 1
+  )
+  if (duplicate) {
+    throw new ConvexError({
+      code: "MIGRATION_NAME_COLLISION",
+      message: `${entityLabel} en conflit : ${duplicate
+        .map((entry) => `« ${entry.name} »`)
+        .join(", ")}.`,
+    })
+  }
+}
 
 const productAliases: Readonly<Record<string, string>> = {
   "breuvage mana accru": "breuvage magie accrue",
@@ -522,6 +548,134 @@ export async function classifyPotionCraftabilityData(ctx: MutationCtx) {
   return result
 }
 
+export async function normalizeCatalogNamesData(ctx: MutationCtx) {
+  const existingMigration = await ctx.db
+    .query("systemSettings")
+    .withIndex("by_key", (index) =>
+      index.eq("key", CATALOG_NAMES_MIGRATION_KEY)
+    )
+    .unique()
+  if (existingMigration) {
+    return {
+      normalized: false,
+      message: "Les noms du catalogue sont déjà normalisés.",
+    }
+  }
+
+  const [products, recipes, bundles, recipeIngredients, bundleItems] =
+    await Promise.all([
+      ctx.db.query("products").collect(),
+      ctx.db.query("recipes").collect(),
+      ctx.db.query("bundles").collect(),
+      ctx.db.query("recipeIngredients").collect(),
+      ctx.db.query("bundleItems").collect(),
+    ])
+  const productNames = new Map(
+    products.map((product) => [product._id, normalizeCatalogName(product.name)])
+  )
+  const recipeNames = new Map(
+    recipes.map((recipe) => [
+      recipe._id,
+      (recipe.productId && productNames.get(recipe.productId)) ??
+        normalizeCatalogName(recipe.name),
+    ])
+  )
+  const bundleNames = new Map(
+    bundles.map((bundle) => [bundle._id, normalizeCatalogName(bundle.name)])
+  )
+
+  assertUniqueCatalogNames(
+    products.map((product) => ({
+      id: product._id,
+      name: productNames.get(product._id)!,
+    })),
+    "Références"
+  )
+  assertUniqueCatalogNames(
+    recipes.map((recipe) => ({
+      id: recipe._id,
+      name: recipeNames.get(recipe._id)!,
+    })),
+    "Recettes"
+  )
+  assertUniqueCatalogNames(
+    bundles.map((bundle) => ({
+      id: bundle._id,
+      name: bundleNames.get(bundle._id)!,
+    })),
+    "Lots"
+  )
+
+  let normalizedProducts = 0
+  for (const product of products) {
+    const name = productNames.get(product._id)!
+    const normalizedName = normalizeName(name)
+    if (product.name !== name || product.normalizedName !== normalizedName) {
+      await ctx.db.patch(product._id, { name, normalizedName })
+      normalizedProducts += 1
+    }
+  }
+
+  let normalizedRecipes = 0
+  for (const recipe of recipes) {
+    const name = recipeNames.get(recipe._id)!
+    if (recipe.name !== name) {
+      await ctx.db.patch(recipe._id, { name })
+      normalizedRecipes += 1
+    }
+  }
+
+  let normalizedIngredients = 0
+  for (const ingredient of recipeIngredients) {
+    const ingredientName =
+      (ingredient.productId && productNames.get(ingredient.productId)) ??
+      normalizeCatalogName(ingredient.ingredientName)
+    const raw = `${ingredient.quantity} ${ingredientName}`
+    if (
+      ingredient.ingredientName !== ingredientName ||
+      ingredient.raw !== raw
+    ) {
+      await ctx.db.patch(ingredient._id, { ingredientName, raw })
+      normalizedIngredients += 1
+    }
+  }
+
+  let normalizedBundles = 0
+  for (const bundle of bundles) {
+    const name = bundleNames.get(bundle._id)!
+    if (bundle.name !== name) {
+      await ctx.db.patch(bundle._id, { name })
+      normalizedBundles += 1
+    }
+  }
+
+  let normalizedBundleItems = 0
+  for (const item of bundleItems) {
+    const productName =
+      (item.productId && productNames.get(item.productId)) ??
+      normalizeCatalogName(item.productName)
+    if (item.productName !== productName) {
+      await ctx.db.patch(item._id, { productName })
+      normalizedBundleItems += 1
+    }
+  }
+
+  const result = {
+    normalized: true,
+    normalizedBundleItems,
+    normalizedBundles,
+    normalizedIngredients,
+    normalizedProducts,
+    normalizedRecipes,
+  }
+  await ctx.db.insert("systemSettings", {
+    key: CATALOG_NAMES_MIGRATION_KEY,
+    updatedAt: Date.now(),
+    value: JSON.stringify(result),
+  })
+  return result
+}
+
 export async function normalizeRecipeFamiliesData(ctx: MutationCtx) {
   const existingMigration = await ctx.db
     .query("systemSettings")
@@ -976,6 +1130,11 @@ export const reclassifyAnnexePotions = internalMutation({
 export const classifyPotionCraftability = internalMutation({
   args: {},
   handler: classifyPotionCraftabilityData,
+})
+
+export const normalizeCatalogNames = internalMutation({
+  args: {},
+  handler: normalizeCatalogNamesData,
 })
 
 export const normalizeRecipeFamilies = internalMutation({

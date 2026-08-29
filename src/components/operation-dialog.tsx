@@ -80,6 +80,7 @@ import {
 } from "@/lib/prices"
 import { cn } from "@/lib/utils"
 import { calculateProductionPlan } from "../../shared/production"
+import { normalizeName } from "../../shared/text"
 import { api } from "../../convex/_generated/api"
 import { type Doc, type Id } from "../../convex/_generated/dataModel"
 
@@ -146,24 +147,16 @@ function timestampToDateInput(timestamp: number): string {
   return `${year}-${month}-${day}`
 }
 
-function normalizeSearch(value: string): string {
-  return value
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .trim()
-    .toLocaleLowerCase("fr")
-}
-
 function productMatches(product: Doc<"products">, query: string): boolean {
   if (!query) return true
-  return normalizeSearch(
+  return normalizeName(
     `${product.name} ${categoryLabels[product.category]}`
   ).includes(query)
 }
 
 function bundleMatches(bundle: Bundle, query: string): boolean {
   if (!query) return true
-  return normalizeSearch(`${bundle.name} lot`).includes(query)
+  return normalizeName(`${bundle.name} lot`).includes(query)
 }
 
 function getDefaultDirection(kind: OperationKind): TradeDirection {
@@ -316,7 +309,7 @@ function TradeReferencePicker({
   const [open, setOpen] = useState(false)
   const [query, setQuery] = useState("")
   const triggerId = useId()
-  const normalizedQuery = normalizeSearch(query)
+  const normalizedQuery = normalizeName(query)
   const availableProducts = products.filter(
     (product) =>
       (direction === "outgoing" || product.tracksStock) &&
@@ -896,7 +889,9 @@ export function OperationDialog({
         const args = {
           characterId: character._id,
           ...(comment.trim() ? { comment } : {}),
-          ...(counterparty.trim() ? { counterparty } : {}),
+          ...(transaction?.kind === "production" && transaction.counterparty
+            ? { counterparty: transaction.counterparty }
+            : {}),
           kind: "production" as const,
           occurredAt,
           productId: product._id,
@@ -1277,21 +1272,26 @@ export function OperationDialog({
               </div>
 
               <Separator className="my-4" />
-              <div className="grid gap-4 sm:grid-cols-2">
-                <div className="grid gap-2">
-                  <Label htmlFor={`${formId}-counterparty`}>
-                    {productionMode
-                      ? "Lot ou provenance"
-                      : "Client, fournisseur ou interlocuteur"}
-                  </Label>
-                  <Input
-                    id={`${formId}-counterparty`}
-                    maxLength={500}
-                    onChange={(event) => setCounterparty(event.target.value)}
-                    placeholder="Facultatif"
-                    value={counterparty}
-                  />
-                </div>
+              <div
+                className={cn(
+                  "grid gap-4",
+                  !productionMode && "sm:grid-cols-2"
+                )}
+              >
+                {!productionMode ? (
+                  <div className="grid gap-2">
+                    <Label htmlFor={`${formId}-counterparty`}>
+                      Client, fournisseur ou interlocuteur
+                    </Label>
+                    <Input
+                      id={`${formId}-counterparty`}
+                      maxLength={500}
+                      onChange={(event) => setCounterparty(event.target.value)}
+                      placeholder="Facultatif"
+                      value={counterparty}
+                    />
+                  </div>
+                ) : null}
                 <div className="grid gap-2">
                   <Label htmlFor={`${formId}-comment`}>Note interne</Label>
                   <Textarea

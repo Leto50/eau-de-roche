@@ -4,6 +4,39 @@ import { api } from "./_generated/api"
 import { asAuthenticatedUser, createTestBackend } from "./test.helpers"
 
 describe("products.save", () => {
+  it("uniformise l’affichage et refuse les variantes d’un même nom", async () => {
+    const backend = createTestBackend()
+    const admin = await asAuthenticatedUser(backend, "admin")
+
+    const productId = await admin.mutation(api.products.save, {
+      active: true,
+      category: "potion",
+      minimumStock: 0,
+      name: "  POTION DE SOIN  ",
+      purchasePrice: null,
+      salePrice: null,
+      targetStock: 0,
+    })
+
+    await expect(
+      admin.mutation(api.products.save, {
+        active: true,
+        category: "potion",
+        minimumStock: 0,
+        name: "potion de sóin",
+        purchasePrice: null,
+        salePrice: null,
+        targetStock: 0,
+      })
+    ).rejects.toThrowError("existe déjà")
+
+    const product = await backend.run((ctx) => ctx.db.get(productId))
+    expect(product).toMatchObject({
+      name: "Potion de soin",
+      normalizedName: "potion de soin",
+    })
+  })
+
   it("accepte les prix fractionnaires avec des stocks entiers", async () => {
     const backend = createTestBackend()
     const admin = await asAuthenticatedUser(backend, "admin")

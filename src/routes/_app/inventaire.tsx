@@ -12,11 +12,19 @@ import {
   ProductDialog,
 } from "@/components/product-dialog"
 import { RecipeDialog } from "@/components/recipe-dialog"
+import { SortableTableHead } from "@/components/sortable-table-head"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
 import {
   Table,
   TableBody,
@@ -35,14 +43,30 @@ import {
   type ProductCategory,
 } from "@/lib/product-categories"
 import { authClient } from "@/lib/auth-client"
+import {
+  sortInventoryEntries,
+  type InventorySortKey,
+  type SortDirection,
+} from "@/lib/table-sorting"
 import { cn } from "@/lib/utils"
+import { normalizeName } from "../../../shared/text"
 
 type CategoryFilter = "all" | ProductCategory
 type StockFilter = "low"
+type InventorySortOption =
+  | "name-asc"
+  | "name-desc"
+  | "price-asc"
+  | "price-desc"
+  | "status-asc"
+  | "status-desc"
+  | "stock-asc"
+  | "stock-desc"
 
 interface InventoryRouteSearch {
   category?: CategoryFilter
   q?: string
+  sort?: InventorySortOption
   stock?: StockFilter
 }
 
@@ -56,8 +80,26 @@ const categoryFilters: readonly {
   { label: "Services", value: "service" },
 ]
 
+const inventorySortOptions: readonly {
+  label: string
+  value: InventorySortOption
+}[] = [
+  { label: "Nom · A à Z", value: "name-asc" },
+  { label: "Nom · Z à A", value: "name-desc" },
+  { label: "Stock · plus élevé", value: "stock-desc" },
+  { label: "Stock · plus faible", value: "stock-asc" },
+  { label: "Prix · plus élevé", value: "price-desc" },
+  { label: "Prix · plus faible", value: "price-asc" },
+  { label: "État · à surveiller", value: "status-asc" },
+  { label: "État · disponible", value: "status-desc" },
+]
+
 function isCategoryFilter(value: string): value is CategoryFilter {
   return categoryFilters.some((filter) => filter.value === value)
+}
+
+function isInventorySortOption(value: string): value is InventorySortOption {
+  return inventorySortOptions.some((option) => option.value === value)
 }
 
 function validateInventorySearch(
@@ -71,9 +113,14 @@ function validateInventorySearch(
     typeof search.q === "string" && search.q.trim()
       ? search.q.slice(0, 100)
       : undefined
+  const sort =
+    typeof search.sort === "string" && isInventorySortOption(search.sort)
+      ? search.sort
+      : undefined
   return {
     ...(category && category !== "all" ? { category } : {}),
     ...(q ? { q } : {}),
+    ...(sort && sort !== "name-asc" ? { sort } : {}),
     ...(search.stock === "low" ? { stock: "low" as const } : {}),
   }
 }
@@ -109,12 +156,17 @@ function InventoryPage() {
   const category = filters.category ?? "all"
   const search = filters.q ?? ""
   const lowOnly = filters.stock === "low"
+  const sortOption = filters.sort ?? "name-asc"
+  const [sortKey, sortDirection] = sortOption.split("-") as [
+    InventorySortKey,
+    SortDirection,
+  ]
   const [recipeProductId, setRecipeProductId] = useState<string>()
   const recipeProduct = products.find(
     (product) => product._id === recipeProductId
   )
   const linkedProducts = new Set(linkedProductIds)
-  const normalizedSearch = search.trim().toLocaleLowerCase("fr")
+  const normalizedSearch = normalizeName(search)
   const filteredProducts = products.filter(
     (product) =>
       (category === "all" ||
@@ -122,8 +174,12 @@ function InventoryPage() {
       (!lowOnly ||
         (product.tracksStock &&
           product.currentStock <= product.minimumStock)) &&
-      (!normalizedSearch ||
-        product.name.toLocaleLowerCase("fr").includes(normalizedSearch))
+      (!normalizedSearch || product.normalizedName.includes(normalizedSearch))
+  )
+  const visibleProducts = sortInventoryEntries(
+    filteredProducts,
+    sortKey,
+    sortDirection
   )
 
   function handleCategoryChange(value: string) {
@@ -133,6 +189,25 @@ function InventoryPage() {
       search: (previous) => ({
         ...previous,
         category: value === "all" ? undefined : value,
+      }),
+    })
+  }
+
+  function handleSort(key: InventorySortKey) {
+    const direction: SortDirection =
+      sortKey === key
+        ? sortDirection === "asc"
+          ? "desc"
+          : "asc"
+        : key === "name" || key === "status"
+          ? "asc"
+          : "desc"
+    const nextSort = `${key}-${direction}` as InventorySortOption
+    void navigate({
+      replace: true,
+      search: (previous) => ({
+        ...previous,
+        sort: nextSort === "name-asc" ? undefined : nextSort,
       }),
     })
   }
@@ -220,6 +295,33 @@ function InventoryPage() {
               ))}
             </TabsList>
           </Tabs>
+          <Select
+            onValueChange={(value) => {
+              if (!isInventorySortOption(value)) return
+              void navigate({
+                replace: true,
+                search: (previous) => ({
+                  ...previous,
+                  sort: value === "name-asc" ? undefined : value,
+                }),
+              })
+            }}
+            value={sortOption}
+          >
+            <SelectTrigger
+              aria-label="Trier l’inventaire"
+              className="w-full bg-background/50 sm:w-48 md:hidden"
+            >
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {inventorySortOptions.map((option) => (
+                <SelectItem key={option.value} value={option.value}>
+                  {option.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </div>
       </section>
 
@@ -235,12 +337,38 @@ function InventoryPage() {
             <Table className="max-md:block">
               <TableHeader className="max-md:hidden">
                 <TableRow className="border-b-[#5b462b]/50 bg-[#684f2d]/10 hover:bg-[#684f2d]/10">
-                  <TableHead className="pl-4">Référence</TableHead>
+                  <SortableTableHead
+                    active={sortKey === "name"}
+                    className="pl-4"
+                    direction={sortDirection}
+                    label="Référence"
+                    onSort={() => handleSort("name")}
+                  />
                   <TableHead>Catégorie</TableHead>
-                  <TableHead className="text-right">Stock</TableHead>
+                  <SortableTableHead
+                    active={sortKey === "stock"}
+                    className="text-right"
+                    direction={sortDirection}
+                    inactiveDirection="desc"
+                    label="Stock"
+                    onSort={() => handleSort("stock")}
+                  />
                   <TableHead className="text-right">Seuil</TableHead>
-                  <TableHead className="text-right">Prix</TableHead>
-                  <TableHead className="pr-4 text-right">État</TableHead>
+                  <SortableTableHead
+                    active={sortKey === "price"}
+                    className="text-right"
+                    direction={sortDirection}
+                    inactiveDirection="desc"
+                    label="Prix"
+                    onSort={() => handleSort("price")}
+                  />
+                  <SortableTableHead
+                    active={sortKey === "status"}
+                    className="pr-4 text-right"
+                    direction={sortDirection}
+                    label="État"
+                    onSort={() => handleSort("status")}
+                  />
                   {isAdmin ? (
                     <TableHead className="w-10">
                       <span className="sr-only">Modifier</span>
@@ -249,7 +377,7 @@ function InventoryPage() {
                 </TableRow>
               </TableHeader>
               <TableBody className="max-md:grid max-md:gap-3">
-                {filteredProducts.map((product) => (
+                {visibleProducts.map((product) => (
                   <InventoryRow
                     hasRecipe={linkedProducts.has(product._id)}
                     isAdmin={isAdmin}
