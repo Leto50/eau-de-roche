@@ -1034,7 +1034,9 @@ export function OperationDialog({
       <DialogContent className="max-h-[94svh] overflow-y-auto rounded-[0.2rem] border-[#6a5436] bg-[#eee1c7] ring-0 sm:max-w-3xl">
         <DialogHeader className="pr-8">
           <p className="text-[0.66rem] font-bold tracking-[0.2em] text-primary uppercase">
-            Activité de la boutique
+            {productionMode
+              ? "Atelier de production"
+              : "Transaction financière"}
           </p>
           <DialogTitle className="font-display text-2xl">
             {dialogTitle}
@@ -1523,9 +1525,10 @@ export function OperationDialog({
                           </FieldLabel>
                           <Input
                             aria-invalid={invalid}
+                            autoComplete="off"
                             id={`${formId}-counterparty`}
                             maxLength={500}
-                            name={field.name}
+                            name="transaction-counterparty"
                             onBlur={field.handleBlur}
                             onChange={(event) =>
                               field.handleChange(event.target.value)

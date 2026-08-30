@@ -16,7 +16,14 @@ interface AuthAccount {
   id: string
   name: string
   role?: string | null
+  username?: string | null
   updatedAt: Date | number
+}
+
+function accountIdentifier(
+  user: Pick<AuthAccount, "email" | "username">
+): string {
+  return user.username?.trim() ?? user.email
 }
 
 export const listAccounts = query({
@@ -31,8 +38,8 @@ export const listAccounts = query({
     return users.map((user) => ({
       banned: user.banned === true,
       createdAt: timestamp(user.createdAt),
-      email: user.email,
       id: user.id,
+      identifier: accountIdentifier(user),
       name: user.name,
       role: user.role?.split(",").includes("admin") ? "admin" : "user",
       updatedAt: timestamp(user.updatedAt),
@@ -53,10 +60,17 @@ export const listAuditPage = query({
     const authContext = await createAuth(ctx).$context
     const actors = await Promise.all(
       actorIds.map(async (actorUserId) => {
-        const user = await authContext.internalAdapter.findUserById(actorUserId)
+        const user = (await authContext.internalAdapter.findUserById(
+          actorUserId
+        )) as Pick<AuthAccount, "email" | "name" | "username"> | null
         return [
           actorUserId,
-          user ? { email: user.email, name: user.name } : undefined,
+          user
+            ? {
+                identifier: accountIdentifier(user),
+                name: user.name,
+              }
+            : undefined,
         ] as const
       })
     )

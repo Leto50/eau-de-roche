@@ -30,7 +30,6 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
   SidebarProvider,
-  SidebarRail,
   SidebarSeparator,
   SidebarTrigger,
   useSidebar,
@@ -53,7 +52,7 @@ interface NavigationItem {
 const navigation: readonly NavigationItem[] = [
   { icon: LayoutDashboard, label: "Aujourd’hui", to: "/" },
   { icon: Boxes, label: "Inventaire", to: "/inventaire" },
-  { icon: ScrollText, label: "Activité", to: "/journal" },
+  { icon: ScrollText, label: "Transactions", to: "/journal" },
   { icon: Landmark, label: "Compte", to: "/compte" },
   { icon: ClipboardList, label: "Commandes", to: "/commandes" },
   { icon: BookOpenText, label: "Recettes & lots", to: "/recettes" },
@@ -198,7 +197,10 @@ function SignOutButton() {
 
 export function AppShell({ children }: Readonly<{ children: ReactNode }>) {
   return (
-    <SidebarProvider className="bg-[#181611] bg-[radial-gradient(circle_at_20%_10%,rgba(30,55,79,0.28),transparent_29rem),radial-gradient(circle_at_90%_75%,rgba(50,75,97,0.14),transparent_32rem)] [--sidebar-width-icon:4rem] [--sidebar-width:17rem]">
+    <SidebarProvider
+      className="bg-[#181611] bg-[radial-gradient(circle_at_20%_10%,rgba(30,55,79,0.28),transparent_29rem),radial-gradient(circle_at_90%_75%,rgba(50,75,97,0.14),transparent_32rem)] [--sidebar-width-icon:4rem] [--sidebar-width:17rem]"
+      open
+    >
       <Sidebar
         className="border-sidebar-border bg-[linear-gradient(150deg,rgba(48,44,35,0.96),rgba(25,24,20,0.99))]"
         collapsible="icon"
@@ -218,10 +220,6 @@ export function AppShell({ children }: Readonly<{ children: ReactNode }>) {
           <SidebarSeparator className="mx-0" />
           <SignOutButton />
         </SidebarFooter>
-        <SidebarRail
-          aria-label="Afficher ou masquer le menu"
-          title="Afficher ou masquer le menu"
-        />
       </Sidebar>
 
       <SidebarInset className="min-w-0 bg-transparent">

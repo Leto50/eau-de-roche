@@ -111,6 +111,21 @@ export const listLinkedProductIds = query({
   },
 })
 
+export const listActiveLinkedProductIds = query({
+  args: {},
+  handler: async (ctx) => {
+    await requireUser(ctx)
+    const recipes = await ctx.db.query("recipes").collect()
+    return [
+      ...new Set(
+        recipes.flatMap((recipe) =>
+          recipe.active !== false && recipe.productId ? [recipe.productId] : []
+        )
+      ),
+    ]
+  },
+})
+
 export const listArchived = query({
   args: {},
   handler: async (ctx) => {

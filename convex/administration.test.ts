@@ -27,7 +27,7 @@ describe("administration", () => {
     expect(accounts).toHaveLength(1)
     expect(accounts[0]).toMatchObject({
       banned: false,
-      email: "admin@example.test",
+      identifier: "admin",
       name: "Administratrice test",
       role: "admin",
     })
@@ -70,7 +70,7 @@ describe("administration", () => {
     expect(firstPage.page[0]).toMatchObject({
       action: "product.updated",
       actor: {
-        email: "admin@example.test",
+        identifier: "admin",
         name: "Administratrice test",
       },
       createdAt: 200,

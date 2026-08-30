@@ -30,6 +30,19 @@ describe("accounts", () => {
     await insertTransaction(backend, now, 100, "Anoril Aliaria")
     await insertTransaction(backend, now, -25, "Gand Ulf")
     await insertTransaction(backend, now - 8 * 24 * 60 * 60 * 1_000, 40)
+    await backend.run(async (ctx) => {
+      for (const kind of ["production", "adjustment"] as const) {
+        await ctx.db.insert("transactions", {
+          actorName: "Alixard Veliane",
+          kind,
+          occurredAt: now,
+          productName: "Mouvement de stock",
+          quantity: 1,
+          source: "web",
+          total: 0,
+        })
+      }
+    })
 
     const account = await employee.query(api.accounts.overview, {})
 

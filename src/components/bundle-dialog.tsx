@@ -206,9 +206,10 @@ export function BundleDialog({
                     </FieldLabel>
                     <Input
                       aria-invalid={invalid}
+                      autoComplete="off"
                       id={`${fieldId}-name`}
                       maxLength={100}
-                      name={field.name}
+                      name="bundle-name"
                       onBlur={field.handleBlur}
                       onChange={(event) =>
                         field.handleChange(event.target.value)

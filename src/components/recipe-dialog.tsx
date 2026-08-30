@@ -313,9 +313,10 @@ export function RecipeDialog({
                       </FieldLabel>
                       <Input
                         aria-invalid={invalid}
+                        autoComplete="off"
                         id={`${fieldId}-name`}
                         maxLength={100}
-                        name={field.name}
+                        name="recipe-name"
                         onBlur={field.handleBlur}
                         onChange={(event) =>
                           field.handleChange(event.target.value)
@@ -426,9 +427,10 @@ export function RecipeDialog({
                       </FieldLabel>
                       <Input
                         aria-invalid={invalid}
+                        autoComplete="off"
                         id={`${fieldId}-name`}
                         maxLength={100}
-                        name={field.name}
+                        name="recipe-name"
                         onBlur={field.handleBlur}
                         onChange={(event) =>
                           field.handleChange(event.target.value)

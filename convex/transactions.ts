@@ -19,7 +19,7 @@ import { orderTransactionLabel, withOrderTotal } from "./lib/order"
 import { prepareProduction } from "./lib/production"
 import { normalizeName } from "./lib/text"
 import { buildTransactionSearchText } from "./lib/transactionSearch"
-import { stockOperationKind, transactionKind } from "./lib/validators"
+import { financialTransactionKind, stockOperationKind } from "./lib/validators"
 
 const MAX_TEXT_LENGTH = 500
 const MAX_SEARCH_LENGTH = 100
@@ -141,7 +141,7 @@ export const listPage = query({
   args: {
     characterId: v.optional(v.id("characters")),
     from: v.optional(v.number()),
-    kind: v.optional(transactionKind),
+    kind: v.optional(financialTransactionKind),
     paginationOpts: paginationOptsValidator,
     q: v.optional(v.string()),
     to: v.optional(v.number()),
@@ -188,6 +188,12 @@ export const listPage = query({
             }
             return filters
           })
+        searchQuery = searchQuery.filter((filter) =>
+          filter.and(
+            filter.neq(filter.field("kind"), "adjustment"),
+            filter.neq(filter.field("kind"), "production")
+          )
+        )
         if (from !== undefined) {
           searchQuery = searchQuery.filter((filter) =>
             filter.gte(filter.field("occurredAt"), from)
@@ -248,6 +254,14 @@ export const listPage = query({
                   )
               : ctx.db.query("transactions").withIndex("by_occurred_at")
       let filteredQuery = indexedQuery.order("desc")
+      if (!args.kind) {
+        filteredQuery = filteredQuery.filter((filter) =>
+          filter.and(
+            filter.neq(filter.field("kind"), "adjustment"),
+            filter.neq(filter.field("kind"), "production")
+          )
+        )
+      }
       if (args.characterId) {
         filteredQuery = filteredQuery.filter((filter) =>
           filter.eq(filter.field("actorCharacterId"), args.characterId)

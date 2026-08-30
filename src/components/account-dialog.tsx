@@ -29,6 +29,10 @@ import {
 } from "@/components/ui/select"
 import { authClient } from "@/lib/auth-client"
 import { accountFormSchema } from "@/lib/form-schemas"
+import {
+  internalAccountEmail,
+  normalizeAccountIdentifier,
+} from "../../shared/account-identifiers"
 
 type AccountRole = "admin" | "user"
 
@@ -47,23 +51,25 @@ export function AccountDialog({
 }: Readonly<AccountDialogProps>) {
   const form = useForm({
     defaultValues: {
-      email: "",
+      identifier: "",
       name: "",
       password: "",
       role: "user" as AccountRole,
     },
     onSubmit: async ({ value }) => {
       const normalizedName = value.name.trim()
+      const identifier = normalizeAccountIdentifier(value.identifier)
       try {
         const result = await authClient.admin.createUser({
-          email: value.email.trim().toLowerCase(),
+          data: { username: identifier },
+          email: internalAccountEmail(identifier),
           name: normalizedName,
           password: value.password,
           role: value.role,
         })
         if (result.error) {
           toast.error(
-            "Impossible de créer le compte. Vérifiez l’adresse e-mail et le mot de passe."
+            "Impossible de créer le compte. Vérifiez l’identifiant et le mot de passe."
           )
           return
         }
@@ -120,16 +126,16 @@ export function AccountDialog({
                 field.state.meta.isTouched && !field.state.meta.isValid
               return (
                 <Field data-invalid={invalid}>
-                  <FieldLabel htmlFor="account-name">Nom</FieldLabel>
+                  <FieldLabel htmlFor="account-name">Nom affiché</FieldLabel>
                   <Input
                     aria-invalid={invalid}
                     autoComplete="off"
                     id="account-name"
                     maxLength={100}
-                    name={field.name}
+                    name="rp-display-name"
                     onBlur={field.handleBlur}
                     onChange={(event) => field.handleChange(event.target.value)}
-                    placeholder="Nom et prénom"
+                    placeholder="Alixard"
                     required
                     value={field.state.value}
                   />
@@ -140,28 +146,33 @@ export function AccountDialog({
               )
             }}
           </form.Field>
-          <form.Field name="email">
+          <form.Field name="identifier">
             {(field) => {
               const invalid =
                 field.state.meta.isTouched && !field.state.meta.isValid
               return (
                 <Field data-invalid={invalid}>
-                  <FieldLabel htmlFor="account-email">
-                    Adresse e-mail
+                  <FieldLabel htmlFor="account-identifier">
+                    Identifiant de connexion
                   </FieldLabel>
                   <Input
                     aria-invalid={invalid}
-                    autoComplete="off"
-                    id="account-email"
-                    maxLength={254}
-                    name={field.name}
+                    autoCapitalize="none"
+                    autoComplete="username"
+                    id="account-identifier"
+                    maxLength={30}
+                    name="new-username"
                     onBlur={field.handleBlur}
                     onChange={(event) => field.handleChange(event.target.value)}
-                    placeholder="employe@exemple.fr"
+                    placeholder="alixard"
                     required
-                    type="email"
+                    spellCheck={false}
                     value={field.state.value}
                   />
+                  <FieldDescription>
+                    3 à 30 caractères : lettres sans accent, chiffres, points,
+                    tirets ou tirets bas.
+                  </FieldDescription>
                   {invalid ? (
                     <FieldError errors={field.state.meta.errors} />
                   ) : null}

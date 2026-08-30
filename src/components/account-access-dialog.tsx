@@ -43,8 +43,8 @@ export type AccountRole = "admin" | "user"
 
 export interface ManagedAccount {
   banned: boolean
-  email: string
   id: string
+  identifier: string
   name: string
   role: AccountRole
 }
@@ -196,7 +196,9 @@ export function AccountAccessDialog({
           <DialogTitle className="font-display text-2xl">
             {account.name}
           </DialogTitle>
-          <DialogDescription>{account.email}</DialogDescription>
+          <DialogDescription>
+            Identifiant · {account.identifier}
+          </DialogDescription>
         </DialogHeader>
 
         {isLastActiveAdmin ? (

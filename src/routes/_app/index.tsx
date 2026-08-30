@@ -89,16 +89,16 @@ function DashboardPage() {
   return (
     <div className="animate-in duration-300 fade-in slide-in-from-bottom-1 motion-reduce:animate-none">
       <PageHeader eyebrow="Registre du jour" title="La boutique aujourd’hui">
-        Enregistrez une activité, puis voyez immédiatement ce qui demande votre
-        attention.
+        Enregistrez une transaction ou une production, puis voyez immédiatement
+        ce qui demande votre attention.
       </PageHeader>
 
       <Card className="mt-6 border border-[#5b462b]/35 bg-[#f8edd5]/55 shadow-[0_10px_28px_rgba(70,48,25,0.06)] ring-0">
         <CardHeader className="border-b border-border/65">
           <CardTitle className="font-display text-lg font-[580] text-[#34291e]">
-            Nouvelle activité
+            Actions rapides
           </CardTitle>
-          <CardDescription>Que venez-vous de faire ?</CardDescription>
+          <CardDescription>Que voulez-vous enregistrer ?</CardDescription>
         </CardHeader>
         <CardContent className="grid gap-2 sm:grid-cols-2">
           <OperationDialog
@@ -272,9 +272,9 @@ function DashboardPage() {
               className="font-display text-xl font-[580] text-[#3b2f22]"
               id="recent-activity-title"
             >
-              Derniers mouvements
+              Dernières transactions
             </CardTitle>
-            <CardDescription>Les dernières entrées du registre</CardDescription>
+            <CardDescription>Les derniers flux financiers</CardDescription>
             <CardAction>
               <Button asChild size="sm" variant="ghost">
                 <Link to="/journal">
@@ -288,7 +288,7 @@ function DashboardPage() {
             <Table>
               <TableHeader>
                 <TableRow className="bg-[#684f2d]/8 hover:bg-[#684f2d]/8">
-                  <TableHead>Activité</TableHead>
+                  <TableHead>Transaction</TableHead>
                   <TableHead className="hidden sm:table-cell">
                     Personnage
                   </TableHead>

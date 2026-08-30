@@ -180,9 +180,10 @@ export function ContactManagerDialog() {
                                       <Input
                                         aria-invalid={invalid}
                                         aria-label={`Nouveau nom de ${contact.name}`}
+                                        autoComplete="off"
                                         autoFocus
                                         maxLength={100}
-                                        name={field.name}
+                                        name={`contact-name-${contact._id}`}
                                         onBlur={field.handleBlur}
                                         onChange={(event) =>
                                           field.handleChange(event.target.value)
