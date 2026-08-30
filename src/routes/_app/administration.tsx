@@ -224,7 +224,7 @@ function AccountsPanel({
                   {account.name}
                 </CardTitle>
                 <CardDescription className="break-all">
-                  {account.email}
+                  Identifiant · {account.identifier}
                 </CardDescription>
                 <CardAction>
                   <AccountStatusBadge banned={account.banned} />
@@ -278,7 +278,7 @@ function AccountsPanel({
                   <TableCell className="max-w-72 pl-4">
                     <p className="truncate font-medium">{account.name}</p>
                     <p className="truncate text-[0.68rem] text-muted-foreground">
-                      {account.email}
+                      {account.identifier}
                     </p>
                   </TableCell>
                   <TableCell>{accountRoleLabel(account.role)}</TableCell>
@@ -316,7 +316,7 @@ function auditEntityLabel(
     entry.entityType === "account"
       ? accountsById.get(entry.entityId)
       : undefined
-  if (account) return `${account.name} · ${account.email}`
+  if (account) return `${account.name} · ${account.identifier}`
   const detail = entry.detail?.trim()
   if (!detail) return entry.entityId
   return detail
@@ -394,7 +394,7 @@ function AuditPanel({
                   <dt className="text-muted-foreground">Par</dt>
                   <dd className="mt-0.5 font-medium">
                     {entry.actor?.name ??
-                      entry.actor?.email ??
+                      entry.actor?.identifier ??
                       "Compte inconnu"}
                   </dd>
                 </div>
@@ -430,9 +430,9 @@ function AuditPanel({
                   <p className="font-medium">
                     {entry.actor?.name ?? "Compte inconnu"}
                   </p>
-                  {entry.actor?.email ? (
+                  {entry.actor?.identifier ? (
                     <p className="text-[0.68rem] text-muted-foreground">
-                      {entry.actor.email}
+                      {entry.actor.identifier}
                     </p>
                   ) : null}
                 </TableCell>

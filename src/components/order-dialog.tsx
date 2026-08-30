@@ -438,10 +438,11 @@ export function OrderDialog({
                     </FieldLabel>
                     <Input
                       aria-invalid={invalid}
+                      autoComplete="off"
                       id={`${fieldId}-contact`}
                       list={`${fieldId}-contact-suggestions`}
                       maxLength={100}
-                      name={field.name}
+                      name="order-contact-name"
                       onBlur={field.handleBlur}
                       onChange={(event) =>
                         updateContactName(event.target.value)

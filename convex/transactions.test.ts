@@ -794,6 +794,45 @@ describe("transactions.listPage et getDetails", () => {
     expect(secondPage.isDone).toBe(true)
   })
 
+  it("réserve le journal d’activité aux transactions financières", async () => {
+    const backend = createTestBackend()
+    const member = await asAuthenticatedUser(backend)
+    await backend.run(async (ctx) => {
+      for (const [kind, productName, total] of [
+        ["adjustment", "Correction de stock", 0],
+        ["production", "Potion fabriquée", 0],
+        ["sale", "Potion vendue", 12],
+      ] as const) {
+        await ctx.db.insert("transactions", {
+          actorName: "Alixard Veliane",
+          kind,
+          occurredAt: Date.now(),
+          productName,
+          quantity: 1,
+          searchText: buildTransactionSearchText({
+            actorName: "Alixard Veliane",
+            productName,
+          }),
+          source: "web",
+          total,
+        })
+      }
+    })
+
+    const page = await member.query(api.transactions.listPage, {
+      paginationOpts: { cursor: null, numItems: 10 },
+    })
+    const searchPage = await member.query(api.transactions.listPage, {
+      paginationOpts: { cursor: null, numItems: 10 },
+      q: "potion",
+    })
+
+    expect(page.page.map((transaction) => transaction.kind)).toEqual(["sale"])
+    expect(searchPage.page.map((transaction) => transaction.kind)).toEqual([
+      "sale",
+    ])
+  })
+
   it("filtre le journal côté serveur par texte, période, type et personnage", async () => {
     const backend = createTestBackend()
     const member = await asAuthenticatedUser(backend)

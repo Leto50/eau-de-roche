@@ -23,10 +23,16 @@ export const overview = query({
         .query("transactions")
         .withIndex("by_occurred_at")
         .order("desc")
-        .take(24),
+        .filter((filter) =>
+          filter.and(
+            filter.neq(filter.field("kind"), "adjustment"),
+            filter.neq(filter.field("kind"), "production")
+          )
+        )
+        .take(8),
       ctx.db.query("orders").collect(),
     ])
-    const recentTransactions = recentTransactionCandidates.slice(0, 8)
+    const recentTransactions = recentTransactionCandidates
     const productsById = new Map(
       products.map((product) => [product._id, product])
     )
@@ -67,6 +73,12 @@ export const overview = query({
       .query("transactions")
       .withIndex("by_occurred_at", (index) =>
         index.gte("occurredAt", startOfUtcWeek(now))
+      )
+      .filter((filter) =>
+        filter.and(
+          filter.neq(filter.field("kind"), "adjustment"),
+          filter.neq(filter.field("kind"), "production")
+        )
       )
       .collect()
     const weeklyBalance = weeklyTransactions.reduce(

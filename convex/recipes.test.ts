@@ -71,9 +71,14 @@ describe("recipes", () => {
     )
 
     const result = await member.query(api.recipes.listCraftableProductIds, {})
+    const activeLinks = await member.query(
+      api.recipes.listActiveLinkedProductIds,
+      {}
+    )
 
     expect(result).toEqual([activeProductId])
     expect(result).not.toContain(archivedProductId)
+    expect(activeLinks).toEqual([activeProductId])
   })
 
   it("crée, modifie et archive une recette avec ses ingrédients", async () => {

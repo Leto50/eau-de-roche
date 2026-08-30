@@ -43,6 +43,7 @@ export async function asAuthenticatedUser(
           name: role === "admin" ? "Administratrice test" : "Employé test",
           role,
           updatedAt: now,
+          username: role,
         },
         model: "user",
       },

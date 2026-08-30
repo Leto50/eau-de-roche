@@ -9,7 +9,6 @@ import {
   ChevronLeft,
   ChevronRight,
   Ellipsis,
-  Hammer,
   Pencil,
   Plus,
   Search,
@@ -94,14 +93,24 @@ import { api } from "../../../convex/_generated/api"
 import { type Doc, type Id } from "../../../convex/_generated/dataModel"
 
 const PAGE_SIZE = 30
-const transactionKinds = Object.keys(operationLabels) as Array<
-  Doc<"transactions">["kind"]
+type FinancialTransactionKind = Exclude<
+  Doc<"transactions">["kind"],
+  "adjustment" | "production"
 >
+
+const transactionKinds: readonly FinancialTransactionKind[] = [
+  "bundle",
+  "exchange",
+  "order",
+  "purchase",
+  "sale",
+  "service",
+]
 
 interface JournalRouteSearch {
   character?: string
   from?: string
-  kind?: Doc<"transactions">["kind"]
+  kind?: FinancialTransactionKind
   q?: string
   to?: string
 }
@@ -127,10 +136,8 @@ type EditorRequest =
       type: "order"
     }
 
-function isTransactionKind(
-  value: string
-): value is Doc<"transactions">["kind"] {
-  return transactionKinds.includes(value as Doc<"transactions">["kind"])
+function isTransactionKind(value: string): value is FinancialTransactionKind {
+  return transactionKinds.includes(value as FinancialTransactionKind)
 }
 
 function isDateInput(value: string): boolean {
@@ -312,32 +319,21 @@ function JournalPage() {
     <div className="animate-in duration-300 fade-in slide-in-from-bottom-1 motion-reduce:animate-none">
       <PageHeader
         action={
-          <div className="flex flex-wrap gap-2">
-            <Button
-              onClick={() =>
-                setEditor({ initialKind: "exchange", type: "operation" })
-              }
-              size="lg"
-            >
-              <Plus aria-hidden="true" />
-              Nouvel échange
-            </Button>
-            <Button
-              onClick={() =>
-                setEditor({ initialKind: "production", type: "operation" })
-              }
-              size="lg"
-              variant="outline"
-            >
-              <Hammer aria-hidden="true" />
-              Production
-            </Button>
-          </div>
+          <Button
+            onClick={() =>
+              setEditor({ initialKind: "exchange", type: "operation" })
+            }
+            size="lg"
+          >
+            <Plus aria-hidden="true" />
+            Nouvelle transaction
+          </Button>
         }
-        eyebrow="Journal de boutique"
-        title="Activité"
+        eyebrow="Registre financier"
+        title="Transactions"
       >
-        Retrouvez les ventes, achats, services et productions déjà enregistrés.
+        Retrouvez les ventes, achats, services, commandes et échanges déjà
+        enregistrés.
       </PageHeader>
 
       <section
@@ -450,7 +446,7 @@ function JournalPage() {
             <CalendarRange aria-hidden="true" className="size-3.5" />
             {hasFilters
               ? `${transactions.length} résultat${transactions.length === 1 ? "" : "s"} sur cette page`
-              : "Activité la plus récente en premier"}
+              : "Transactions les plus récentes en premier"}
           </p>
           {hasFilters ? (
             <Button
@@ -504,10 +500,7 @@ function JournalPage() {
                                 type: "order",
                               }
                             : {
-                                initialKind:
-                                  selectedTransaction.kind === "production"
-                                    ? "production"
-                                    : "exchange",
+                                initialKind: "exchange",
                                 transactionId: selectedTransaction._id,
                                 type: "operation",
                               }
@@ -583,7 +576,6 @@ function JournalPage() {
 function isEditableTransaction(transaction: Transaction): boolean {
   return (
     Boolean(transaction.orderId) ||
-    transaction.kind === "production" ||
     transaction.kind === "exchange" ||
     transaction.kind === "purchase" ||
     transaction.kind === "sale" ||
@@ -999,7 +991,7 @@ function EditorLoadingDialog({
       <DialogContent className="rounded-[0.2rem] border-[#6a5436] bg-[#eee1c7] ring-0 sm:max-w-xl">
         <DialogHeader>
           <p className="text-[0.66rem] font-bold tracking-[0.2em] text-primary uppercase">
-            Activité de la boutique
+            Registre financier
           </p>
           <DialogTitle className="font-display text-2xl">
             {failed ? "Modification indisponible" : "Préparation du registre"}

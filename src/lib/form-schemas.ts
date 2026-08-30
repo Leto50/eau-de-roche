@@ -3,6 +3,11 @@ import { z } from "zod"
 import { parseDateValue } from "./date-values"
 import { priceDraftToValue } from "./prices"
 import { isRecipeFamily, recipeFamilies } from "./recipe-families"
+import {
+  ACCOUNT_IDENTIFIER_MAX_LENGTH,
+  ACCOUNT_IDENTIFIER_MIN_LENGTH,
+  isAccountIdentifier,
+} from "../../shared/account-identifiers"
 
 export const MAX_AMOUNT = 1_000_000_000
 export const MAX_QUANTITY = 1_000_000
@@ -115,19 +120,40 @@ export const priceDraftSchema = z
     }
   })
 
-const emailFormSchema = z
+const accountIdentifierSchema = z
   .string()
   .trim()
-  .min(1, "L’adresse e-mail est obligatoire.")
-  .max(254, "L’adresse e-mail est trop longue.")
-  .refine(
-    (value) =>
-      !value || value.length > 254 || z.email().safeParse(value).success,
-    "Saisissez une adresse e-mail valide."
+  .min(
+    ACCOUNT_IDENTIFIER_MIN_LENGTH,
+    `L’identifiant doit contenir au moins ${ACCOUNT_IDENTIFIER_MIN_LENGTH} caractères.`
   )
+  .max(
+    ACCOUNT_IDENTIFIER_MAX_LENGTH,
+    `L’identifiant ne peut pas dépasser ${ACCOUNT_IDENTIFIER_MAX_LENGTH} caractères.`
+  )
+  .refine((value) => {
+    const length = value.trim().length
+    return (
+      length < ACCOUNT_IDENTIFIER_MIN_LENGTH ||
+      length > ACCOUNT_IDENTIFIER_MAX_LENGTH ||
+      isAccountIdentifier(value)
+    )
+  }, "Utilisez uniquement des lettres sans accent, chiffres, points, tirets ou tirets bas.")
 
 export const loginFormSchema = z.object({
-  email: emailFormSchema,
+  identifier: z
+    .string()
+    .trim()
+    .min(1, "L’identifiant est obligatoire.")
+    .max(254, "L’identifiant est trop long.")
+    .refine(
+      (value) =>
+        !value ||
+        value.length > 254 ||
+        isAccountIdentifier(value) ||
+        z.email().safeParse(value).success,
+      "Saisissez un identifiant valide."
+    ),
   password: z
     .string()
     .min(1, "Le mot de passe est obligatoire.")
@@ -135,8 +161,8 @@ export const loginFormSchema = z.object({
 })
 
 export const accountFormSchema = z.object({
-  email: emailFormSchema,
-  name: requiredText("Le nom", 100),
+  identifier: accountIdentifierSchema,
+  name: requiredText("Le nom affiché", 100),
   password: z
     .string()
     .min(12, "Le mot de passe doit contenir au moins 12 caractères.")
@@ -173,12 +199,10 @@ export const accountSettingsFormSchema = z.object({
 
 export const productFormSchema = z
   .object({
-    adjustmentReason: optionalText("Le motif d’ajustement", 500),
     category: z.enum(["ingredient", "potion", "service"]),
     craftable: z.boolean(),
     minimumStock: z.string(),
     name: requiredText("Le nom de la référence", 100),
-    originalStock: z.number(),
     purchasePrice: priceDraftSchema,
     salePrice: priceDraftSchema,
     targetStock: z.string(),
@@ -209,19 +233,6 @@ export const productFormSchema = z
           path: ["targetStock"],
         })
       }
-    }
-    const effectiveTargetStock =
-      value.category === "service" ? 0 : Number(value.targetStock)
-    if (
-      Number.isFinite(effectiveTargetStock) &&
-      effectiveTargetStock !== value.originalStock &&
-      !value.adjustmentReason.trim()
-    ) {
-      context.addIssue({
-        code: "custom",
-        message: "Indiquez pourquoi le stock est corrigé.",
-        path: ["adjustmentReason"],
-      })
     }
   })
 

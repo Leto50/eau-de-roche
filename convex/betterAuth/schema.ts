@@ -25,10 +25,13 @@ export const tables = {
     banned: v.optional(v.union(v.null(), v.boolean())),
     banReason: v.optional(v.union(v.null(), v.string())),
     banExpires: v.optional(v.union(v.null(), v.number())),
+    username: v.optional(v.union(v.null(), v.string())),
+    displayUsername: v.optional(v.union(v.null(), v.string())),
   })
     .index("email_name", ["email", "name"])
     .index("name", ["name"])
-    .index("userId", ["userId"]),
+    .index("userId", ["userId"])
+    .index("username", ["username"]),
   session: defineTable({
     expiresAt: v.number(),
     token: v.string(),

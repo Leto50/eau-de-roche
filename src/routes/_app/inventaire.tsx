@@ -1,7 +1,13 @@
 import { convexQuery } from "@convex-dev/react-query"
 import { useSuspenseQuery } from "@tanstack/react-query"
-import { createFileRoute } from "@tanstack/react-router"
-import { CircleAlert, Pencil, Search, SlidersHorizontal } from "lucide-react"
+import { createFileRoute, Link } from "@tanstack/react-router"
+import {
+  BookOpenText,
+  CircleAlert,
+  Pencil,
+  Search,
+  SlidersHorizontal,
+} from "lucide-react"
 import { useState } from "react"
 
 import { PageError } from "@/components/page-error"
@@ -134,6 +140,9 @@ export const Route = createFileRoute("/_app/inventaire")({
       context.queryClient.ensureQueryData(
         convexQuery(api.recipes.listLinkedProductIds, {})
       ),
+      context.queryClient.ensureQueryData(
+        convexQuery(api.recipes.listActiveLinkedProductIds, {})
+      ),
     ])
   },
   pendingComponent: PageSkeleton,
@@ -151,6 +160,9 @@ function InventoryPage() {
   const { data: linkedProductIds } = useSuspenseQuery(
     convexQuery(api.recipes.listLinkedProductIds, {})
   )
+  const { data: activeLinkedProductIds } = useSuspenseQuery(
+    convexQuery(api.recipes.listActiveLinkedProductIds, {})
+  )
   const isAdmin =
     isHydrated && (session?.user.role?.split(",").includes("admin") ?? false)
   const category = filters.category ?? "all"
@@ -165,6 +177,7 @@ function InventoryPage() {
   const recipeProduct = products.find(
     (product) => product._id === recipeProductId
   )
+  const activeRecipeProducts = new Set(activeLinkedProductIds)
   const linkedProducts = new Set(linkedProductIds)
   const normalizedSearch = normalizeName(search)
   const filteredProducts = products.filter(
@@ -379,7 +392,8 @@ function InventoryPage() {
               <TableBody className="max-md:grid max-md:gap-3">
                 {visibleProducts.map((product) => (
                   <InventoryRow
-                    hasRecipe={linkedProducts.has(product._id)}
+                    hasAnyRecipe={linkedProducts.has(product._id)}
+                    hasRecipe={activeRecipeProducts.has(product._id)}
                     isAdmin={isAdmin}
                     key={product._id}
                     onWriteRecipe={setRecipeProductId}
@@ -450,11 +464,13 @@ function productPrice(product: Doc<"products">): string {
 }
 
 function InventoryRow({
+  hasAnyRecipe,
   hasRecipe,
   isAdmin,
   onWriteRecipe,
   product,
 }: Readonly<{
+  hasAnyRecipe: boolean
   hasRecipe: boolean
   isAdmin: boolean
   onWriteRecipe: (productId: Id<"products">) => void
@@ -463,12 +479,30 @@ function InventoryRow({
   const canWriteRecipe =
     canonicalProductCategory(product.category) === "potion" &&
     product.craftable !== false &&
-    !hasRecipe
+    !hasAnyRecipe
 
   return (
     <TableRow className="border-[#5b462b]/20 hover:bg-[#fffdeb]/40 max-md:relative max-md:grid max-md:grid-cols-3 max-md:gap-x-3 max-md:gap-y-1 max-md:border max-md:border-[#5b462b]/35 max-md:bg-[#fff8e7]/30 max-md:p-4 max-md:shadow-[2px_3px_0_rgba(84,63,37,0.05)]">
-      <TableCell className="max-w-80 truncate pl-4 font-semibold max-md:col-span-2 max-md:col-start-1 max-md:row-start-1 max-md:max-w-none max-md:p-0 max-md:font-display max-md:text-base">
-        {product.name}
+      <TableCell className="max-w-80 pl-4 font-semibold max-md:col-span-2 max-md:col-start-1 max-md:row-start-1 max-md:max-w-none max-md:p-0 max-md:font-display max-md:text-base">
+        <div className="flex min-w-0 items-center max-md:flex-wrap">
+          <span className="truncate">{product.name}</span>
+          {hasRecipe ? (
+            <Button
+              asChild
+              className="ml-2 h-auto shrink-0 px-1 text-xs font-normal max-md:ml-1"
+              size="sm"
+              variant="link"
+            >
+              <Link
+                search={{ q: product.name, view: "recipes" }}
+                to="/recettes"
+              >
+                <BookOpenText aria-hidden="true" />
+                Voir la recette
+              </Link>
+            </Button>
+          ) : null}
+        </div>
       </TableCell>
       <TableCell className="text-muted-foreground max-md:col-span-2 max-md:col-start-1 max-md:row-start-2 max-md:flex max-md:items-center max-md:gap-2 max-md:p-0">
         <span className="max-md:hidden">

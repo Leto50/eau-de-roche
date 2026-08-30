@@ -109,7 +109,6 @@ describe("products.save", () => {
 
     await admin.mutation(api.products.save, {
       active: true,
-      adjustmentReason: "Deux fioles retrouvées en réserve",
       category: "potion",
       minimumStock: 4,
       name: "Potion de vigueur supérieure",
@@ -144,6 +143,7 @@ describe("products.save", () => {
     expect(state.recipes[0]?.name).toBe("Potion de vigueur supérieure")
     expect(state.transactions).toHaveLength(1)
     expect(state.transactions[0]).toMatchObject({
+      comment: "Correction de stock (8 → 10)",
       kind: "adjustment",
       quantity: 2,
       total: 0,
@@ -222,7 +222,7 @@ describe("products.save", () => {
     expect(state.bundleItems[0]?.productName).toBe("Fleur des brumes")
   })
 
-  it("refuse une correction de stock sans motif sans écriture partielle", async () => {
+  it("corrige le stock sans motif et conserve une trace automatique", async () => {
     const backend = createTestBackend()
     const admin = await asAuthenticatedUser(backend, "admin")
     const productId = await backend.run((ctx) =>
@@ -237,27 +237,32 @@ describe("products.save", () => {
       })
     )
 
-    await expect(
-      admin.mutation(api.products.save, {
-        active: true,
-        category: "ingredient",
-        minimumStock: 1,
-        name: "Fleur de montagne",
-        productId,
-        purchasePrice: null,
-        salePrice: null,
-        targetStock: 4,
-      })
-    ).rejects.toThrowError("motif")
+    await admin.mutation(api.products.save, {
+      active: true,
+      category: "ingredient",
+      minimumStock: 1,
+      name: "Fleur de montagne",
+      productId,
+      purchasePrice: null,
+      salePrice: null,
+      targetStock: 4,
+    })
 
     const state = await backend.run(async (ctx) => ({
       audits: await ctx.db.query("auditLogs").collect(),
       product: await ctx.db.get(productId),
       transactions: await ctx.db.query("transactions").collect(),
     }))
-    expect(state.product?.currentStock).toBe(5)
-    expect(state.transactions).toHaveLength(0)
-    expect(state.audits).toHaveLength(0)
+    expect(state.product?.currentStock).toBe(4)
+    expect(state.transactions).toHaveLength(1)
+    expect(state.transactions[0]).toMatchObject({
+      comment: "Correction de stock (5 → 4)",
+      kind: "adjustment",
+    })
+    expect(state.audits.map((audit) => audit.action)).toEqual([
+      "product.stock_adjusted",
+      "product.updated",
+    ])
   })
 
   it("refuse de rendre non fabricable une potion qui possède une recette active", async () => {

@@ -96,7 +96,6 @@ export const setActive = mutation({
 export const save = mutation({
   args: {
     active: v.boolean(),
-    adjustmentReason: v.optional(v.string()),
     category: productCategory,
     craftable: v.optional(v.boolean()),
     minimumStock: v.number(),
@@ -168,19 +167,9 @@ export const save = mutation({
 
     const previousStock = existing?.currentStock ?? 0
     const stockDelta = targetStock - previousStock
-    const adjustmentReason = args.adjustmentReason?.trim()
-    if (adjustmentReason && adjustmentReason.length > 500) {
-      throw new ConvexError({
-        code: "INVALID_INPUT",
-        message: "Le motif d’ajustement est trop long.",
-      })
-    }
-    if (existing && stockDelta !== 0 && !adjustmentReason) {
-      throw new ConvexError({
-        code: "INVALID_INPUT",
-        message: "Indiquez le motif de la correction de stock.",
-      })
-    }
+    const adjustmentLabel = existing
+      ? `Correction de stock (${previousStock} → ${targetStock})`
+      : "Stock initial"
 
     const details = {
       active: args.active,
@@ -237,7 +226,7 @@ export const save = mutation({
       const transactionId = await ctx.db.insert("transactions", {
         actorName: user.name,
         actorUserId: String(user._id),
-        comment: adjustmentReason ?? "Stock initial",
+        comment: adjustmentLabel,
         kind: "adjustment",
         occurredAt,
         productId,
@@ -245,7 +234,7 @@ export const save = mutation({
         quantity: Math.abs(stockDelta),
         searchText: buildTransactionSearchText({
           actorName: user.name,
-          comment: adjustmentReason ?? "Stock initial",
+          comment: adjustmentLabel,
           productName: name,
         }),
         source: "web",
@@ -264,7 +253,7 @@ export const save = mutation({
         action: "product.stock_adjusted",
         actorUserId: String(user._id),
         createdAt: occurredAt,
-        detail: adjustmentReason ?? "Stock initial",
+        detail: adjustmentLabel,
         entityId: productId,
         entityType: "product",
       })

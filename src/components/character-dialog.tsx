@@ -136,9 +136,10 @@ export function CharacterDialog({
                   </FieldLabel>
                   <Input
                     aria-invalid={invalid}
+                    autoComplete="off"
                     id={`${fieldId}-name`}
                     maxLength={100}
-                    name={field.name}
+                    name="character-name"
                     onBlur={field.handleBlur}
                     onChange={(event) => field.handleChange(event.target.value)}
                     placeholder="Nom utilisé en jeu"

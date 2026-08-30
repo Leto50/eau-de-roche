@@ -34,12 +34,7 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
-import {
-  Field,
-  FieldDescription,
-  FieldError,
-  FieldLabel,
-} from "@/components/ui/field"
+import { Field, FieldError, FieldLabel } from "@/components/ui/field"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Spinner } from "@/components/ui/spinner"
 import {
@@ -49,7 +44,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
-import { Textarea } from "@/components/ui/textarea"
 import { api } from "../../convex/_generated/api"
 import { type Doc } from "../../convex/_generated/dataModel"
 import { getUserFacingErrorMessage } from "@/lib/errors"
@@ -85,14 +79,12 @@ export function ProductDialog({
   const submitAction = useRef<"save" | "write-recipe">("save")
 
   const productValues = () => ({
-    adjustmentReason: "",
     category: product
       ? canonicalProductCategory(product.category)
       : ("potion" as ProductCategory),
     craftable: product?.craftable !== false,
     minimumStock: product?.minimumStock.toString() ?? "0",
     name: product?.name ?? "",
-    originalStock: product?.currentStock ?? 0,
     purchasePrice: priceDraftFromValue(product?.purchasePrice),
     salePrice: priceDraftFromValue(product?.salePrice),
     targetStock: product?.currentStock.toString() ?? "0",
@@ -112,8 +104,6 @@ export function ProductDialog({
   const formValues = useStore(form.store, (state) => state.values)
   const tracksStock = formValues.category !== "service"
   const effectiveTargetStock = tracksStock ? Number(formValues.targetStock) : 0
-  const stockChanged =
-    product !== undefined && effectiveTargetStock !== product.currentStock
 
   function handleOpenChange(nextOpen: boolean) {
     if (nextOpen && !open) form.reset(productValues())
@@ -128,9 +118,6 @@ export function ProductDialog({
     try {
       const productId = await saveProduct({
         active: true,
-        ...(value.adjustmentReason.trim()
-          ? { adjustmentReason: value.adjustmentReason.trim() }
-          : {}),
         category: value.category,
         ...(value.category === "potion" ? { craftable: value.craftable } : {}),
         minimumStock: submittedMinimum,
@@ -211,9 +198,10 @@ export function ProductDialog({
                   <FieldLabel htmlFor={`${fieldId}-name`}>Nom</FieldLabel>
                   <Input
                     aria-invalid={invalid}
+                    autoComplete="off"
                     id={`${fieldId}-name`}
                     maxLength={100}
-                    name={field.name}
+                    name="product-name"
                     onBlur={field.handleBlur}
                     onChange={(event) => field.handleChange(event.target.value)}
                     placeholder="Potion de vigueur"
@@ -343,98 +331,32 @@ export function ProductDialog({
             </form.Field>
           </div>
 
-          {tracksStock || stockChanged ? (
+          {tracksStock ? (
             <div className="grid gap-4 border-y border-border/70 py-4 sm:grid-cols-2">
-              {tracksStock ? (
-                <>
-                  <form.Field name="targetStock">
-                    {(field) => {
-                      const invalid =
-                        field.state.meta.isTouched && !field.state.meta.isValid
-                      return (
-                        <Field data-invalid={invalid}>
-                          <FieldLabel htmlFor={`${fieldId}-stock`}>
-                            Stock actuel
-                          </FieldLabel>
-                          <Input
-                            aria-invalid={invalid}
-                            id={`${fieldId}-stock`}
-                            min="0"
-                            name={field.name}
-                            onBlur={field.handleBlur}
-                            onChange={(event) =>
-                              field.handleChange(event.target.value)
-                            }
-                            required
-                            step="1"
-                            type="number"
-                            value={field.state.value}
-                          />
-                          {invalid ? (
-                            <FieldError errors={field.state.meta.errors} />
-                          ) : null}
-                        </Field>
-                      )
-                    }}
-                  </form.Field>
-                  <form.Field name="minimumStock">
-                    {(field) => {
-                      const invalid =
-                        field.state.meta.isTouched && !field.state.meta.isValid
-                      return (
-                        <Field data-invalid={invalid}>
-                          <FieldLabel htmlFor={`${fieldId}-minimum-stock`}>
-                            Seuil d’alerte
-                          </FieldLabel>
-                          <Input
-                            aria-invalid={invalid}
-                            id={`${fieldId}-minimum-stock`}
-                            min="0"
-                            name={field.name}
-                            onBlur={field.handleBlur}
-                            onChange={(event) =>
-                              field.handleChange(event.target.value)
-                            }
-                            required
-                            step="1"
-                            type="number"
-                            value={field.state.value}
-                          />
-                          {invalid ? (
-                            <FieldError errors={field.state.meta.errors} />
-                          ) : null}
-                        </Field>
-                      )
-                    }}
-                  </form.Field>
-                </>
-              ) : null}
-              {stockChanged ? (
-                <form.Field name="adjustmentReason">
+              <>
+                <form.Field name="targetStock">
                   {(field) => {
                     const invalid =
                       field.state.meta.isTouched && !field.state.meta.isValid
                     return (
-                      <Field className="sm:col-span-2" data-invalid={invalid}>
-                        <FieldLabel htmlFor={`${fieldId}-reason`}>
-                          Motif de la correction de stock
+                      <Field data-invalid={invalid}>
+                        <FieldLabel htmlFor={`${fieldId}-stock`}>
+                          Stock actuel
                         </FieldLabel>
-                        <Textarea
+                        <Input
                           aria-invalid={invalid}
-                          id={`${fieldId}-reason`}
-                          maxLength={500}
+                          id={`${fieldId}-stock`}
+                          min="0"
                           name={field.name}
                           onBlur={field.handleBlur}
                           onChange={(event) =>
                             field.handleChange(event.target.value)
                           }
-                          placeholder="Inventaire physique, perte, retour…"
                           required
+                          step="1"
+                          type="number"
                           value={field.state.value}
                         />
-                        <FieldDescription>
-                          La correction apparaîtra dans le journal d’activité.
-                        </FieldDescription>
                         {invalid ? (
                           <FieldError errors={field.state.meta.errors} />
                         ) : null}
@@ -442,7 +364,37 @@ export function ProductDialog({
                     )
                   }}
                 </form.Field>
-              ) : null}
+                <form.Field name="minimumStock">
+                  {(field) => {
+                    const invalid =
+                      field.state.meta.isTouched && !field.state.meta.isValid
+                    return (
+                      <Field data-invalid={invalid}>
+                        <FieldLabel htmlFor={`${fieldId}-minimum-stock`}>
+                          Seuil d’alerte
+                        </FieldLabel>
+                        <Input
+                          aria-invalid={invalid}
+                          id={`${fieldId}-minimum-stock`}
+                          min="0"
+                          name={field.name}
+                          onBlur={field.handleBlur}
+                          onChange={(event) =>
+                            field.handleChange(event.target.value)
+                          }
+                          required
+                          step="1"
+                          type="number"
+                          value={field.state.value}
+                        />
+                        {invalid ? (
+                          <FieldError errors={field.state.meta.errors} />
+                        ) : null}
+                      </Field>
+                    )
+                  }}
+                </form.Field>
+              </>
             </div>
           ) : null}
 

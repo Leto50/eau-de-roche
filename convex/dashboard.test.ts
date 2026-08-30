@@ -179,6 +179,36 @@ describe("dashboard.overview", () => {
     expect(overview.weeklyBalance).toBe(25)
   })
 
+  it("écarte productions et ajustements des repères financiers", async () => {
+    const backend = createTestBackend()
+    const member = await asAuthenticatedMember(backend)
+
+    await backend.run(async (ctx) => {
+      for (const [kind, productName, total] of [
+        ["production", "Potion produite", 0],
+        ["adjustment", "Stock corrigé", 0],
+        ["sale", "Potion vendue", 25],
+      ] as const) {
+        await ctx.db.insert("transactions", {
+          actorName: "Comptable test",
+          kind,
+          occurredAt: Date.now(),
+          productName,
+          quantity: 1,
+          source: "web",
+          total,
+        })
+      }
+    })
+
+    const overview = await member.query(api.dashboard.overview, {})
+
+    expect(overview.weeklyTransactionCount).toBe(1)
+    expect(
+      overview.recentTransactions.map((transaction) => transaction.kind)
+    ).toEqual(["sale"])
+  })
+
   it("sépare le total des stocks faibles de l’aperçu et compte le travail restant", async () => {
     vi.useFakeTimers()
     vi.setSystemTime(new Date("2026-08-26T12:00:00.000Z"))

@@ -35,7 +35,7 @@ Configurer les secrets sur le déploiement Convex sélectionné :
 ```bash
 pnpm convex env set SITE_URL http://localhost:3000
 pnpm convex env set BETTER_AUTH_SECRET
-pnpm convex env set INITIAL_ADMIN_EMAIL "administrateur@exemple.fr"
+pnpm convex env set INITIAL_ADMIN_IDENTIFIER "administrateur"
 pnpm convex env set INITIAL_ADMIN_PASSWORD
 pnpm convex env set SEED_SECRET
 ```
@@ -52,9 +52,9 @@ pnpm convex env remove INITIAL_ADMIN_PASSWORD
 pnpm dev:web
 ```
 
-La commande `bootstrapAdmin` attribue le rôle `admin` à l’adresse définie dans
-`INITIAL_ADMIN_EMAIL`. Si le compte existe déjà, il est promu et conserve son
-mot de passe actuel. Sinon, il est créé avec le mot de passe lu depuis
+La commande `bootstrapAdmin` attribue le rôle `admin` à l’identifiant défini
+dans `INITIAL_ADMIN_IDENTIFIER`. Si le compte existe déjà, il est promu et
+conserve son mot de passe actuel. Sinon, il est créé avec le mot de passe lu depuis
 `INITIAL_ADMIN_PASSWORD`. C’est une fonction Convex interne : elle est
 accessible au CLI du déploiement, mais pas au navigateur. Supprimer
 immédiatement `INITIAL_ADMIN_PASSWORD` après son exécution. Ouvrir ensuite
@@ -122,7 +122,7 @@ capteurs inutiles.
 ```bash
 pnpm convex env set --prod SITE_URL "https://votre-site.netlify.app"
 pnpm convex env set --prod BETTER_AUTH_SECRET
-pnpm convex env set --prod INITIAL_ADMIN_EMAIL "administrateur@exemple.fr"
+pnpm convex env set --prod INITIAL_ADMIN_IDENTIFIER "administrateur"
 pnpm convex env set --prod INITIAL_ADMIN_PASSWORD
 pnpm convex env set --prod SEED_SECRET
 ```

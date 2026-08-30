@@ -87,12 +87,16 @@ export const overview = query({
       ctx.db.query("transactions").collect(),
     ])
     const settings = storedSettings ?? DEFAULT_SETTINGS
+    const financialTransactions = transactions.filter(
+      (transaction) =>
+        transaction.kind !== "adjustment" && transaction.kind !== "production"
+    )
     const currentWeekStartsAt = startOfUtcWeek(Date.now())
     const weeks = Array.from({ length: WEEK_COUNT }, (_, index) => {
       const startsAt = currentWeekStartsAt - index * WEEK_IN_MILLISECONDS
       const nextWeekStartsAt = startsAt + WEEK_IN_MILLISECONDS
       const endsAt = startsAt + 6.5 * DAY_IN_MILLISECONDS
-      const weeklyTransactions = transactions.filter(
+      const weeklyTransactions = financialTransactions.filter(
         (transaction) =>
           transaction.occurredAt >= startsAt &&
           transaction.occurredAt < nextWeekStartsAt
@@ -122,7 +126,7 @@ export const overview = query({
       salary: settings.salaryPerEmployee * settings.employeeCount,
       tax: Math.floor((currentWeek?.incoming ?? 0) * settings.taxRate),
     }
-    const journalBalance = transactions.reduce(
+    const journalBalance = financialTransactions.reduce(
       (total, transaction) => total + transaction.total,
       0
     )

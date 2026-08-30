@@ -1,9 +1,10 @@
 import { convexQuery } from "@convex-dev/react-query"
 import { useSuspenseQuery } from "@tanstack/react-query"
-import { createFileRoute } from "@tanstack/react-router"
+import { createFileRoute, Link } from "@tanstack/react-router"
 import { type FunctionReturnType } from "convex/server"
 import {
   BookMarked,
+  Boxes,
   Hammer,
   PackageOpen,
   Pencil,
@@ -42,7 +43,13 @@ import { api } from "../../../convex/_generated/api"
 import { type Doc } from "../../../convex/_generated/dataModel"
 import { useHydrated } from "@/hooks/use-hydrated"
 import { authClient } from "@/lib/auth-client"
-import { formatDecimalSeptims, formatNumber, formatSeptims } from "@/lib/format"
+import { calculateBundleCost } from "@/lib/bundle-cost"
+import {
+  formatDecimalSeptims,
+  formatNumber,
+  formatSeptims,
+  formatUnitPrice,
+} from "@/lib/format"
 import {
   isRecipeFamily,
   recipeFamilies,
@@ -325,6 +332,7 @@ function RecipesPage() {
                   isAdmin={isAdmin}
                   key={bundle._id}
                   products={products}
+                  recipes={recipes}
                 />
               ))}
             </div>
@@ -373,6 +381,10 @@ function RecipeEntry({
   products: readonly Doc<"products">[]
   recipe: Recipe
 }>) {
+  const outputProduct = recipe.productId
+    ? products.find((product) => product._id === recipe.productId)
+    : undefined
+
   return (
     <Card className="min-h-48 gap-0 rounded-none border-[#5b462b]/30 border-t-[#684f2d]/60 bg-linear-to-br from-[#fffbed]/60 to-[#e3d3b3]/20 py-0 ring-0">
       <CardHeader className="p-4 pb-0">
@@ -382,14 +394,7 @@ function RecipeEntry({
         <CardTitle className="font-display text-lg font-medium">
           {recipe.name}
         </CardTitle>
-        <CardAction className="flex items-center gap-1 text-sm font-semibold">
-          {recipe.cost === undefined ? (
-            <Badge variant="outline">Coût incomplet</Badge>
-          ) : (
-            <span title="Coût matière calculé">
-              {formatDecimalSeptims(recipe.cost)}
-            </span>
-          )}
+        <CardAction>
           {isAdmin ? (
             <RecipeDialog
               linkedProductIds={linkedProductIds}
@@ -409,6 +414,26 @@ function RecipeEntry({
         </CardAction>
       </CardHeader>
       <CardContent className="flex flex-1 flex-col p-4 pt-3">
+        <dl className="mb-4 grid grid-cols-2 gap-3 border-y border-border/60 py-2 text-xs">
+          <div>
+            <dt className="text-muted-foreground">Coût matière</dt>
+            <dd className="mt-0.5 font-semibold text-foreground">
+              {recipe.cost === undefined ? (
+                <Badge variant="outline">Incomplet</Badge>
+              ) : (
+                formatDecimalSeptims(recipe.cost)
+              )}
+            </dd>
+          </div>
+          <div>
+            <dt className="text-muted-foreground">Prix de vente</dt>
+            <dd className="mt-0.5 font-semibold text-foreground">
+              {outputProduct?.salePrice === undefined
+                ? "—"
+                : formatUnitPrice(outputProduct.salePrice)}
+            </dd>
+          </div>
+        </dl>
         {recipe.effect ? (
           <p className="flex gap-2 text-xs leading-relaxed text-muted-foreground italic">
             <Sparkles
@@ -459,7 +484,7 @@ function RecipeEntry({
           })}
         </div>
         {recipe.productId ? (
-          <div className="mt-auto pt-4">
+          <div className="mt-auto grid gap-2 pt-4">
             <Button
               className="w-full"
               onClick={() => onProduce(recipe.productId!)}
@@ -469,6 +494,12 @@ function RecipeEntry({
             >
               <Hammer aria-hidden="true" />
               Produire cette recette
+            </Button>
+            <Button asChild className="w-full" size="sm" variant="ghost">
+              <Link search={{ q: recipe.name }} to="/inventaire">
+                <Boxes aria-hidden="true" />
+                Voir dans l’inventaire
+              </Link>
             </Button>
           </div>
         ) : (
@@ -485,21 +516,22 @@ function BundleEntry({
   bundle,
   isAdmin,
   products,
+  recipes,
 }: Readonly<{
   bundle: Bundle
   isAdmin: boolean
   products: readonly Doc<"products">[]
+  recipes: readonly Recipe[]
 }>) {
+  const cost = calculateBundleCost(bundle.items, products, recipes)
+
   return (
     <Card className="gap-0 rounded-none border-0 border-l-2 border-l-[#755832]/55 bg-[#795f38]/5 py-0 ring-0">
       <CardHeader className="p-4 pb-0">
         <CardTitle className="font-display text-base font-medium">
           {bundle.name}
         </CardTitle>
-        <CardAction className="flex items-center gap-1 font-semibold text-primary">
-          <span>
-            {bundle.price === undefined ? "—" : formatSeptims(bundle.price)}
-          </span>
+        <CardAction>
           {isAdmin ? (
             <BundleDialog
               bundle={bundle}
@@ -518,6 +550,24 @@ function BundleEntry({
         </CardAction>
       </CardHeader>
       <CardContent className="p-4 pt-3">
+        <dl className="mb-3 grid grid-cols-2 gap-3 border-y border-border/60 py-2 text-xs">
+          <div>
+            <dt className="text-muted-foreground">Coût de composition</dt>
+            <dd className="mt-0.5 font-semibold text-foreground">
+              {cost === undefined ? (
+                <Badge variant="outline">Incomplet</Badge>
+              ) : (
+                formatDecimalSeptims(cost)
+              )}
+            </dd>
+          </div>
+          <div>
+            <dt className="text-muted-foreground">Prix de vente</dt>
+            <dd className="mt-0.5 font-semibold text-foreground">
+              {bundle.price === undefined ? "—" : formatSeptims(bundle.price)}
+            </dd>
+          </div>
+        </dl>
         <ul className="grid gap-1 text-xs text-muted-foreground">
           {bundle.items.map((item) => (
             <li className="flex justify-between gap-3" key={item._id}>

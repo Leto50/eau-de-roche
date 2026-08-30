@@ -6,7 +6,7 @@ import {
   getSessionFromCtx,
 } from "better-auth/api"
 import { betterAuth, type BetterAuthOptions } from "better-auth/minimal"
-import { admin } from "better-auth/plugins"
+import { admin, username } from "better-auth/plugins"
 import type { GenericActionCtx } from "convex/server"
 import { ConvexError, v } from "convex/values"
 
@@ -16,6 +16,11 @@ import { internalMutation, query } from "./_generated/server"
 import authConfig from "./auth.config"
 import authSchema from "./betterAuth/schema"
 import { wouldRemoveLastActiveAdmin } from "./lib/accountSecurity"
+import {
+  internalAccountEmail,
+  isAccountIdentifier,
+  normalizeAccountIdentifier,
+} from "../shared/account-identifiers"
 
 const siteUrl = process.env.SITE_URL ?? "http://localhost:3000"
 
@@ -41,6 +46,15 @@ function bodyString(
   return typeof value === "string" ? value : undefined
 }
 
+function bodyDataString(
+  body: unknown,
+  property: "username"
+): string | undefined {
+  if (!isRecord(body) || !isRecord(body.data)) return undefined
+  const value = body.data[property]
+  return typeof value === "string" ? value : undefined
+}
+
 function bodyRoleRemovesAdmin(body: unknown): boolean {
   if (!isRecord(body)) return false
   const role = body.role
@@ -50,12 +64,12 @@ function bodyRoleRemovesAdmin(body: unknown): boolean {
 }
 
 const authAuditActions: Readonly<
-  Record<string, { action: string; detailProperty?: "email" | "role" }>
+  Record<string, { action: string; detailProperty?: "identifier" | "role" }>
 > = {
   "/admin/ban-user": { action: "account.disabled" },
   "/admin/create-user": {
     action: "account.created",
-    detailProperty: "email",
+    detailProperty: "identifier",
   },
   "/admin/remove-user": { action: "account.deleted" },
   "/admin/revoke-user-sessions": { action: "account.sessions_revoked" },
@@ -125,6 +139,11 @@ export const createAuthOptions = (convexCtx: GenericCtx<DataModel>) =>
         const name = bodyString(requestContext.body, "name")?.trim()
         const password = bodyString(requestContext.body, "password")
         const role = bodyString(requestContext.body, "role")
+        const rawIdentifier = bodyDataString(requestContext.body, "username")
+        const identifier = rawIdentifier
+          ? normalizeAccountIdentifier(rawIdentifier)
+          : ""
+        const email = bodyString(requestContext.body, "email")
         if (!name || name.length > 100) {
           throw new APIError("BAD_REQUEST", {
             message: "Le nom doit contenir entre 1 et 100 caractères.",
@@ -141,6 +160,14 @@ export const createAuthOptions = (convexCtx: GenericCtx<DataModel>) =>
             message: "Le rôle doit être employé ou administrateur.",
           })
         }
+        if (
+          !isAccountIdentifier(identifier) ||
+          email !== internalAccountEmail(identifier)
+        ) {
+          throw new APIError("BAD_REQUEST", {
+            message: "L’identifiant de connexion est invalide.",
+          })
+        }
       }),
       after: createAuthMiddleware(async (requestContext) => {
         const audit = authAuditActions[requestContext.path]
@@ -149,11 +176,15 @@ export const createAuthOptions = (convexCtx: GenericCtx<DataModel>) =>
         if (!session) return
         const entityId =
           bodyString(requestContext.body, "userId") ??
+          bodyDataString(requestContext.body, "username") ??
           bodyString(requestContext.body, "email")
         if (!entityId) return
-        const detail = audit.detailProperty
-          ? bodyString(requestContext.body, audit.detailProperty)
-          : undefined
+        const detail =
+          audit.detailProperty === "identifier"
+            ? bodyDataString(requestContext.body, "username")
+            : audit.detailProperty
+              ? bodyString(requestContext.body, audit.detailProperty)
+              : undefined
         await convexCtx.runMutation(internal.administration.logAuthAction, {
           action: audit.action,
           actorUserId: session.user.id,
@@ -162,7 +193,16 @@ export const createAuthOptions = (convexCtx: GenericCtx<DataModel>) =>
         })
       }),
     },
-    plugins: [convex({ authConfig }), admin()],
+    plugins: [
+      convex({ authConfig }),
+      username({
+        maxUsernameLength: 30,
+        minUsernameLength: 3,
+        usernameNormalization: normalizeAccountIdentifier,
+        usernameValidator: isAccountIdentifier,
+      }),
+      admin(),
+    ],
     telemetry: {
       enabled: false,
     },
@@ -181,13 +221,28 @@ export const bootstrapAdmin = internalMutation({
     name: v.string(),
   },
   handler: async (ctx, args) => {
-    const email = process.env.INITIAL_ADMIN_EMAIL?.trim().toLowerCase()
-    if (!email) {
+    const configuredIdentifier = process.env.INITIAL_ADMIN_IDENTIFIER?.trim()
+    const legacyEmail = process.env.INITIAL_ADMIN_EMAIL?.trim().toLowerCase()
+    if (!configuredIdentifier && !legacyEmail) {
       throw new ConvexError({
         code: "MISSING_CONFIGURATION",
-        message: "INITIAL_ADMIN_EMAIL doit être configurée.",
+        message: "INITIAL_ADMIN_IDENTIFIER doit être configuré.",
       })
     }
+    const legacyLocalPart = legacyEmail?.split("@")[0] ?? ""
+    const identifier = normalizeAccountIdentifier(
+      configuredIdentifier ??
+        (isAccountIdentifier(legacyLocalPart)
+          ? legacyLocalPart
+          : "administrateur")
+    )
+    if (!isAccountIdentifier(identifier)) {
+      throw new ConvexError({
+        code: "INVALID_INPUT",
+        message: "INITIAL_ADMIN_IDENTIFIER est invalide.",
+      })
+    }
+    const accountEmail = internalAccountEmail(identifier)
 
     const name = args.name.trim()
     if (!name || name.length > 100) {
@@ -199,12 +254,21 @@ export const bootstrapAdmin = internalMutation({
 
     const auth = createAuth(ctx)
     const authContext = await auth.$context
-    const existing = await authContext.internalAdapter.findUserByEmail(email)
+    const legacyAccount = legacyEmail
+      ? await authContext.internalAdapter.findUserByEmail(legacyEmail)
+      : null
+    const existing =
+      legacyAccount ??
+      (await authContext.internalAdapter.findUserByEmail(accountEmail))
     if (existing) {
-      await authContext.internalAdapter.updateUserByEmail(email, {
+      const existingUsername = (
+        existing.user as typeof existing.user & { username?: string | null }
+      ).username
+      await authContext.internalAdapter.updateUserByEmail(existing.user.email, {
         role: "admin",
+        ...(existingUsername === identifier ? {} : { username: identifier }),
       })
-      return { created: false, email, name: existing.user.name }
+      return { created: false, identifier, name: existing.user.name }
     }
 
     const password = process.env.INITIAL_ADMIN_PASSWORD
@@ -223,14 +287,15 @@ export const bootstrapAdmin = internalMutation({
 
     await auth.api.createUser({
       body: {
-        email,
+        data: { username: identifier },
+        email: accountEmail,
         name,
         password,
         role: "admin",
       },
     })
 
-    return { created: true, email, name }
+    return { created: true, identifier, name }
   },
 })
 

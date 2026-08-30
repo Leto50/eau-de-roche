@@ -18,6 +18,15 @@ export const transactionKind = v.union(
   v.literal("service")
 )
 
+export const financialTransactionKind = v.union(
+  v.literal("bundle"),
+  v.literal("exchange"),
+  v.literal("order"),
+  v.literal("purchase"),
+  v.literal("sale"),
+  v.literal("service")
+)
+
 export const transactionLineKind = v.union(
   v.literal("bundle"),
   v.literal("product")

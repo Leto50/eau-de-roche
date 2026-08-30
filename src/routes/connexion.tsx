@@ -11,6 +11,7 @@ import { Input } from "@/components/ui/input"
 import { Spinner } from "@/components/ui/spinner"
 import { authClient } from "@/lib/auth-client"
 import { loginFormSchema } from "@/lib/form-schemas"
+import { normalizeAccountIdentifier } from "../../shared/account-identifiers"
 
 export const Route = createFileRoute("/connexion")({
   beforeLoad: ({ context }) => {
@@ -27,16 +28,22 @@ export const Route = createFileRoute("/connexion")({
 function AuthenticationPage() {
   const [error, setError] = useState<string>()
   const form = useForm({
-    defaultValues: { email: "", password: "" },
+    defaultValues: { identifier: "", password: "" },
     onSubmit: async ({ value }) => {
       setError(undefined)
-      const result = await authClient.signIn.email({
-        email: value.email.trim().toLowerCase(),
-        password: value.password,
-      })
+      const rawIdentifier = value.identifier.trim()
+      const result = rawIdentifier.includes("@")
+        ? await authClient.signIn.email({
+            email: rawIdentifier.toLowerCase(),
+            password: value.password,
+          })
+        : await authClient.signIn.username({
+            password: value.password,
+            username: normalizeAccountIdentifier(rawIdentifier),
+          })
 
       if (result.error) {
-        setError("Adresse e-mail ou mot de passe incorrect.")
+        setError("Identifiant ou mot de passe incorrect.")
         return
       }
 
@@ -79,8 +86,9 @@ function AuthenticationPage() {
             Connexion
           </h2>
           <p className="mt-3 text-sm leading-relaxed text-muted-foreground">
-            Saisissez l’adresse e-mail et le mot de passe fournis par un
-            administrateur.
+            Saisissez l’identifiant et le mot de passe fournis par un
+            administrateur. Les anciens comptes peuvent encore utiliser leur
+            adresse e-mail.
           </p>
 
           <form
@@ -91,26 +99,29 @@ function AuthenticationPage() {
               void form.handleSubmit()
             }}
           >
-            <form.Field name="email">
+            <form.Field name="identifier">
               {(field) => {
                 const invalid =
                   field.state.meta.isTouched && !field.state.meta.isValid
                 return (
                   <Field data-invalid={invalid}>
-                    <FieldLabel htmlFor={field.name}>Adresse e-mail</FieldLabel>
+                    <FieldLabel htmlFor="login-identifier">
+                      Identifiant
+                    </FieldLabel>
                     <Input
                       aria-invalid={invalid}
-                      autoComplete="email"
-                      id={field.name}
+                      autoCapitalize="none"
+                      autoComplete="username"
+                      id="login-identifier"
                       maxLength={254}
-                      name={field.name}
+                      name="username"
                       onBlur={field.handleBlur}
                       onChange={(event) =>
                         field.handleChange(event.target.value)
                       }
-                      placeholder="employe@exemple.fr"
+                      placeholder="alixard"
                       required
-                      type="email"
+                      spellCheck={false}
                       value={field.state.value}
                     />
                     {invalid ? (

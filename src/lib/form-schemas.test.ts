@@ -11,10 +11,10 @@ import {
 } from "./form-schemas"
 
 describe("form schemas", () => {
-  it("valide un compte uniquement avec un e-mail et un mot de passe corrects", () => {
+  it("valide un compte uniquement avec un identifiant et un mot de passe corrects", () => {
     expect(
       accountFormSchema.safeParse({
-        email: "invalide",
+        identifier: "identifiant invalide",
         name: " ",
         password: "court",
         role: "user",
@@ -22,23 +22,25 @@ describe("form schemas", () => {
     ).toBe(false)
     expect(
       accountFormSchema.safeParse({
-        email: "employe@example.fr",
+        identifier: "employe_rp",
         name: "Employé",
         password: "mot-de-passe-solide",
         role: "user",
       }).success
     ).toBe(true)
 
-    const emptyEmail = accountFormSchema.safeParse({
-      email: "",
+    const emptyIdentifier = accountFormSchema.safeParse({
+      identifier: "",
       name: "Employé",
       password: "mot-de-passe-solide",
       role: "user",
     })
-    expect(emptyEmail.success).toBe(false)
-    if (!emptyEmail.success) {
+    expect(emptyIdentifier.success).toBe(false)
+    if (!emptyIdentifier.success) {
       expect(
-        emptyEmail.error.issues.filter((issue) => issue.path[0] === "email")
+        emptyIdentifier.error.issues.filter(
+          (issue) => issue.path[0] === "identifier"
+        )
       ).toHaveLength(1)
     }
   })
@@ -128,29 +130,17 @@ describe("form schemas", () => {
     }
   })
 
-  it("ignore les anciens champs de stock d’un service mais exige le motif de remise à zéro", () => {
+  it("ignore les champs de stock masqués d’un service", () => {
     const base = {
-      adjustmentReason: "",
       category: "service" as const,
       craftable: false,
       minimumStock: "valeur masquée",
       name: "Conseil alchimique",
-      originalStock: 0,
       purchasePrice: { septims: "", units: "1" },
       salePrice: { septims: "10", units: "1" },
       targetStock: "valeur masquée",
     }
     expect(productFormSchema.safeParse(base).success).toBe(true)
-    expect(
-      productFormSchema.safeParse({ ...base, originalStock: 3 }).success
-    ).toBe(false)
-    expect(
-      productFormSchema.safeParse({
-        ...base,
-        adjustmentReason: "Passage en service",
-        originalStock: 3,
-      }).success
-    ).toBe(true)
   })
 
   it("exige explicitement le total d’une commande déjà liée", () => {
