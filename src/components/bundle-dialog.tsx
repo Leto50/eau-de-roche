@@ -1,3 +1,4 @@
+import { useForm, useStore } from "@tanstack/react-form"
 import { useMutation, useQuery } from "convex/react"
 import { type FunctionReturnType } from "convex/server"
 import {
@@ -8,13 +9,7 @@ import {
   Plus,
   Trash2,
 } from "lucide-react"
-import {
-  useId,
-  useRef,
-  useState,
-  type FormEvent,
-  type ReactElement,
-} from "react"
+import { useId, useRef, useState, type ReactElement } from "react"
 import { toast } from "sonner"
 
 import {
@@ -42,19 +37,16 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
+import { Field, FieldError, FieldLabel } from "@/components/ui/field"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Separator } from "@/components/ui/separator"
 import { Spinner } from "@/components/ui/spinner"
 import { api } from "../../convex/_generated/api"
 import { type Doc } from "../../convex/_generated/dataModel"
 import { getUserFacingErrorMessage } from "@/lib/errors"
+import { bundleFormSchema, MAX_DYNAMIC_LINES } from "@/lib/form-schemas"
 import { formatSeptims } from "@/lib/format"
-import {
-  priceDraftFromValue,
-  priceDraftToValue,
-  type PriceDraft,
-} from "@/lib/prices"
+import { priceDraftFromValue, priceDraftToValue } from "@/lib/prices"
 
 type Bundle = FunctionReturnType<typeof api.recipes.listBundles>[number]
 
@@ -78,41 +70,63 @@ export function BundleDialog({
   const fieldId = useId()
   const nextLineKey = useRef(1)
   const [open, setOpen] = useState(false)
-  const [name, setName] = useState("")
-  const [price, setPrice] = useState<PriceDraft>(() =>
-    priceDraftFromValue(undefined)
-  )
-  const [items, setItems] = useState<BundleItemDraft[]>([
-    { key: 0, productId: "", quantity: "1" },
-  ])
-  const [isSubmitting, setIsSubmitting] = useState(false)
+  const [isArchiving, setIsArchiving] = useState(false)
   const availableProducts = products.filter((product) => product.tracksStock)
 
-  function resetForm() {
-    setName(bundle?.name ?? "")
-    setPrice(priceDraftFromValue(bundle?.price))
+  function bundleValues() {
     if (bundle?.items.length) {
-      setItems(
-        bundle.items.map((item, index) => ({
+      return {
+        items: bundle.items.map((item, index) => ({
           key: index,
           productId: item.productId ?? "",
           quantity: item.quantity.toString(),
-        }))
-      )
-      nextLineKey.current = bundle.items.length
-      return
+        })),
+        name: bundle.name,
+        price: priceDraftFromValue(bundle.price),
+      }
     }
-    setItems([{ key: 0, productId: "", quantity: "1" }])
-    nextLineKey.current = 1
+    return {
+      items: [{ key: 0, productId: "", quantity: "1" }],
+      name: "",
+      price: priceDraftFromValue(undefined),
+    }
   }
 
+  const form = useForm({
+    defaultValues: bundleValues(),
+    validators: { onSubmit: bundleFormSchema },
+    onSubmit: async ({ value }) => {
+      try {
+        await saveBundle({
+          ...(bundle ? { bundleId: bundle._id } : {}),
+          items: value.items.map((item) => ({
+            productId: item.productId as Doc<"products">["_id"],
+            quantity: Number(item.quantity),
+          })),
+          name: value.name.trim(),
+          price: priceDraftToValue(value.price),
+        })
+        toast.success(bundle ? "Lot mis à jour." : "Lot créé.")
+        setOpen(false)
+      } catch (error) {
+        toast.error(
+          getUserFacingErrorMessage(error, "Impossible d’enregistrer le lot.")
+        )
+      }
+    },
+  })
+  const formValues = useStore(form.store, (state) => state.values)
+
   function handleOpenChange(nextOpen: boolean) {
-    if (nextOpen && !open) resetForm()
+    if (nextOpen && !open) {
+      form.reset(bundleValues())
+      nextLineKey.current = Math.max(1, bundle?.items.length ?? 0)
+    }
     setOpen(nextOpen)
   }
 
   function updateItem(key: number, patch: Partial<BundleItemDraft>) {
-    setItems((current) =>
+    form.setFieldValue("items", (current) =>
       current.map((item) => (item.key === key ? { ...item, ...patch } : item))
     )
   }
@@ -120,82 +134,21 @@ export function BundleDialog({
   function addItem() {
     const key = nextLineKey.current
     nextLineKey.current += 1
-    setItems((current) => [...current, { key, productId: "", quantity: "1" }])
+    form.setFieldValue("items", (current) => [
+      ...current,
+      { key, productId: "", quantity: "1" },
+    ])
   }
 
   function removeItem(key: number) {
-    setItems((current) => current.filter((item) => item.key !== key))
-  }
-
-  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    const preparedItems = items.map((item) => ({
-      productId: availableProducts.find(
-        (product) => product._id === item.productId
-      )?._id,
-      quantity: Number(item.quantity),
-    }))
-    const submittedPrice = priceDraftToValue(price)
-
-    if (!name.trim()) {
-      toast.error("Le nom du lot est obligatoire.")
-      return
-    }
-    if (
-      preparedItems.length === 0 ||
-      preparedItems.some(
-        (item) =>
-          !item.productId ||
-          !Number.isFinite(item.quantity) ||
-          !Number.isInteger(item.quantity) ||
-          item.quantity <= 0
-      )
-    ) {
-      toast.error(
-        "Chaque ligne doit contenir un produit et une quantité entière."
-      )
-      return
-    }
-    const productIds = preparedItems.flatMap((item) =>
-      item.productId ? [item.productId] : []
+    form.setFieldValue("items", (current) =>
+      current.filter((item) => item.key !== key)
     )
-    if (new Set(productIds).size !== productIds.length) {
-      toast.error("Un produit ne peut apparaître qu’une fois dans un lot.")
-      return
-    }
-    if (submittedPrice !== null && !Number.isFinite(submittedPrice)) {
-      toast.error(
-        "Indiquez un nombre entier de septims pour un nombre entier d’unités."
-      )
-      return
-    }
-
-    setIsSubmitting(true)
-    try {
-      await saveBundle({
-        ...(bundle ? { bundleId: bundle._id } : {}),
-        items: preparedItems.flatMap((item) =>
-          item.productId
-            ? [{ productId: item.productId, quantity: item.quantity }]
-            : []
-        ),
-        name: name.trim(),
-        price: submittedPrice,
-      })
-      toast.success(bundle ? "Lot mis à jour." : "Lot créé.")
-      setOpen(false)
-    } catch (error) {
-      toast.error(
-        getUserFacingErrorMessage(error, "Impossible d’enregistrer le lot.")
-      )
-    } finally {
-      setIsSubmitting(false)
-    }
   }
 
   async function archiveBundle() {
     if (!bundle) return
-    setIsSubmitting(true)
+    setIsArchiving(true)
     try {
       await setBundleActive({ active: false, bundleId: bundle._id })
       toast.success("Lot archivé.")
@@ -205,7 +158,7 @@ export function BundleDialog({
         getUserFacingErrorMessage(error, "Impossible d’archiver le lot.")
       )
     } finally {
-      setIsSubmitting(false)
+      setIsArchiving(false)
     }
   }
 
@@ -233,39 +186,81 @@ export function BundleDialog({
           </DialogDescription>
         </DialogHeader>
 
-        <form className="grid gap-5" onSubmit={handleSubmit}>
+        <form
+          className="grid gap-5"
+          noValidate
+          onSubmit={(event) => {
+            event.preventDefault()
+            void form.handleSubmit()
+          }}
+        >
           <div className="grid gap-4 sm:grid-cols-2">
-            <div className="grid gap-2">
-              <Label htmlFor={`${fieldId}-name`}>Nom du lot</Label>
-              <Input
-                id={`${fieldId}-name`}
-                maxLength={100}
-                onChange={(event) => setName(event.target.value)}
-                placeholder="Nécessaire d’exploration"
-                required
-                value={name}
-              />
-            </div>
-            <div className="grid gap-2">
-              <Label htmlFor={`${fieldId}-price`}>Prix du lot</Label>
-              <PriceInput
-                id={`${fieldId}-price`}
-                onValueChange={setPrice}
-                value={price}
-              />
-            </div>
+            <form.Field name="name">
+              {(field) => {
+                const invalid =
+                  field.state.meta.isTouched && !field.state.meta.isValid
+                return (
+                  <Field data-invalid={invalid}>
+                    <FieldLabel htmlFor={`${fieldId}-name`}>
+                      Nom du lot
+                    </FieldLabel>
+                    <Input
+                      aria-invalid={invalid}
+                      id={`${fieldId}-name`}
+                      maxLength={100}
+                      name={field.name}
+                      onBlur={field.handleBlur}
+                      onChange={(event) =>
+                        field.handleChange(event.target.value)
+                      }
+                      placeholder="Nécessaire d’exploration"
+                      required
+                      value={field.state.value}
+                    />
+                    {invalid ? (
+                      <FieldError errors={field.state.meta.errors} />
+                    ) : null}
+                  </Field>
+                )
+              }}
+            </form.Field>
+            <form.Field name="price">
+              {(field) => {
+                const invalid =
+                  field.state.meta.isTouched && !field.state.meta.isValid
+                return (
+                  <Field data-invalid={invalid}>
+                    <FieldLabel htmlFor={`${fieldId}-price`}>
+                      Prix du lot
+                    </FieldLabel>
+                    <PriceInput
+                      ariaInvalid={invalid}
+                      id={`${fieldId}-price`}
+                      name={field.name}
+                      onBlur={field.handleBlur}
+                      onValueChange={field.handleChange}
+                      value={field.state.value}
+                    />
+                    {invalid ? (
+                      <FieldError errors={field.state.meta.errors} />
+                    ) : null}
+                  </Field>
+                )
+              }}
+            </form.Field>
           </div>
 
           <Separator />
           <div className="grid gap-3">
             <div className="flex items-end justify-between gap-3">
               <div>
-                <Label>Composition</Label>
+                <FieldLabel>Composition</FieldLabel>
                 <p className="mt-1 text-xs text-muted-foreground">
                   Quantité consommée pour un lot vendu.
                 </p>
               </div>
               <Button
+                disabled={formValues.items.length >= MAX_DYNAMIC_LINES}
                 onClick={addItem}
                 size="sm"
                 type="button"
@@ -276,41 +271,78 @@ export function BundleDialog({
               </Button>
             </div>
 
-            {items.map((item, index) => {
+            {formValues.items.map((item, index) => {
               return (
                 <div
                   className="flex items-end gap-2 border-l-2 border-primary/35 pl-3"
                   key={item.key}
                 >
-                  <div className="grid min-w-0 flex-1 gap-2">
-                    <Label>Produit {index + 1}</Label>
-                    <ProductPicker
-                      onChange={(productId) =>
-                        updateItem(item.key, { productId: productId ?? "" })
-                      }
-                      products={availableProducts}
-                      selectedProductId={item.productId}
-                    />
-                  </div>
-                  <div className="grid w-24 gap-2">
-                    <Label htmlFor={`${fieldId}-quantity-${item.key}`}>
-                      Quantité
-                    </Label>
-                    <Input
-                      id={`${fieldId}-quantity-${item.key}`}
-                      min="1"
-                      onChange={(event) =>
-                        updateItem(item.key, { quantity: event.target.value })
-                      }
-                      required
-                      step="1"
-                      type="number"
-                      value={item.quantity}
-                    />
-                  </div>
+                  <form.Field name={`items[${index}].productId`}>
+                    {(field) => {
+                      const invalid =
+                        field.state.meta.isTouched && !field.state.meta.isValid
+                      return (
+                        <Field
+                          className="min-w-0 flex-1"
+                          data-invalid={invalid}
+                        >
+                          <FieldLabel>Produit {index + 1}</FieldLabel>
+                          <ProductPicker
+                            ariaInvalid={invalid}
+                            name={field.name}
+                            onBlur={field.handleBlur}
+                            onChange={(productId) =>
+                              updateItem(item.key, {
+                                productId: productId ?? "",
+                              })
+                            }
+                            products={availableProducts}
+                            selectedProductId={field.state.value}
+                          />
+                          {invalid ? (
+                            <FieldError errors={field.state.meta.errors} />
+                          ) : null}
+                        </Field>
+                      )
+                    }}
+                  </form.Field>
+                  <form.Field name={`items[${index}].quantity`}>
+                    {(field) => {
+                      const invalid =
+                        field.state.meta.isTouched && !field.state.meta.isValid
+                      return (
+                        <Field className="w-24" data-invalid={invalid}>
+                          <FieldLabel
+                            htmlFor={`${fieldId}-quantity-${item.key}`}
+                          >
+                            Quantité
+                          </FieldLabel>
+                          <Input
+                            aria-invalid={invalid}
+                            id={`${fieldId}-quantity-${item.key}`}
+                            min="1"
+                            name={field.name}
+                            onBlur={field.handleBlur}
+                            onChange={(event) =>
+                              updateItem(item.key, {
+                                quantity: event.target.value,
+                              })
+                            }
+                            required
+                            step="1"
+                            type="number"
+                            value={field.state.value}
+                          />
+                          {invalid ? (
+                            <FieldError errors={field.state.meta.errors} />
+                          ) : null}
+                        </Field>
+                      )
+                    }}
+                  </form.Field>
                   <Button
                     aria-label={`Retirer le produit ${index + 1}`}
-                    disabled={items.length === 1}
+                    disabled={formValues.items.length === 1}
                     onClick={() => removeItem(item.key)}
                     size="icon-lg"
                     type="button"
@@ -365,19 +397,23 @@ export function BundleDialog({
               >
                 Annuler
               </Button>
-              <Button disabled={isSubmitting} type="submit">
-                {isSubmitting ? (
-                  <Spinner
-                    aria-hidden="true"
-                    className="motion-reduce:animate-none"
-                  />
-                ) : bundle ? (
-                  <Pencil aria-hidden="true" />
-                ) : (
-                  <PackagePlus aria-hidden="true" />
+              <form.Subscribe selector={(state) => state.isSubmitting}>
+                {(isSubmitting) => (
+                  <Button disabled={isSubmitting || isArchiving} type="submit">
+                    {isSubmitting ? (
+                      <Spinner
+                        aria-hidden="true"
+                        className="motion-reduce:animate-none"
+                      />
+                    ) : bundle ? (
+                      <Pencil aria-hidden="true" />
+                    ) : (
+                      <PackagePlus aria-hidden="true" />
+                    )}
+                    {bundle ? "Enregistrer" : "Créer le lot"}
+                  </Button>
                 )}
-                {bundle ? "Enregistrer" : "Créer le lot"}
-              </Button>
+              </form.Subscribe>
             </div>
           </DialogFooter>
         </form>

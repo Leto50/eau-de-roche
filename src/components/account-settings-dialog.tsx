@@ -1,7 +1,8 @@
+import { useForm } from "@tanstack/react-form"
 import { useMutation } from "convex/react"
 import { type FunctionReturnType } from "convex/server"
 import { Settings2 } from "lucide-react"
-import { useId, useState, type FormEvent } from "react"
+import { useId, useState } from "react"
 import { toast } from "sonner"
 
 import { Button } from "@/components/ui/button"
@@ -16,15 +17,16 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
+import { Field, FieldError, FieldLabel } from "@/components/ui/field"
 import {
   InputGroup,
   InputGroupAddon,
   InputGroupInput,
   InputGroupText,
 } from "@/components/ui/input-group"
-import { Label } from "@/components/ui/label"
 import { Spinner } from "@/components/ui/spinner"
 import { getUserFacingErrorMessage } from "@/lib/errors"
+import { accountSettingsFormSchema } from "@/lib/form-schemas"
 import { api } from "../../convex/_generated/api"
 
 type Settings = FunctionReturnType<typeof api.accounts.overview>["settings"]
@@ -35,74 +37,47 @@ export function AccountSettingsDialog({
   const saveSettings = useMutation(api.accounts.saveSettings)
   const fieldId = useId()
   const [open, setOpen] = useState(false)
-  const [cashBalance, setCashBalance] = useState("")
-  const [fundsBalance, setFundsBalance] = useState("")
-  const [employeeCount, setEmployeeCount] = useState("")
-  const [weeklyRent, setWeeklyRent] = useState("")
-  const [censusPerEmployee, setCensusPerEmployee] = useState("")
-  const [salaryPerEmployee, setSalaryPerEmployee] = useState("")
-  const [taxRatePercent, setTaxRatePercent] = useState("")
-  const [isSubmitting, setIsSubmitting] = useState(false)
 
-  function resetForm() {
-    setCashBalance(settings.cashBalance.toString())
-    setFundsBalance(settings.fundsBalance.toString())
-    setEmployeeCount(settings.employeeCount.toString())
-    setWeeklyRent(settings.weeklyRent.toString())
-    setCensusPerEmployee(settings.censusPerEmployee.toString())
-    setSalaryPerEmployee(settings.salaryPerEmployee.toString())
-    setTaxRatePercent((settings.taxRate * 100).toString())
-  }
+  const settingsValues = () => ({
+    cashBalance: settings.cashBalance.toString(),
+    censusPerEmployee: settings.censusPerEmployee.toString(),
+    employeeCount: settings.employeeCount.toString(),
+    fundsBalance: settings.fundsBalance.toString(),
+    salaryPerEmployee: settings.salaryPerEmployee.toString(),
+    taxRatePercent: (settings.taxRate * 100).toString(),
+    weeklyRent: settings.weeklyRent.toString(),
+  })
+
+  const form = useForm({
+    defaultValues: settingsValues(),
+    validators: { onSubmit: accountSettingsFormSchema },
+    onSubmit: async ({ value }) => {
+      try {
+        await saveSettings({
+          cashBalance: Number(value.cashBalance),
+          censusPerEmployee: Number(value.censusPerEmployee),
+          employeeCount: Number(value.employeeCount),
+          fundsBalance: Number(value.fundsBalance),
+          salaryPerEmployee: Number(value.salaryPerEmployee),
+          taxRate: Number(value.taxRatePercent) / 100,
+          weeklyRent: Number(value.weeklyRent),
+        })
+        toast.success("Les paramètres du compte ont été mis à jour.")
+        setOpen(false)
+      } catch (error) {
+        toast.error(
+          getUserFacingErrorMessage(
+            error,
+            "Impossible de modifier les paramètres du compte."
+          )
+        )
+      }
+    },
+  })
 
   function handleOpenChange(nextOpen: boolean) {
-    if (nextOpen && !open) resetForm()
+    if (nextOpen && !open) form.reset(settingsValues())
     setOpen(nextOpen)
-  }
-
-  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    const values = {
-      cashBalance: Number(cashBalance),
-      censusPerEmployee: Number(censusPerEmployee),
-      employeeCount: Number(employeeCount),
-      fundsBalance: Number(fundsBalance),
-      salaryPerEmployee: Number(salaryPerEmployee),
-      taxRate: Number(taxRatePercent) / 100,
-      weeklyRent: Number(weeklyRent),
-    }
-    if (
-      Object.values(values).some(
-        (value) => !Number.isFinite(value) || value < 0
-      ) ||
-      !Number.isSafeInteger(values.cashBalance) ||
-      !Number.isSafeInteger(values.censusPerEmployee) ||
-      !Number.isSafeInteger(values.employeeCount) ||
-      !Number.isSafeInteger(values.fundsBalance) ||
-      !Number.isSafeInteger(values.salaryPerEmployee) ||
-      !Number.isSafeInteger(values.weeklyRent) ||
-      values.taxRate > 1
-    ) {
-      toast.error(
-        "Vérifiez les montants entiers, le nombre d’employés et le taux compris entre 0 et 100 %."
-      )
-      return
-    }
-
-    setIsSubmitting(true)
-    try {
-      await saveSettings(values)
-      toast.success("Les paramètres du compte ont été mis à jour.")
-      setOpen(false)
-    } catch (error) {
-      toast.error(
-        getUserFacingErrorMessage(
-          error,
-          "Impossible de modifier les paramètres du compte."
-        )
-      )
-    } finally {
-      setIsSubmitting(false)
-    }
   }
 
   return (
@@ -127,131 +102,264 @@ export function AccountSettingsDialog({
           </DialogDescription>
         </DialogHeader>
 
-        <form className="grid gap-5" onSubmit={handleSubmit}>
+        <form
+          className="grid gap-5"
+          noValidate
+          onSubmit={(event) => {
+            event.preventDefault()
+            void form.handleSubmit()
+          }}
+        >
           <Card className="gap-0 rounded-none border-primary/20 bg-primary/[0.035] py-0 ring-0">
             <CardContent className="grid gap-4 p-4 sm:grid-cols-2">
-              <div className="grid gap-2">
-                <Label htmlFor={`${fieldId}-cash`}>Caisse déclarée</Label>
-                <InputGroup>
-                  <InputGroupInput
-                    id={`${fieldId}-cash`}
-                    min="0"
-                    onChange={(event) => setCashBalance(event.target.value)}
-                    required
-                    step="1"
-                    type="number"
-                    value={cashBalance}
-                  />
-                  <InputGroupAddon align="inline-end">
-                    <InputGroupText>septims</InputGroupText>
-                  </InputGroupAddon>
-                </InputGroup>
-              </div>
-              <div className="grid gap-2">
-                <Label htmlFor={`${fieldId}-funds`}>Fonds disponibles</Label>
-                <InputGroup>
-                  <InputGroupInput
-                    id={`${fieldId}-funds`}
-                    min="0"
-                    onChange={(event) => setFundsBalance(event.target.value)}
-                    required
-                    step="1"
-                    type="number"
-                    value={fundsBalance}
-                  />
-                  <InputGroupAddon align="inline-end">
-                    <InputGroupText>septims</InputGroupText>
-                  </InputGroupAddon>
-                </InputGroup>
-              </div>
+              <form.Field name="cashBalance">
+                {(field) => {
+                  const invalid =
+                    field.state.meta.isTouched && !field.state.meta.isValid
+                  return (
+                    <Field data-invalid={invalid}>
+                      <FieldLabel htmlFor={`${fieldId}-cash`}>
+                        Caisse déclarée
+                      </FieldLabel>
+                      <InputGroup>
+                        <InputGroupInput
+                          aria-invalid={invalid}
+                          id={`${fieldId}-cash`}
+                          min="0"
+                          name={field.name}
+                          onBlur={field.handleBlur}
+                          onChange={(event) =>
+                            field.handleChange(event.target.value)
+                          }
+                          required
+                          step="1"
+                          type="number"
+                          value={field.state.value}
+                        />
+                        <InputGroupAddon align="inline-end">
+                          <InputGroupText>septims</InputGroupText>
+                        </InputGroupAddon>
+                      </InputGroup>
+                      {invalid ? (
+                        <FieldError errors={field.state.meta.errors} />
+                      ) : null}
+                    </Field>
+                  )
+                }}
+              </form.Field>
+              <form.Field name="fundsBalance">
+                {(field) => {
+                  const invalid =
+                    field.state.meta.isTouched && !field.state.meta.isValid
+                  return (
+                    <Field data-invalid={invalid}>
+                      <FieldLabel htmlFor={`${fieldId}-funds`}>
+                        Fonds disponibles
+                      </FieldLabel>
+                      <InputGroup>
+                        <InputGroupInput
+                          aria-invalid={invalid}
+                          id={`${fieldId}-funds`}
+                          min="0"
+                          name={field.name}
+                          onBlur={field.handleBlur}
+                          onChange={(event) =>
+                            field.handleChange(event.target.value)
+                          }
+                          required
+                          step="1"
+                          type="number"
+                          value={field.state.value}
+                        />
+                        <InputGroupAddon align="inline-end">
+                          <InputGroupText>septims</InputGroupText>
+                        </InputGroupAddon>
+                      </InputGroup>
+                      {invalid ? (
+                        <FieldError errors={field.state.meta.errors} />
+                      ) : null}
+                    </Field>
+                  )
+                }}
+              </form.Field>
             </CardContent>
           </Card>
 
           <div className="grid gap-4 sm:grid-cols-2">
-            <div className="grid gap-2">
-              <Label htmlFor={`${fieldId}-employees`}>Employés</Label>
-              <Input
-                id={`${fieldId}-employees`}
-                min="0"
-                onChange={(event) => setEmployeeCount(event.target.value)}
-                required
-                step="1"
-                type="number"
-                value={employeeCount}
-              />
-            </div>
-            <div className="grid gap-2">
-              <Label htmlFor={`${fieldId}-rent`}>Loyer hebdomadaire</Label>
-              <InputGroup>
-                <InputGroupInput
-                  id={`${fieldId}-rent`}
-                  min="0"
-                  onChange={(event) => setWeeklyRent(event.target.value)}
-                  required
-                  step="1"
-                  type="number"
-                  value={weeklyRent}
-                />
-                <InputGroupAddon align="inline-end">
-                  <InputGroupText>septims</InputGroupText>
-                </InputGroupAddon>
-              </InputGroup>
-            </div>
-            <div className="grid gap-2">
-              <Label htmlFor={`${fieldId}-census`}>Cens par employé</Label>
-              <InputGroup>
-                <InputGroupInput
-                  id={`${fieldId}-census`}
-                  min="0"
-                  onChange={(event) => setCensusPerEmployee(event.target.value)}
-                  required
-                  step="1"
-                  type="number"
-                  value={censusPerEmployee}
-                />
-                <InputGroupAddon align="inline-end">
-                  <InputGroupText>septims</InputGroupText>
-                </InputGroupAddon>
-              </InputGroup>
-            </div>
-            <div className="grid gap-2">
-              <Label htmlFor={`${fieldId}-salary`}>Salaire par employé</Label>
-              <InputGroup>
-                <InputGroupInput
-                  id={`${fieldId}-salary`}
-                  min="0"
-                  onChange={(event) => setSalaryPerEmployee(event.target.value)}
-                  required
-                  step="1"
-                  type="number"
-                  value={salaryPerEmployee}
-                />
-                <InputGroupAddon align="inline-end">
-                  <InputGroupText>septims</InputGroupText>
-                </InputGroupAddon>
-              </InputGroup>
-            </div>
+            <form.Field name="employeeCount">
+              {(field) => {
+                const invalid =
+                  field.state.meta.isTouched && !field.state.meta.isValid
+                return (
+                  <Field data-invalid={invalid}>
+                    <FieldLabel htmlFor={`${fieldId}-employees`}>
+                      Employés
+                    </FieldLabel>
+                    <Input
+                      aria-invalid={invalid}
+                      id={`${fieldId}-employees`}
+                      min="0"
+                      name={field.name}
+                      onBlur={field.handleBlur}
+                      onChange={(event) =>
+                        field.handleChange(event.target.value)
+                      }
+                      required
+                      step="1"
+                      type="number"
+                      value={field.state.value}
+                    />
+                    {invalid ? (
+                      <FieldError errors={field.state.meta.errors} />
+                    ) : null}
+                  </Field>
+                )
+              }}
+            </form.Field>
+            <form.Field name="weeklyRent">
+              {(field) => {
+                const invalid =
+                  field.state.meta.isTouched && !field.state.meta.isValid
+                return (
+                  <Field data-invalid={invalid}>
+                    <FieldLabel htmlFor={`${fieldId}-rent`}>
+                      Loyer hebdomadaire
+                    </FieldLabel>
+                    <InputGroup>
+                      <InputGroupInput
+                        aria-invalid={invalid}
+                        id={`${fieldId}-rent`}
+                        min="0"
+                        name={field.name}
+                        onBlur={field.handleBlur}
+                        onChange={(event) =>
+                          field.handleChange(event.target.value)
+                        }
+                        required
+                        step="1"
+                        type="number"
+                        value={field.state.value}
+                      />
+                      <InputGroupAddon align="inline-end">
+                        <InputGroupText>septims</InputGroupText>
+                      </InputGroupAddon>
+                    </InputGroup>
+                    {invalid ? (
+                      <FieldError errors={field.state.meta.errors} />
+                    ) : null}
+                  </Field>
+                )
+              }}
+            </form.Field>
+            <form.Field name="censusPerEmployee">
+              {(field) => {
+                const invalid =
+                  field.state.meta.isTouched && !field.state.meta.isValid
+                return (
+                  <Field data-invalid={invalid}>
+                    <FieldLabel htmlFor={`${fieldId}-census`}>
+                      Cens par employé
+                    </FieldLabel>
+                    <InputGroup>
+                      <InputGroupInput
+                        aria-invalid={invalid}
+                        id={`${fieldId}-census`}
+                        min="0"
+                        name={field.name}
+                        onBlur={field.handleBlur}
+                        onChange={(event) =>
+                          field.handleChange(event.target.value)
+                        }
+                        required
+                        step="1"
+                        type="number"
+                        value={field.state.value}
+                      />
+                      <InputGroupAddon align="inline-end">
+                        <InputGroupText>septims</InputGroupText>
+                      </InputGroupAddon>
+                    </InputGroup>
+                    {invalid ? (
+                      <FieldError errors={field.state.meta.errors} />
+                    ) : null}
+                  </Field>
+                )
+              }}
+            </form.Field>
+            <form.Field name="salaryPerEmployee">
+              {(field) => {
+                const invalid =
+                  field.state.meta.isTouched && !field.state.meta.isValid
+                return (
+                  <Field data-invalid={invalid}>
+                    <FieldLabel htmlFor={`${fieldId}-salary`}>
+                      Salaire par employé
+                    </FieldLabel>
+                    <InputGroup>
+                      <InputGroupInput
+                        aria-invalid={invalid}
+                        id={`${fieldId}-salary`}
+                        min="0"
+                        name={field.name}
+                        onBlur={field.handleBlur}
+                        onChange={(event) =>
+                          field.handleChange(event.target.value)
+                        }
+                        required
+                        step="1"
+                        type="number"
+                        value={field.state.value}
+                      />
+                      <InputGroupAddon align="inline-end">
+                        <InputGroupText>septims</InputGroupText>
+                      </InputGroupAddon>
+                    </InputGroup>
+                    {invalid ? (
+                      <FieldError errors={field.state.meta.errors} />
+                    ) : null}
+                  </Field>
+                )
+              }}
+            </form.Field>
           </div>
 
-          <div className="grid gap-2 sm:max-w-56">
-            <Label htmlFor={`${fieldId}-tax`}>Taxe sur les entrées</Label>
-            <InputGroup>
-              <InputGroupInput
-                id={`${fieldId}-tax`}
-                inputMode="decimal"
-                max="100"
-                min="0"
-                onChange={(event) => setTaxRatePercent(event.target.value)}
-                required
-                step="any"
-                type="number"
-                value={taxRatePercent}
-              />
-              <InputGroupAddon align="inline-end">
-                <InputGroupText>%</InputGroupText>
-              </InputGroupAddon>
-            </InputGroup>
-          </div>
+          <form.Field name="taxRatePercent">
+            {(field) => {
+              const invalid =
+                field.state.meta.isTouched && !field.state.meta.isValid
+              return (
+                <Field className="sm:max-w-56" data-invalid={invalid}>
+                  <FieldLabel htmlFor={`${fieldId}-tax`}>
+                    Taxe sur les entrées
+                  </FieldLabel>
+                  <InputGroup>
+                    <InputGroupInput
+                      aria-invalid={invalid}
+                      id={`${fieldId}-tax`}
+                      inputMode="decimal"
+                      max="100"
+                      min="0"
+                      name={field.name}
+                      onBlur={field.handleBlur}
+                      onChange={(event) =>
+                        field.handleChange(event.target.value)
+                      }
+                      required
+                      step="any"
+                      type="number"
+                      value={field.state.value}
+                    />
+                    <InputGroupAddon align="inline-end">
+                      <InputGroupText>%</InputGroupText>
+                    </InputGroupAddon>
+                  </InputGroup>
+                  {invalid ? (
+                    <FieldError errors={field.state.meta.errors} />
+                  ) : null}
+                </Field>
+              )
+            }}
+          </form.Field>
 
           <DialogFooter>
             <Button
@@ -261,17 +369,21 @@ export function AccountSettingsDialog({
             >
               Annuler
             </Button>
-            <Button disabled={isSubmitting} type="submit">
-              {isSubmitting ? (
-                <Spinner
-                  aria-hidden="true"
-                  className="motion-reduce:animate-none"
-                />
-              ) : (
-                <Settings2 aria-hidden="true" />
+            <form.Subscribe selector={(state) => state.isSubmitting}>
+              {(isSubmitting) => (
+                <Button disabled={isSubmitting} type="submit">
+                  {isSubmitting ? (
+                    <Spinner
+                      aria-hidden="true"
+                      className="motion-reduce:animate-none"
+                    />
+                  ) : (
+                    <Settings2 aria-hidden="true" />
+                  )}
+                  Enregistrer
+                </Button>
               )}
-              Enregistrer
-            </Button>
+            </form.Subscribe>
           </DialogFooter>
         </form>
       </DialogContent>

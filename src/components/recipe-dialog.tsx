@@ -1,3 +1,4 @@
+import { useForm, useStore } from "@tanstack/react-form"
 import { useMutation, useQuery } from "convex/react"
 import { type FunctionReturnType } from "convex/server"
 import {
@@ -10,14 +11,7 @@ import {
   Plus,
   Trash2,
 } from "lucide-react"
-import {
-  useId,
-  useMemo,
-  useRef,
-  useState,
-  type FormEvent,
-  type ReactElement,
-} from "react"
+import { useId, useMemo, useRef, useState, type ReactElement } from "react"
 import { toast } from "sonner"
 
 import { ProductPicker } from "@/components/product-picker"
@@ -45,7 +39,7 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
+import { Field, FieldError, FieldLabel } from "@/components/ui/field"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import {
   Select,
@@ -62,6 +56,7 @@ import { Textarea } from "@/components/ui/textarea"
 import { api } from "../../convex/_generated/api"
 import { type Doc, type Id } from "../../convex/_generated/dataModel"
 import { getUserFacingErrorMessage } from "@/lib/errors"
+import { MAX_DYNAMIC_LINES, recipeFormSchema } from "@/lib/form-schemas"
 import { formatDecimalSeptims } from "@/lib/format"
 import { canonicalProductCategory } from "@/lib/product-categories"
 import {
@@ -101,18 +96,7 @@ export function RecipeDialog({
   const nextLineKey = useRef(1)
   const [internalOpen, setInternalOpen] = useState(false)
   const open = controlledOpen ?? internalOpen
-  const [name, setName] = useState(recipe?.name ?? initialProduct?.name ?? "")
-  const [family, setFamily] = useState<RecipeFamily | "">(
-    recipe && isRecipeFamily(recipe.family) ? recipe.family : ""
-  )
-  const [outputProductId, setOutputProductId] = useState<string>(
-    initialProduct?._id ?? "new"
-  )
-  const [effect, setEffect] = useState(recipe?.effect ?? "")
-  const [ingredients, setIngredients] = useState<IngredientDraft[]>([
-    { key: 0, productId: "", quantity: "1" },
-  ])
-  const [isSubmitting, setIsSubmitting] = useState(false)
+  const [isArchiving, setIsArchiving] = useState(false)
   const ingredientProducts = useMemo(
     () => products.filter((product) => product.tracksStock),
     [products]
@@ -134,17 +118,69 @@ export function RecipeDialog({
       ),
     [initialProduct, linkedProducts, products, recipe]
   )
-  const selectedOutputProduct = outputProducts.find(
-    (product) => product._id === outputProductId
-  )
   const showOutputProductSelect =
     !recipe && (initialProduct !== undefined || outputProducts.length > 0)
+
+  function recipeValues() {
+    return {
+      effect: recipe?.effect ?? "",
+      family:
+        recipe && isRecipeFamily(recipe.family)
+          ? recipe.family
+          : ("" as RecipeFamily | ""),
+      ingredients: recipe?.ingredients.length
+        ? recipe.ingredients.map((ingredient, index) => ({
+            key: index,
+            productId: ingredient.productId ?? "",
+            quantity: ingredient.quantity.toString(),
+          }))
+        : [{ key: 0, productId: "", quantity: "1" }],
+      name: recipe?.name ?? initialProduct?.name ?? "",
+      outputProductId: recipe?.productId ?? initialProduct?._id ?? "new",
+    }
+  }
+
+  const form = useForm({
+    defaultValues: recipeValues(),
+    validators: { onSubmit: recipeFormSchema },
+    onSubmit: async ({ value }) => {
+      if (!isRecipeFamily(value.family)) return
+      const selectedOutputProduct = outputProducts.find(
+        (product) => product._id === value.outputProductId
+      )
+      try {
+        await saveRecipe({
+          effect: value.effect.trim(),
+          family: value.family,
+          ingredients: value.ingredients.map((ingredient) => ({
+            productId: ingredient.productId as Id<"products">,
+            quantity: Number(ingredient.quantity),
+          })),
+          name: selectedOutputProduct?.name ?? value.name.trim(),
+          ...(!recipe && selectedOutputProduct
+            ? { outputProductId: selectedOutputProduct._id }
+            : {}),
+          ...(recipe ? { recipeId: recipe._id } : {}),
+        })
+        toast.success(recipe ? "Recette mise à jour." : "Recette créée.")
+        handleOpenChange(false)
+      } catch (error) {
+        toast.error(
+          getUserFacingErrorMessage(
+            error,
+            "Impossible d’enregistrer la recette."
+          )
+        )
+      }
+    },
+  })
+  const formValues = useStore(form.store, (state) => state.values)
   const costCalculation = useMemo(() => {
     const missingPrices = new Set<string>()
-    let complete = ingredients.length > 0
+    let complete = formValues.ingredients.length > 0
     let value = 0
 
-    for (const ingredient of ingredients) {
+    for (const ingredient of formValues.ingredients) {
       const product = ingredientProducts.find(
         (entry) => entry._id === ingredient.productId
       )
@@ -167,43 +203,28 @@ export function RecipeDialog({
 
     return {
       cost:
-        complete && missingPrices.size === 0 && ingredients.length > 0
+        complete &&
+        missingPrices.size === 0 &&
+        formValues.ingredients.length > 0
           ? value
           : undefined,
       missingPrices: [...missingPrices].sort((left, right) =>
         left.localeCompare(right, "fr")
       ),
     }
-  }, [ingredientProducts, ingredients])
-
-  function resetForm() {
-    setName(recipe?.name ?? initialProduct?.name ?? "")
-    setFamily(recipe && isRecipeFamily(recipe.family) ? recipe.family : "")
-    setOutputProductId(initialProduct?._id ?? "new")
-    setEffect(recipe?.effect ?? "")
-    if (recipe?.ingredients.length) {
-      setIngredients(
-        recipe.ingredients.map((ingredient, index) => ({
-          key: index,
-          productId: ingredient.productId ?? "",
-          quantity: ingredient.quantity.toString(),
-        }))
-      )
-      nextLineKey.current = recipe.ingredients.length
-      return
-    }
-    setIngredients([{ key: 0, productId: "", quantity: "1" }])
-    nextLineKey.current = 1
-  }
+  }, [formValues.ingredients, ingredientProducts])
 
   function handleOpenChange(nextOpen: boolean) {
-    if (nextOpen && !open) resetForm()
+    if (nextOpen && !open) {
+      form.reset(recipeValues())
+      nextLineKey.current = Math.max(1, recipe?.ingredients.length ?? 0)
+    }
     if (controlledOpen === undefined) setInternalOpen(nextOpen)
     onOpenChange?.(nextOpen)
   }
 
   function updateIngredient(key: number, patch: Partial<IngredientDraft>) {
-    setIngredients((current) =>
+    form.setFieldValue("ingredients", (current) =>
       current.map((ingredient) =>
         ingredient.key === key ? { ...ingredient, ...patch } : ingredient
       )
@@ -213,94 +234,21 @@ export function RecipeDialog({
   function addIngredient() {
     const key = nextLineKey.current
     nextLineKey.current += 1
-    setIngredients((current) => [
+    form.setFieldValue("ingredients", (current) => [
       ...current,
       { key, productId: "", quantity: "1" },
     ])
   }
 
   function removeIngredient(key: number) {
-    setIngredients((current) =>
+    form.setFieldValue("ingredients", (current) =>
       current.filter((ingredient) => ingredient.key !== key)
     )
   }
 
-  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    const preparedIngredients = ingredients.map((ingredient) => ({
-      productId: ingredientProducts.find(
-        (product) => product._id === ingredient.productId
-      )?._id,
-      quantity: Number(ingredient.quantity),
-    }))
-    const submittedName = selectedOutputProduct?.name ?? name.trim()
-    if (!submittedName || !family) {
-      toast.error("Le nom et la catégorie de la recette sont obligatoires.")
-      return
-    }
-    if (
-      preparedIngredients.length === 0 ||
-      preparedIngredients.some(
-        (ingredient) =>
-          !ingredient.productId ||
-          !Number.isFinite(ingredient.quantity) ||
-          !Number.isInteger(ingredient.quantity) ||
-          ingredient.quantity <= 0
-      )
-    ) {
-      toast.error(
-        "Chaque ligne doit contenir un ingrédient et une quantité entière."
-      )
-      return
-    }
-    const ingredientIds = preparedIngredients.flatMap((ingredient) =>
-      ingredient.productId ? [ingredient.productId] : []
-    )
-    if (new Set(ingredientIds).size !== ingredientIds.length) {
-      toast.error("Un ingrédient ne peut apparaître qu’une fois.")
-      return
-    }
-    const producedProductId = recipe?.productId ?? selectedOutputProduct?._id
-    if (producedProductId && ingredientIds.includes(producedProductId)) {
-      toast.error("Un article ne peut pas être son propre ingrédient.")
-      return
-    }
-
-    setIsSubmitting(true)
-    try {
-      await saveRecipe({
-        effect: effect.trim(),
-        family,
-        ingredients: preparedIngredients.flatMap((ingredient) =>
-          ingredient.productId
-            ? [
-                {
-                  productId: ingredient.productId,
-                  quantity: ingredient.quantity,
-                },
-              ]
-            : []
-        ),
-        name: submittedName,
-        ...(!recipe && selectedOutputProduct
-          ? { outputProductId: selectedOutputProduct._id }
-          : {}),
-        ...(recipe ? { recipeId: recipe._id } : {}),
-      })
-      toast.success(recipe ? "Recette mise à jour." : "Recette créée.")
-      handleOpenChange(false)
-    } catch (error) {
-      toast.error(
-        getUserFacingErrorMessage(error, "Impossible d’enregistrer la recette.")
-      )
-    } finally {
-      setIsSubmitting(false)
-    }
-  }
-
   async function archiveRecipe() {
     if (!recipe) return
-    setIsSubmitting(true)
+    setIsArchiving(true)
     try {
       await setRecipeActive({ active: false, recipeId: recipe._id })
       toast.success("Recette archivée.")
@@ -310,7 +258,7 @@ export function RecipeDialog({
         getUserFacingErrorMessage(error, "Impossible d’archiver la recette.")
       )
     } finally {
-      setIsSubmitting(false)
+      setIsArchiving(false)
     }
   }
 
@@ -344,109 +292,199 @@ export function RecipeDialog({
           </DialogDescription>
         </DialogHeader>
 
-        <form className="grid gap-5" onSubmit={handleSubmit}>
+        <form
+          className="grid gap-5"
+          noValidate
+          onSubmit={(event) => {
+            event.preventDefault()
+            void form.handleSubmit()
+          }}
+        >
           <div className="grid gap-4 sm:grid-cols-2">
             {recipe || !showOutputProductSelect ? (
-              <div className="grid gap-2">
-                <Label htmlFor={`${fieldId}-name`}>Nom de la potion</Label>
-                <Input
-                  id={`${fieldId}-name`}
-                  maxLength={100}
-                  onChange={(event) => setName(event.target.value)}
-                  placeholder="Élixir du veilleur"
-                  required
-                  value={name}
-                />
-              </div>
+              <form.Field name="name">
+                {(field) => {
+                  const invalid =
+                    field.state.meta.isTouched && !field.state.meta.isValid
+                  return (
+                    <Field data-invalid={invalid}>
+                      <FieldLabel htmlFor={`${fieldId}-name`}>
+                        Nom de la potion
+                      </FieldLabel>
+                      <Input
+                        aria-invalid={invalid}
+                        id={`${fieldId}-name`}
+                        maxLength={100}
+                        name={field.name}
+                        onBlur={field.handleBlur}
+                        onChange={(event) =>
+                          field.handleChange(event.target.value)
+                        }
+                        placeholder="Élixir du veilleur"
+                        required
+                        value={field.state.value}
+                      />
+                      {invalid ? (
+                        <FieldError errors={field.state.meta.errors} />
+                      ) : null}
+                    </Field>
+                  )
+                }}
+              </form.Field>
             ) : (
-              <div className="grid gap-2">
-                <Label htmlFor={`${fieldId}-output`}>Potion obtenue</Label>
-                <Select
-                  disabled={initialProduct !== undefined}
-                  onValueChange={(value) => {
-                    setOutputProductId(value)
-                    const product = outputProducts.find(
-                      (entry) => entry._id === value
-                    )
-                    setName(product?.name ?? "")
-                  }}
-                  value={outputProductId}
-                >
-                  <SelectTrigger className="w-full" id={`${fieldId}-output`}>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="new">Nouvelle potion</SelectItem>
-                    {outputProducts.length > 0 ? (
-                      <SelectGroup>
-                        <SelectLabel>Potions sans recette</SelectLabel>
-                        {outputProducts.map((product) => (
-                          <SelectItem key={product._id} value={product._id}>
-                            {product.name}
+              <form.Field name="outputProductId">
+                {(field) => (
+                  <Field>
+                    <FieldLabel htmlFor={`${fieldId}-output`}>
+                      Potion obtenue
+                    </FieldLabel>
+                    <Select
+                      disabled={initialProduct !== undefined}
+                      name={field.name}
+                      onValueChange={(value) => {
+                        field.handleChange(value)
+                        const product = outputProducts.find(
+                          (entry) => entry._id === value
+                        )
+                        form.setFieldValue("name", product?.name ?? "")
+                      }}
+                      value={field.state.value}
+                    >
+                      <SelectTrigger
+                        className="w-full"
+                        id={`${fieldId}-output`}
+                        onBlur={field.handleBlur}
+                      >
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="new">Nouvelle potion</SelectItem>
+                        {outputProducts.length > 0 ? (
+                          <SelectGroup>
+                            <SelectLabel>Potions sans recette</SelectLabel>
+                            {outputProducts.map((product) => (
+                              <SelectItem key={product._id} value={product._id}>
+                                {product.name}
+                              </SelectItem>
+                            ))}
+                          </SelectGroup>
+                        ) : null}
+                      </SelectContent>
+                    </Select>
+                  </Field>
+                )}
+              </form.Field>
+            )}
+            <form.Field name="family">
+              {(field) => {
+                const invalid =
+                  field.state.meta.isTouched && !field.state.meta.isValid
+                return (
+                  <Field data-invalid={invalid}>
+                    <FieldLabel htmlFor={`${fieldId}-family`}>
+                      Catégorie
+                    </FieldLabel>
+                    <Select
+                      name={field.name}
+                      onValueChange={(value) => {
+                        if (isRecipeFamily(value)) field.handleChange(value)
+                      }}
+                      value={field.state.value}
+                    >
+                      <SelectTrigger
+                        aria-invalid={invalid}
+                        className="w-full"
+                        id={`${fieldId}-family`}
+                        onBlur={field.handleBlur}
+                      >
+                        <SelectValue placeholder="Choisir une catégorie…" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {recipeFamilies.map((entry) => (
+                          <SelectItem key={entry} value={entry}>
+                            {entry}
                           </SelectItem>
                         ))}
-                      </SelectGroup>
+                      </SelectContent>
+                    </Select>
+                    {invalid ? (
+                      <FieldError errors={field.state.meta.errors} />
                     ) : null}
-                  </SelectContent>
-                </Select>
-              </div>
-            )}
-            <div className="grid gap-2">
-              <Label htmlFor={`${fieldId}-family`}>Catégorie</Label>
-              <Select
-                onValueChange={(value) => {
-                  if (isRecipeFamily(value)) setFamily(value)
+                  </Field>
+                )
+              }}
+            </form.Field>
+            {showOutputProductSelect && formValues.outputProductId === "new" ? (
+              <form.Field name="name">
+                {(field) => {
+                  const invalid =
+                    field.state.meta.isTouched && !field.state.meta.isValid
+                  return (
+                    <Field className="sm:col-span-2" data-invalid={invalid}>
+                      <FieldLabel htmlFor={`${fieldId}-name`}>
+                        Nom de la potion
+                      </FieldLabel>
+                      <Input
+                        aria-invalid={invalid}
+                        id={`${fieldId}-name`}
+                        maxLength={100}
+                        name={field.name}
+                        onBlur={field.handleBlur}
+                        onChange={(event) =>
+                          field.handleChange(event.target.value)
+                        }
+                        placeholder="Élixir du veilleur"
+                        required
+                        value={field.state.value}
+                      />
+                      {invalid ? (
+                        <FieldError errors={field.state.meta.errors} />
+                      ) : null}
+                    </Field>
+                  )
                 }}
-                value={family}
-              >
-                <SelectTrigger className="w-full" id={`${fieldId}-family`}>
-                  <SelectValue placeholder="Choisir une catégorie…" />
-                </SelectTrigger>
-                <SelectContent>
-                  {recipeFamilies.map((entry) => (
-                    <SelectItem key={entry} value={entry}>
-                      {entry}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            {showOutputProductSelect && outputProductId === "new" ? (
-              <div className="grid gap-2 sm:col-span-2">
-                <Label htmlFor={`${fieldId}-name`}>Nom de la potion</Label>
-                <Input
-                  id={`${fieldId}-name`}
-                  maxLength={100}
-                  onChange={(event) => setName(event.target.value)}
-                  placeholder="Élixir du veilleur"
-                  required
-                  value={name}
-                />
-              </div>
+              </form.Field>
             ) : null}
           </div>
 
-          <div className="grid gap-2">
-            <Label htmlFor={`${fieldId}-effect`}>Effet ou usage</Label>
-            <Textarea
-              id={`${fieldId}-effect`}
-              maxLength={500}
-              onChange={(event) => setEffect(event.target.value)}
-              placeholder="Décrivez l’effet utile de cette préparation."
-              value={effect}
-            />
-          </div>
+          <form.Field name="effect">
+            {(field) => {
+              const invalid =
+                field.state.meta.isTouched && !field.state.meta.isValid
+              return (
+                <Field data-invalid={invalid}>
+                  <FieldLabel htmlFor={`${fieldId}-effect`}>
+                    Effet ou usage
+                  </FieldLabel>
+                  <Textarea
+                    aria-invalid={invalid}
+                    id={`${fieldId}-effect`}
+                    maxLength={500}
+                    name={field.name}
+                    onBlur={field.handleBlur}
+                    onChange={(event) => field.handleChange(event.target.value)}
+                    placeholder="Décrivez l’effet utile de cette préparation."
+                    value={field.state.value}
+                  />
+                  {invalid ? (
+                    <FieldError errors={field.state.meta.errors} />
+                  ) : null}
+                </Field>
+              )
+            }}
+          </form.Field>
 
           <Separator />
           <div className="grid gap-3">
             <div className="flex items-end justify-between gap-3">
               <div>
-                <Label>Ingrédients</Label>
+                <FieldLabel>Ingrédients</FieldLabel>
                 <p className="mt-1 text-xs text-muted-foreground">
                   Quantités consommées pour une fabrication.
                 </p>
               </div>
               <Button
+                disabled={formValues.ingredients.length >= MAX_DYNAMIC_LINES}
                 onClick={addIngredient}
                 size="sm"
                 type="button"
@@ -457,44 +495,74 @@ export function RecipeDialog({
               </Button>
             </div>
 
-            {ingredients.map((ingredient, index) => (
+            {formValues.ingredients.map((ingredient, index) => (
               <div
                 className="flex items-end gap-2 border-l-2 border-primary/35 pl-3"
                 key={ingredient.key}
               >
-                <div className="grid min-w-0 flex-1 gap-2">
-                  <Label>Ingrédient {index + 1}</Label>
-                  <ProductPicker
-                    onChange={(value) =>
-                      updateIngredient(ingredient.key, {
-                        productId: value ?? "",
-                      })
-                    }
-                    products={ingredientProducts}
-                    selectedProductId={ingredient.productId}
-                  />
-                </div>
-                <div className="grid w-24 gap-2">
-                  <Label htmlFor={`${fieldId}-quantity-${ingredient.key}`}>
-                    Quantité
-                  </Label>
-                  <Input
-                    id={`${fieldId}-quantity-${ingredient.key}`}
-                    min="1"
-                    onChange={(event) =>
-                      updateIngredient(ingredient.key, {
-                        quantity: event.target.value,
-                      })
-                    }
-                    required
-                    step="1"
-                    type="number"
-                    value={ingredient.quantity}
-                  />
-                </div>
+                <form.Field name={`ingredients[${index}].productId`}>
+                  {(field) => {
+                    const invalid =
+                      field.state.meta.isTouched && !field.state.meta.isValid
+                    return (
+                      <Field className="min-w-0 flex-1" data-invalid={invalid}>
+                        <FieldLabel>Ingrédient {index + 1}</FieldLabel>
+                        <ProductPicker
+                          ariaInvalid={invalid}
+                          name={field.name}
+                          onBlur={field.handleBlur}
+                          onChange={(value) =>
+                            updateIngredient(ingredient.key, {
+                              productId: value ?? "",
+                            })
+                          }
+                          products={ingredientProducts}
+                          selectedProductId={field.state.value}
+                        />
+                        {invalid ? (
+                          <FieldError errors={field.state.meta.errors} />
+                        ) : null}
+                      </Field>
+                    )
+                  }}
+                </form.Field>
+                <form.Field name={`ingredients[${index}].quantity`}>
+                  {(field) => {
+                    const invalid =
+                      field.state.meta.isTouched && !field.state.meta.isValid
+                    return (
+                      <Field className="w-24" data-invalid={invalid}>
+                        <FieldLabel
+                          htmlFor={`${fieldId}-quantity-${ingredient.key}`}
+                        >
+                          Quantité
+                        </FieldLabel>
+                        <Input
+                          aria-invalid={invalid}
+                          id={`${fieldId}-quantity-${ingredient.key}`}
+                          min="1"
+                          name={field.name}
+                          onBlur={field.handleBlur}
+                          onChange={(event) =>
+                            updateIngredient(ingredient.key, {
+                              quantity: event.target.value,
+                            })
+                          }
+                          required
+                          step="1"
+                          type="number"
+                          value={field.state.value}
+                        />
+                        {invalid ? (
+                          <FieldError errors={field.state.meta.errors} />
+                        ) : null}
+                      </Field>
+                    )
+                  }}
+                </form.Field>
                 <Button
                   aria-label={`Retirer l’ingrédient ${index + 1}`}
-                  disabled={ingredients.length === 1}
+                  disabled={formValues.ingredients.length === 1}
                   onClick={() => removeIngredient(ingredient.key)}
                   size="icon-lg"
                   type="button"
@@ -581,19 +649,23 @@ export function RecipeDialog({
               >
                 Annuler
               </Button>
-              <Button disabled={isSubmitting} type="submit">
-                {isSubmitting ? (
-                  <Spinner
-                    aria-hidden="true"
-                    className="motion-reduce:animate-none"
-                  />
-                ) : recipe ? (
-                  <Pencil aria-hidden="true" />
-                ) : (
-                  <BookPlus aria-hidden="true" />
+              <form.Subscribe selector={(state) => state.isSubmitting}>
+                {(isSubmitting) => (
+                  <Button disabled={isSubmitting || isArchiving} type="submit">
+                    {isSubmitting ? (
+                      <Spinner
+                        aria-hidden="true"
+                        className="motion-reduce:animate-none"
+                      />
+                    ) : recipe ? (
+                      <Pencil aria-hidden="true" />
+                    ) : (
+                      <BookPlus aria-hidden="true" />
+                    )}
+                    {recipe ? "Enregistrer" : "Créer la recette"}
+                  </Button>
                 )}
-                {recipe ? "Enregistrer" : "Créer la recette"}
-              </Button>
+              </form.Subscribe>
             </div>
           </DialogFooter>
         </form>

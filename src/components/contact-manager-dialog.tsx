@@ -1,3 +1,4 @@
+import { useForm } from "@tanstack/react-form"
 import { useMutation, useQuery } from "convex/react"
 import {
   Archive,
@@ -7,7 +8,7 @@ import {
   Pencil,
   X,
 } from "lucide-react"
-import { useState, type FormEvent } from "react"
+import { useState } from "react"
 import { toast } from "sonner"
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
@@ -21,10 +22,12 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog"
+import { Field, FieldError } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Spinner } from "@/components/ui/spinner"
 import { getUserFacingErrorMessage } from "@/lib/errors"
+import { namedEntityFormSchema } from "@/lib/form-schemas"
 import { api } from "../../convex/_generated/api"
 import { type Doc } from "../../convex/_generated/dataModel"
 
@@ -40,35 +43,36 @@ export function ContactManagerDialog() {
   const renameContact = useMutation(api.contacts.rename)
   const setContactActive = useMutation(api.contacts.setActive)
   const [editingId, setEditingId] = useState<string>()
-  const [name, setName] = useState("")
   const [pendingId, setPendingId] = useState<string>()
+  const renameForm = useForm({
+    defaultValues: { name: "" },
+    onSubmit: async ({ value }) => {
+      const contact = contacts?.find((entry) => entry._id === editingId)
+      if (!contact) return
+      setPendingId(contact._id)
+      try {
+        await renameContact({
+          contactId: contact._id,
+          name: value.name.trim(),
+        })
+        toast.success(
+          "Contact renommé. Les anciennes commandes sont inchangées."
+        )
+        setEditingId(undefined)
+      } catch (error) {
+        toast.error(
+          getUserFacingErrorMessage(error, "Impossible de renommer le contact.")
+        )
+      } finally {
+        setPendingId(undefined)
+      }
+    },
+    validators: { onSubmit: namedEntityFormSchema },
+  })
 
   function startEditing(contact: Contact) {
     setEditingId(contact._id)
-    setName(contact.name)
-  }
-
-  async function submitRename(
-    event: FormEvent<HTMLFormElement>,
-    contact: Contact
-  ) {
-    event.preventDefault()
-    if (!name.trim()) {
-      toast.error("Le nom du contact est obligatoire.")
-      return
-    }
-    setPendingId(contact._id)
-    try {
-      await renameContact({ contactId: contact._id, name: name.trim() })
-      toast.success("Contact renommé. Les anciennes commandes sont inchangées.")
-      setEditingId(undefined)
-    } catch (error) {
-      toast.error(
-        getUserFacingErrorMessage(error, "Impossible de renommer le contact.")
-      )
-    } finally {
-      setPendingId(undefined)
-    }
+    renameForm.reset({ name: contact.name })
   }
 
   async function toggleContact(contact: Contact) {
@@ -159,20 +163,41 @@ export function ContactManagerDialog() {
                         >
                           {editing ? (
                             <form
-                              className="flex min-w-0 flex-1 items-center gap-2"
+                              className="grid min-w-0 flex-1 grid-cols-[minmax(0,1fr)_auto_auto] items-start gap-2"
+                              noValidate
                               onSubmit={(event) => {
-                                void submitRename(event, contact)
+                                event.preventDefault()
+                                void renameForm.handleSubmit()
                               }}
                             >
-                              <Input
-                                aria-label={`Nouveau nom de ${contact.name}`}
-                                autoFocus
-                                maxLength={100}
-                                onChange={(event) =>
-                                  setName(event.target.value)
-                                }
-                                value={name}
-                              />
+                              <renameForm.Field name="name">
+                                {(field) => {
+                                  const invalid =
+                                    field.state.meta.isTouched &&
+                                    !field.state.meta.isValid
+                                  return (
+                                    <Field data-invalid={invalid}>
+                                      <Input
+                                        aria-invalid={invalid}
+                                        aria-label={`Nouveau nom de ${contact.name}`}
+                                        autoFocus
+                                        maxLength={100}
+                                        name={field.name}
+                                        onBlur={field.handleBlur}
+                                        onChange={(event) =>
+                                          field.handleChange(event.target.value)
+                                        }
+                                        value={field.state.value}
+                                      />
+                                      {invalid ? (
+                                        <FieldError
+                                          errors={field.state.meta.errors}
+                                        />
+                                      ) : null}
+                                    </Field>
+                                  )
+                                }}
+                              </renameForm.Field>
                               <Button
                                 aria-label="Enregistrer le nom"
                                 disabled={pending}

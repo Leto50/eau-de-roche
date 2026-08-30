@@ -18,14 +18,20 @@ import { type Doc, type Id } from "../../convex/_generated/dataModel"
 import { formatNumber } from "@/lib/format"
 
 export function ProductPicker({
+  ariaInvalid = false,
   clearLabel,
+  name,
+  onBlur,
   onChange,
   placeholder = "Choisir un produit…",
   products,
   selectedProductId,
   showStock = true,
 }: Readonly<{
+  ariaInvalid?: boolean
   clearLabel?: string
+  name?: string
+  onBlur?: () => void
   onChange: (productId: Id<"products"> | undefined) => void
   placeholder?: string
   products: readonly Doc<"products">[]
@@ -42,7 +48,10 @@ export function ProductPicker({
       <PopoverTrigger asChild>
         <Button
           aria-expanded={open}
+          aria-invalid={ariaInvalid}
           className="h-9 min-w-0 flex-1 justify-between bg-background/50 px-3 font-normal"
+          name={name}
+          onBlur={onBlur}
           role="combobox"
           type="button"
           variant="outline"

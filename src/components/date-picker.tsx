@@ -18,6 +18,7 @@ import {
 import { cn } from "@/lib/utils"
 
 interface DatePickerProps {
+  ariaInvalid?: boolean
   ariaLabel: string
   className?: string
   disabled?: boolean
@@ -25,6 +26,8 @@ interface DatePickerProps {
   id: string
   max?: string
   min?: string
+  name?: string
+  onBlur?: () => void
   onChange: (value: string) => void
   placeholder?: string
   required?: boolean
@@ -32,6 +35,7 @@ interface DatePickerProps {
 }
 
 export function DatePicker({
+  ariaInvalid = false,
   ariaLabel,
   className,
   disabled = false,
@@ -39,6 +43,8 @@ export function DatePicker({
   id,
   max,
   min,
+  name,
+  onBlur,
   onChange,
   placeholder = "Choisir une date",
   required = false,
@@ -57,6 +63,7 @@ export function DatePicker({
     <Popover onOpenChange={setOpen} open={open}>
       <PopoverTrigger asChild>
         <Button
+          aria-invalid={ariaInvalid}
           aria-label={ariaLabel}
           aria-required={required}
           className={cn(
@@ -66,6 +73,8 @@ export function DatePicker({
           )}
           disabled={disabled}
           id={id}
+          name={name}
+          onBlur={onBlur}
           type="button"
           variant="outline"
         >

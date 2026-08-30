@@ -1,14 +1,16 @@
 import { createFileRoute, redirect } from "@tanstack/react-router"
+import { useForm } from "@tanstack/react-form"
 import { AlertCircle, KeyRound } from "lucide-react"
 import { useState } from "react"
 
 import { ShopMark } from "@/components/shop-mark"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
+import { Field, FieldError, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
 import { Spinner } from "@/components/ui/spinner"
 import { authClient } from "@/lib/auth-client"
+import { loginFormSchema } from "@/lib/form-schemas"
 
 export const Route = createFileRoute("/connexion")({
   beforeLoad: ({ context }) => {
@@ -23,26 +25,25 @@ export const Route = createFileRoute("/connexion")({
 })
 
 function AuthenticationPage() {
-  const [email, setEmail] = useState("")
-  const [password, setPassword] = useState("")
   const [error, setError] = useState<string>()
-  const [isSubmitting, setIsSubmitting] = useState(false)
+  const form = useForm({
+    defaultValues: { email: "", password: "" },
+    onSubmit: async ({ value }) => {
+      setError(undefined)
+      const result = await authClient.signIn.email({
+        email: value.email.trim().toLowerCase(),
+        password: value.password,
+      })
 
-  async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    setError(undefined)
-    setIsSubmitting(true)
+      if (result.error) {
+        setError("Adresse e-mail ou mot de passe incorrect.")
+        return
+      }
 
-    const result = await authClient.signIn.email({ email, password })
-
-    if (result.error) {
-      setError("Adresse e-mail ou mot de passe incorrect.")
-      setIsSubmitting(false)
-      return
-    }
-
-    window.location.assign("/")
-  }
+      window.location.assign("/")
+    },
+    validators: { onSubmit: loginFormSchema },
+  })
 
   return (
     <main className="grid min-h-svh grid-cols-[minmax(0,0.95fr)_minmax(28rem,1.05fr)] bg-[#181611] max-[60rem]:block">
@@ -82,32 +83,71 @@ function AuthenticationPage() {
             administrateur.
           </p>
 
-          <form className="mt-8 grid gap-5" onSubmit={handleSubmit}>
-            <div className="grid gap-2">
-              <Label htmlFor="email">Adresse e-mail</Label>
-              <Input
-                autoComplete="email"
-                id="email"
-                maxLength={254}
-                onChange={(event) => setEmail(event.target.value)}
-                placeholder="employe@exemple.fr"
-                required
-                type="email"
-                value={email}
-              />
-            </div>
-            <div className="grid gap-2">
-              <Label htmlFor="password">Mot de passe</Label>
-              <Input
-                autoComplete="current-password"
-                id="password"
-                maxLength={128}
-                onChange={(event) => setPassword(event.target.value)}
-                required
-                type="password"
-                value={password}
-              />
-            </div>
+          <form
+            className="mt-8 grid gap-5"
+            noValidate
+            onSubmit={(event) => {
+              event.preventDefault()
+              void form.handleSubmit()
+            }}
+          >
+            <form.Field name="email">
+              {(field) => {
+                const invalid =
+                  field.state.meta.isTouched && !field.state.meta.isValid
+                return (
+                  <Field data-invalid={invalid}>
+                    <FieldLabel htmlFor={field.name}>Adresse e-mail</FieldLabel>
+                    <Input
+                      aria-invalid={invalid}
+                      autoComplete="email"
+                      id={field.name}
+                      maxLength={254}
+                      name={field.name}
+                      onBlur={field.handleBlur}
+                      onChange={(event) =>
+                        field.handleChange(event.target.value)
+                      }
+                      placeholder="employe@exemple.fr"
+                      required
+                      type="email"
+                      value={field.state.value}
+                    />
+                    {invalid ? (
+                      <FieldError errors={field.state.meta.errors} />
+                    ) : null}
+                  </Field>
+                )
+              }}
+            </form.Field>
+            <form.Field name="password">
+              {(field) => {
+                const invalid =
+                  field.state.meta.isTouched && !field.state.meta.isValid
+                return (
+                  <Field data-invalid={invalid}>
+                    <FieldLabel htmlFor={field.name}>Mot de passe</FieldLabel>
+                    <Input
+                      aria-invalid={invalid}
+                      autoComplete="current-password"
+                      id={field.name}
+                      maxLength={128}
+                      name={field.name}
+                      onBlur={field.handleBlur}
+                      onChange={(event) =>
+                        field.handleChange(event.target.value)
+                      }
+                      required
+                      type="password"
+                      value={field.state.value}
+                    />
+                    {invalid ? (
+                      <FieldError errors={field.state.meta.errors} />
+                    ) : null}
+                  </Field>
+                )
+              }}
+            </form.Field>
 
             {error ? (
               <Alert variant="destructive">
@@ -117,17 +157,25 @@ function AuthenticationPage() {
               </Alert>
             ) : null}
 
-            <Button className="mt-1 h-10" disabled={isSubmitting} type="submit">
-              {isSubmitting ? (
-                <Spinner
-                  aria-hidden="true"
-                  className="motion-reduce:animate-none"
-                />
-              ) : (
-                <KeyRound aria-hidden="true" />
+            <form.Subscribe selector={(state) => state.isSubmitting}>
+              {(isSubmitting) => (
+                <Button
+                  className="mt-1 h-10"
+                  disabled={isSubmitting}
+                  type="submit"
+                >
+                  {isSubmitting ? (
+                    <Spinner
+                      aria-hidden="true"
+                      className="motion-reduce:animate-none"
+                    />
+                  ) : (
+                    <KeyRound aria-hidden="true" />
+                  )}
+                  Se connecter
+                </Button>
               )}
-              Se connecter
-            </Button>
+            </form.Subscribe>
           </form>
         </div>
       </section>
