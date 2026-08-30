@@ -6,7 +6,6 @@ import {
   ChevronRight,
   CircleUserRound,
   ListChecks,
-  LoaderCircle,
   Pencil,
   ShieldAlert,
   ShieldCheck,
@@ -24,6 +23,7 @@ import { PageSkeleton } from "@/components/page-skeleton"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import { Spinner } from "@/components/ui/spinner"
 import {
   Card,
   CardAction,
@@ -346,9 +346,9 @@ function AuditPanel({
   if (isLoading) {
     return (
       <div className="grid min-h-48 place-items-center" role="status">
-        <LoaderCircle
+        <Spinner
           aria-hidden="true"
-          className="size-6 animate-spin text-primary motion-reduce:animate-none"
+          className="size-6 text-primary motion-reduce:animate-none"
         />
         <span className="sr-only">Chargement de l’historique d’audit</span>
       </div>

@@ -7,7 +7,6 @@ import {
   ChevronsUpDown,
   Coins,
   Hammer,
-  LoaderCircle,
   PackageOpen,
   Pencil,
   Plus,
@@ -18,6 +17,7 @@ import {
 import { useId, useState, type FormEvent, type ReactElement } from "react"
 import { toast } from "sonner"
 
+import { DatePicker } from "@/components/date-picker"
 import { PriceInput } from "@/components/price-input"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
@@ -65,6 +65,7 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { Separator } from "@/components/ui/separator"
+import { Spinner } from "@/components/ui/spinner"
 import { Textarea } from "@/components/ui/textarea"
 import { getUserFacingErrorMessage } from "@/lib/errors"
 import { categoryLabels, formatNumber, formatSeptims } from "@/lib/format"
@@ -1261,11 +1262,11 @@ export function OperationDialog({
                 ) : null}
                 <div className="grid gap-2">
                   <Label htmlFor={`${formId}-date`}>Date</Label>
-                  <Input
+                  <DatePicker
+                    ariaLabel="Date de l’opération"
                     id={`${formId}-date`}
-                    onChange={(event) => setOccurredOn(event.target.value)}
+                    onChange={setOccurredOn}
                     required
-                    type="date"
                     value={occurredOn}
                   />
                 </div>
@@ -1331,9 +1332,9 @@ export function OperationDialog({
               type="submit"
             >
               {isSubmitting ? (
-                <LoaderCircle
+                <Spinner
                   aria-hidden="true"
-                  className="animate-spin motion-reduce:animate-none"
+                  className="motion-reduce:animate-none"
                 />
               ) : transaction ? (
                 <>

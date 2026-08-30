@@ -1,13 +1,6 @@
 import { useMutation } from "convex/react"
 import { type FunctionReturnType } from "convex/server"
-import {
-  ClipboardPlus,
-  LoaderCircle,
-  Pencil,
-  Plus,
-  RefreshCw,
-  Trash2,
-} from "lucide-react"
+import { ClipboardPlus, Pencil, Plus, RefreshCw, Trash2 } from "lucide-react"
 import {
   useId,
   useRef,
@@ -17,6 +10,7 @@ import {
 } from "react"
 import { toast } from "sonner"
 
+import { DatePicker } from "@/components/date-picker"
 import { PriceInput } from "@/components/price-input"
 import { OrderPreparationDetails } from "@/components/order-preparation-details"
 import { ProductPicker } from "@/components/product-picker"
@@ -59,6 +53,7 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { Separator } from "@/components/ui/separator"
+import { Spinner } from "@/components/ui/spinner"
 import { Textarea } from "@/components/ui/textarea"
 import { api } from "../../convex/_generated/api"
 import { type Doc } from "../../convex/_generated/dataModel"
@@ -562,11 +557,15 @@ export function OrderDialog({
                       ? "Date du paiement"
                       : "Date de réception"}
                   </Label>
-                  <Input
+                  <DatePicker
+                    ariaLabel={
+                      kind === "client"
+                        ? "Date du paiement"
+                        : "Date de réception"
+                    }
                     id={`${fieldId}-processed-date`}
-                    onChange={(event) => setProcessedDate(event.target.value)}
+                    onChange={setProcessedDate}
                     required
-                    type="date"
                     value={processedDate}
                   />
                 </div>
@@ -579,10 +578,12 @@ export function OrderDialog({
               <Label htmlFor={`${fieldId}-due-date`}>
                 {kind === "client" ? "Livraison prévue" : "Réception prévue"}
               </Label>
-              <Input
+              <DatePicker
+                ariaLabel={
+                  kind === "client" ? "Livraison prévue" : "Réception prévue"
+                }
                 id={`${fieldId}-due-date`}
-                onChange={(event) => setDueDate(event.target.value)}
-                type="date"
+                onChange={setDueDate}
                 value={dueDate}
               />
             </div>
@@ -807,9 +808,9 @@ export function OrderDialog({
               </Button>
               <Button disabled={isSubmitting} type="submit">
                 {isSubmitting ? (
-                  <LoaderCircle
+                  <Spinner
                     aria-hidden="true"
-                    className="animate-spin motion-reduce:animate-none"
+                    className="motion-reduce:animate-none"
                   />
                 ) : order ? (
                   <Pencil aria-hidden="true" />

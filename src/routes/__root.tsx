@@ -97,7 +97,7 @@ function RootDocument({ children }: Readonly<{ children: ReactNode }>) {
       </head>
       <body className="min-w-80 bg-background text-foreground antialiased selection:bg-primary selection:text-primary-foreground">
         <TooltipProvider>{children}</TooltipProvider>
-        <Toaster closeButton position="bottom-right" richColors />
+        <Toaster theme="light" />
         <Scripts />
       </body>
     </html>

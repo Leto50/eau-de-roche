@@ -1,4 +1,4 @@
-import { LoaderCircle, UserPlus, UserRoundCheck } from "lucide-react"
+import { UserPlus, UserRoundCheck } from "lucide-react"
 import { useState, type FormEvent } from "react"
 import { toast } from "sonner"
 
@@ -14,6 +14,7 @@ import {
 } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import { Spinner } from "@/components/ui/spinner"
 import {
   Select,
   SelectContent,
@@ -184,9 +185,9 @@ export function AccountDialog({
             </Button>
             <Button disabled={isSubmitting} type="submit">
               {isSubmitting ? (
-                <LoaderCircle
+                <Spinner
                   aria-hidden="true"
-                  className="animate-spin motion-reduce:animate-none"
+                  className="motion-reduce:animate-none"
                 />
               ) : (
                 <UserPlus aria-hidden="true" />

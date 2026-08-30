@@ -10,7 +10,6 @@ import {
   ChevronRight,
   Ellipsis,
   Hammer,
-  LoaderCircle,
   Pencil,
   Plus,
   Search,
@@ -21,6 +20,7 @@ import {
 import { useState, type MouseEvent } from "react"
 import { toast } from "sonner"
 
+import { DatePicker } from "@/components/date-picker"
 import {
   OperationDialog,
   type OperationKind,
@@ -70,6 +70,7 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { Skeleton } from "@/components/ui/skeleton"
+import { Spinner } from "@/components/ui/spinner"
 import {
   Table,
   TableBody,
@@ -418,23 +419,27 @@ function JournalPage() {
           <div className="grid grid-cols-2 gap-2 md:col-span-2 xl:col-span-1">
             <div className="space-y-1.5">
               <Label htmlFor="journal-from">Du</Label>
-              <Input
+              <DatePicker
+                ariaLabel="Date de début"
                 className="h-9 bg-background/50"
+                display="short"
                 id="journal-from"
                 max={filters.to}
-                onChange={(event) => updateDate("from", event.target.value)}
-                type="date"
+                onChange={(value) => updateDate("from", value)}
+                placeholder="Date"
                 value={filters.from ?? ""}
               />
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="journal-to">Au</Label>
-              <Input
+              <DatePicker
+                ariaLabel="Date de fin"
                 className="h-9 bg-background/50"
+                display="short"
                 id="journal-to"
                 min={filters.from}
-                onChange={(event) => updateDate("to", event.target.value)}
-                type="date"
+                onChange={(value) => updateDate("to", value)}
+                placeholder="Date"
                 value={filters.to ?? ""}
               />
             </div>
@@ -770,9 +775,9 @@ function TransactionActions({
               variant="destructive"
             >
               {isSubmitting ? (
-                <LoaderCircle
+                <Spinner
                   aria-hidden="true"
-                  className="animate-spin motion-reduce:animate-none"
+                  className="motion-reduce:animate-none"
                 />
               ) : (
                 <Trash2 aria-hidden="true" />
@@ -827,10 +832,7 @@ function TransactionLineContent({
   if (details === undefined) {
     return (
       <span className="flex items-center gap-1 text-xs text-muted-foreground">
-        <LoaderCircle
-          aria-hidden="true"
-          className="animate-spin motion-reduce:animate-none"
-        />
+        <Spinner aria-hidden="true" className="motion-reduce:animate-none" />
         Chargement…
       </span>
     )

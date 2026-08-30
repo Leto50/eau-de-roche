@@ -436,18 +436,15 @@ function RecipeEntry({
                 key={ingredient._id}
                 product={product}
                 trigger={
-                  <Badge
-                    asChild
-                    className="cursor-pointer touch-manipulation border-[#614b2c]/20 bg-[#6b5939]/[0.07] text-[#5a4b37] hover:border-primary/35 hover:bg-primary/[0.09] hover:text-[#443522] active:bg-primary/[0.14]"
+                  <Button
+                    aria-label={`Modifier l’ingrédient ${ingredient.ingredientName}`}
+                    className="h-5 w-fit cursor-pointer touch-manipulation rounded-full border-[#614b2c]/20 bg-[#6b5939]/[0.07] px-2 py-0.5 text-[0.625rem] font-medium text-[#5a4b37] hover:border-primary/35 hover:bg-primary/[0.09] hover:text-[#443522] active:bg-primary/[0.14]"
+                    size="xs"
+                    type="button"
                     variant="outline"
                   >
-                    <button
-                      aria-label={`Modifier l’ingrédient ${ingredient.ingredientName}`}
-                      type="button"
-                    >
-                      {content}
-                    </button>
-                  </Badge>
+                    {content}
+                  </Button>
                 }
               />
             ) : (
