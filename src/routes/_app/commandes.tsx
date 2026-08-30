@@ -9,7 +9,6 @@ import {
   Check,
   Coins,
   History,
-  LoaderCircle,
   MessageSquareText,
   PackageCheck,
   Pencil,
@@ -19,6 +18,7 @@ import { useState } from "react"
 import { toast } from "sonner"
 
 import { ContactManagerDialog } from "@/components/contact-manager-dialog"
+import { DatePicker } from "@/components/date-picker"
 import { OrderDialog } from "@/components/order-dialog"
 import { OrderPreparationDetails } from "@/components/order-preparation-details"
 import { PageError } from "@/components/page-error"
@@ -46,8 +46,8 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card"
-import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import { Spinner } from "@/components/ui/spinner"
 import {
   Select,
   SelectContent,
@@ -678,12 +678,14 @@ function OrderProcessingDialog({
               <Label htmlFor={`order-date-${order._id}`}>
                 {clientOrder ? "Date du paiement" : "Date de réception"}
               </Label>
-              <Input
+              <DatePicker
+                ariaLabel={
+                  clientOrder ? "Date du paiement" : "Date de réception"
+                }
                 className="min-w-0"
                 id={`order-date-${order._id}`}
-                onChange={(event) => setOccurredOn(event.target.value)}
+                onChange={setOccurredOn}
                 required
-                type="date"
                 value={occurredOn}
               />
             </div>
@@ -693,9 +695,9 @@ function OrderProcessingDialog({
             <AlertDialogCancel type="button">Retour</AlertDialogCancel>
             <Button disabled={isSubmitting} type="submit">
               {isSubmitting ? (
-                <LoaderCircle
+                <Spinner
                   aria-hidden="true"
-                  className="animate-spin motion-reduce:animate-none"
+                  className="motion-reduce:animate-none"
                 />
               ) : clientOrder ? (
                 <Coins aria-hidden="true" />

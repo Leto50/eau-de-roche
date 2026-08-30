@@ -3,7 +3,6 @@ import {
   Archive,
   ArchiveRestore,
   BookPlus,
-  LoaderCircle,
   PackagePlus,
   Pencil,
 } from "lucide-react"
@@ -36,6 +35,7 @@ import {
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { ScrollArea } from "@/components/ui/scroll-area"
+import { Spinner } from "@/components/ui/spinner"
 import {
   Select,
   SelectContent,
@@ -421,9 +421,9 @@ export function ProductDialog({
               ) : null}
               <Button disabled={isSubmitting} type="submit">
                 {isSubmitting ? (
-                  <LoaderCircle
+                  <Spinner
                     aria-hidden="true"
-                    className="animate-spin motion-reduce:animate-none"
+                    className="motion-reduce:animate-none"
                   />
                 ) : product ? (
                   <Pencil aria-hidden="true" />
@@ -521,9 +521,9 @@ export function ProductArchivesDialog() {
                     variant="outline"
                   >
                     {restoringId === product._id ? (
-                      <LoaderCircle
+                      <Spinner
                         aria-hidden="true"
-                        className="animate-spin motion-reduce:animate-none"
+                        className="motion-reduce:animate-none"
                       />
                     ) : (
                       <ArchiveRestore aria-hidden="true" />

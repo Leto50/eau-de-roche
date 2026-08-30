@@ -4,7 +4,6 @@ import {
   ArchiveRestore,
   Check,
   ContactRound,
-  LoaderCircle,
   Pencil,
   X,
 } from "lucide-react"
@@ -24,6 +23,7 @@ import {
 } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
 import { ScrollArea } from "@/components/ui/scroll-area"
+import { Spinner } from "@/components/ui/spinner"
 import { getUserFacingErrorMessage } from "@/lib/errors"
 import { api } from "../../convex/_generated/api"
 import { type Doc } from "../../convex/_generated/dataModel"
@@ -180,9 +180,9 @@ export function ContactManagerDialog() {
                                 type="submit"
                               >
                                 {pending ? (
-                                  <LoaderCircle
+                                  <Spinner
                                     aria-hidden="true"
-                                    className="animate-spin motion-reduce:animate-none"
+                                    className="motion-reduce:animate-none"
                                   />
                                 ) : (
                                   <Check aria-hidden="true" />
@@ -231,9 +231,9 @@ export function ContactManagerDialog() {
                                 variant="ghost"
                               >
                                 {pending ? (
-                                  <LoaderCircle
+                                  <Spinner
                                     aria-hidden="true"
-                                    className="animate-spin motion-reduce:animate-none"
+                                    className="motion-reduce:animate-none"
                                   />
                                 ) : active ? (
                                   <Archive aria-hidden="true" />

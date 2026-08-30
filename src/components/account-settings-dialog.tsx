@@ -1,6 +1,6 @@
 import { useMutation } from "convex/react"
 import { type FunctionReturnType } from "convex/server"
-import { LoaderCircle, Settings2 } from "lucide-react"
+import { Settings2 } from "lucide-react"
 import { useId, useState, type FormEvent } from "react"
 import { toast } from "sonner"
 
@@ -23,6 +23,7 @@ import {
   InputGroupText,
 } from "@/components/ui/input-group"
 import { Label } from "@/components/ui/label"
+import { Spinner } from "@/components/ui/spinner"
 import { getUserFacingErrorMessage } from "@/lib/errors"
 import { api } from "../../convex/_generated/api"
 
@@ -262,9 +263,9 @@ export function AccountSettingsDialog({
             </Button>
             <Button disabled={isSubmitting} type="submit">
               {isSubmitting ? (
-                <LoaderCircle
+                <Spinner
                   aria-hidden="true"
-                  className="animate-spin motion-reduce:animate-none"
+                  className="motion-reduce:animate-none"
                 />
               ) : (
                 <Settings2 aria-hidden="true" />

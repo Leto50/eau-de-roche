@@ -1,5 +1,5 @@
 import { createFileRoute, redirect } from "@tanstack/react-router"
-import { AlertCircle, KeyRound, LoaderCircle } from "lucide-react"
+import { AlertCircle, KeyRound } from "lucide-react"
 import { useState } from "react"
 
 import { ShopMark } from "@/components/shop-mark"
@@ -7,6 +7,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import { Spinner } from "@/components/ui/spinner"
 import { authClient } from "@/lib/auth-client"
 
 export const Route = createFileRoute("/connexion")({
@@ -118,9 +119,9 @@ function AuthenticationPage() {
 
             <Button className="mt-1 h-10" disabled={isSubmitting} type="submit">
               {isSubmitting ? (
-                <LoaderCircle
+                <Spinner
                   aria-hidden="true"
-                  className="animate-spin motion-reduce:animate-none"
+                  className="motion-reduce:animate-none"
                 />
               ) : (
                 <KeyRound aria-hidden="true" />

@@ -1,11 +1,5 @@
 import { useMutation, useQuery } from "convex/react"
-import {
-  Archive,
-  ArchiveRestore,
-  LoaderCircle,
-  Pencil,
-  UserRoundPlus,
-} from "lucide-react"
+import { Archive, ArchiveRestore, Pencil, UserRoundPlus } from "lucide-react"
 import { useId, useState, type FormEvent, type ReactElement } from "react"
 import { toast } from "sonner"
 
@@ -34,6 +28,7 @@ import {
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { ScrollArea } from "@/components/ui/scroll-area"
+import { Spinner } from "@/components/ui/spinner"
 import { getUserFacingErrorMessage } from "@/lib/errors"
 import { api } from "../../convex/_generated/api"
 import { type Doc } from "../../convex/_generated/dataModel"
@@ -184,9 +179,9 @@ export function CharacterDialog({
               </Button>
               <Button disabled={isSubmitting} type="submit">
                 {isSubmitting ? (
-                  <LoaderCircle
+                  <Spinner
                     aria-hidden="true"
-                    className="animate-spin motion-reduce:animate-none"
+                    className="motion-reduce:animate-none"
                   />
                 ) : character ? (
                   <Pencil aria-hidden="true" />
@@ -283,9 +278,9 @@ export function CharacterArchivesDialog() {
                     variant="outline"
                   >
                     {restoringId === character._id ? (
-                      <LoaderCircle
+                      <Spinner
                         aria-hidden="true"
-                        className="animate-spin motion-reduce:animate-none"
+                        className="motion-reduce:animate-none"
                       />
                     ) : (
                       <ArchiveRestore aria-hidden="true" />

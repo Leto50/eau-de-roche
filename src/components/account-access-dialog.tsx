@@ -1,11 +1,4 @@
-import {
-  KeyRound,
-  LoaderCircle,
-  Power,
-  PowerOff,
-  Save,
-  ShieldAlert,
-} from "lucide-react"
+import { KeyRound, Power, PowerOff, Save, ShieldAlert } from "lucide-react"
 import { useState, type FormEvent, type ReactNode } from "react"
 import { toast } from "sonner"
 
@@ -40,6 +33,7 @@ import {
   SelectValue,
 } from "@/components/ui/select"
 import { Separator } from "@/components/ui/separator"
+import { Spinner } from "@/components/ui/spinner"
 import { authClient } from "@/lib/auth-client"
 
 export type AccountRole = "admin" | "user"
@@ -280,9 +274,9 @@ export function AccountAccessDialog({
               type="button"
             >
               {isSavingRole ? (
-                <LoaderCircle
+                <Spinner
                   aria-hidden="true"
-                  className="animate-spin motion-reduce:animate-none"
+                  className="motion-reduce:animate-none"
                 />
               ) : (
                 <Save aria-hidden="true" />
@@ -319,9 +313,9 @@ export function AccountAccessDialog({
               variant="outline"
             >
               {isChangingStatus ? (
-                <LoaderCircle
+                <Spinner
                   aria-hidden="true"
-                  className="animate-spin motion-reduce:animate-none"
+                  className="motion-reduce:animate-none"
                 />
               ) : (
                 <Power aria-hidden="true" />
@@ -403,9 +397,9 @@ export function AccountAccessDialog({
               variant="outline"
             >
               {isResettingPassword ? (
-                <LoaderCircle
+                <Spinner
                   aria-hidden="true"
-                  className="animate-spin motion-reduce:animate-none"
+                  className="motion-reduce:animate-none"
                 />
               ) : (
                 <KeyRound aria-hidden="true" />
@@ -447,9 +441,9 @@ export function AccountAccessDialog({
               variant="destructive"
             >
               {isChangingStatus ? (
-                <LoaderCircle
+                <Spinner
                   aria-hidden="true"
-                  className="animate-spin motion-reduce:animate-none"
+                  className="motion-reduce:animate-none"
                 />
               ) : (
                 <PowerOff aria-hidden="true" />

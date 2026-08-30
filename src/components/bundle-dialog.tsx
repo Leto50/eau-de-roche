@@ -3,7 +3,6 @@ import { type FunctionReturnType } from "convex/server"
 import {
   Archive,
   ArchiveRestore,
-  LoaderCircle,
   PackagePlus,
   Pencil,
   Plus,
@@ -46,6 +45,7 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Separator } from "@/components/ui/separator"
+import { Spinner } from "@/components/ui/spinner"
 import { api } from "../../convex/_generated/api"
 import { type Doc } from "../../convex/_generated/dataModel"
 import { getUserFacingErrorMessage } from "@/lib/errors"
@@ -367,9 +367,9 @@ export function BundleDialog({
               </Button>
               <Button disabled={isSubmitting} type="submit">
                 {isSubmitting ? (
-                  <LoaderCircle
+                  <Spinner
                     aria-hidden="true"
-                    className="animate-spin motion-reduce:animate-none"
+                    className="motion-reduce:animate-none"
                   />
                 ) : bundle ? (
                   <Pencil aria-hidden="true" />
@@ -466,9 +466,9 @@ export function BundleArchivesDialog() {
                     variant="outline"
                   >
                     {restoringId === bundle._id ? (
-                      <LoaderCircle
+                      <Spinner
                         aria-hidden="true"
-                        className="animate-spin motion-reduce:animate-none"
+                        className="motion-reduce:animate-none"
                       />
                     ) : (
                       <ArchiveRestore aria-hidden="true" />
