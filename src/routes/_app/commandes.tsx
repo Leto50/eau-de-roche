@@ -1,4 +1,5 @@
 import { convexQuery } from "@convex-dev/react-query"
+import { useForm } from "@tanstack/react-form"
 import { useSuspenseQuery } from "@tanstack/react-query"
 import { createFileRoute } from "@tanstack/react-router"
 import { useMutation } from "convex/react"
@@ -46,7 +47,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card"
-import { Label } from "@/components/ui/label"
+import { Field, FieldError, FieldLabel } from "@/components/ui/field"
 import { Spinner } from "@/components/ui/spinner"
 import {
   Select,
@@ -62,6 +63,7 @@ import { type Doc } from "../../../convex/_generated/dataModel"
 import { useHydrated } from "@/hooks/use-hydrated"
 import { authClient } from "@/lib/auth-client"
 import { getUserFacingErrorMessage } from "@/lib/errors"
+import { orderProcessingFormSchema } from "@/lib/form-schemas"
 import {
   formatDate,
   formatNumber,
@@ -537,21 +539,63 @@ function OrderProcessingDialog({
 }>) {
   const processOrder = useMutation(api.orders.process)
   const [open, setOpen] = useState(false)
-  const [characterId, setCharacterId] = useState("")
-  const [occurredOn, setOccurredOn] = useState(todayInputValue)
-  const [isSubmitting, setIsSubmitting] = useState(false)
   const clientOrder = order.kind === "client"
   const processed = Boolean(order.transactionId && order.processedAt)
 
-  function handleOpenChange(nextOpen: boolean) {
-    if (nextOpen) {
-      setCharacterId(order.linkedTransaction?.actorCharacterId ?? "")
-      setOccurredOn(
-        order.processedAt
-          ? dateInputFromTimestamp(order.processedAt)
-          : todayInputValue()
+  const processingValues = () => ({
+    characterId: order.linkedTransaction?.actorCharacterId ?? "",
+    occurredOn: order.processedAt
+      ? dateInputFromTimestamp(order.processedAt)
+      : todayInputValue(),
+  })
+
+  const form = useForm({
+    defaultValues: processingValues(),
+    validators: { onSubmit: orderProcessingFormSchema },
+    onSubmit: async ({ value }) => {
+      const character = characters.find(
+        (entry) => entry._id === value.characterId
       )
-    }
+      const occurredAt = dateInputToTimestamp(value.occurredOn)
+      if (!character || !occurredAt) return
+
+      try {
+        await processOrder({
+          characterId: character._id,
+          occurredAt,
+          orderId: order._id,
+        })
+        if (processed) {
+          toast.success(
+            clientOrder ? "Paiement corrigé." : "Réception corrigée."
+          )
+        } else if (!clientOrder) {
+          toast.success(
+            "Réception ajoutée au journal et au stock. Commande déplacée dans l’historique."
+          )
+        } else if (order.status === "delivered") {
+          toast.success(
+            "Paiement ajouté au journal. Commande déplacée dans l’historique."
+          )
+        } else {
+          toast.success(
+            "Paiement ajouté au journal. Marquez la commande « Livrée » pour la terminer."
+          )
+        }
+        setOpen(false)
+      } catch (error) {
+        toast.error(
+          getUserFacingErrorMessage(
+            error,
+            "Impossible de traiter cette commande."
+          )
+        )
+      }
+    },
+  })
+
+  function handleOpenChange(nextOpen: boolean) {
+    if (nextOpen) form.reset(processingValues())
     setOpen(nextOpen)
   }
 
@@ -559,50 +603,6 @@ function OrderProcessingDialog({
 
   if (!processed && order.lines.some((line) => line.unitPrice === undefined)) {
     return <Badge variant="outline">Prix à renseigner</Badge>
-  }
-
-  async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    const character = characters.find((entry) => entry._id === characterId)
-    const occurredAt = dateInputToTimestamp(occurredOn)
-    if (!character || !occurredAt) {
-      toast.error("Choisissez un personnage et une date valide.")
-      return
-    }
-
-    setIsSubmitting(true)
-    try {
-      await processOrder({
-        characterId: character._id,
-        occurredAt,
-        orderId: order._id,
-      })
-      if (processed) {
-        toast.success(clientOrder ? "Paiement corrigé." : "Réception corrigée.")
-      } else if (!clientOrder) {
-        toast.success(
-          "Réception ajoutée au journal et au stock. Commande déplacée dans l’historique."
-        )
-      } else if (order.status === "delivered") {
-        toast.success(
-          "Paiement ajouté au journal. Commande déplacée dans l’historique."
-        )
-      } else {
-        toast.success(
-          "Paiement ajouté au journal. Marquez la commande « Livrée » pour la terminer."
-        )
-      }
-      setOpen(false)
-    } catch (error) {
-      toast.error(
-        getUserFacingErrorMessage(
-          error,
-          "Impossible de traiter cette commande."
-        )
-      )
-    } finally {
-      setIsSubmitting(false)
-    }
   }
 
   return (
@@ -633,7 +633,14 @@ function OrderProcessingDialog({
         </Button>
       </AlertDialogTrigger>
       <AlertDialogContent className="border-[#6a5436] bg-[#eee1c7]" size="lg">
-        <form className="grid gap-5" onSubmit={handleSubmit}>
+        <form
+          className="grid gap-5"
+          noValidate
+          onSubmit={(event) => {
+            event.preventDefault()
+            void form.handleSubmit()
+          }}
+        >
           <AlertDialogHeader>
             <AlertDialogTitle className="font-display text-2xl">
               {processed
@@ -656,60 +663,98 @@ function OrderProcessingDialog({
           </AlertDialogHeader>
 
           <div className="grid gap-4 sm:grid-cols-[minmax(0,1.15fr)_minmax(11rem,0.85fr)]">
-            <div className="grid min-w-0 gap-2">
-              <Label htmlFor={`order-character-${order._id}`}>Personnage</Label>
-              <Select onValueChange={setCharacterId} value={characterId}>
-                <SelectTrigger
-                  className="w-full min-w-0"
-                  id={`order-character-${order._id}`}
-                >
-                  <SelectValue placeholder="Qui traite la commande ?" />
-                </SelectTrigger>
-                <SelectContent>
-                  {characters.map((character) => (
-                    <SelectItem key={character._id} value={character._id}>
-                      {character.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="grid min-w-0 gap-2">
-              <Label htmlFor={`order-date-${order._id}`}>
-                {clientOrder ? "Date du paiement" : "Date de réception"}
-              </Label>
-              <DatePicker
-                ariaLabel={
-                  clientOrder ? "Date du paiement" : "Date de réception"
-                }
-                className="min-w-0"
-                id={`order-date-${order._id}`}
-                onChange={setOccurredOn}
-                required
-                value={occurredOn}
-              />
-            </div>
+            <form.Field name="characterId">
+              {(field) => {
+                const invalid =
+                  field.state.meta.isTouched && !field.state.meta.isValid
+                return (
+                  <Field className="min-w-0" data-invalid={invalid}>
+                    <FieldLabel htmlFor={`order-character-${order._id}`}>
+                      Personnage
+                    </FieldLabel>
+                    <Select
+                      name={field.name}
+                      onValueChange={field.handleChange}
+                      value={field.state.value}
+                    >
+                      <SelectTrigger
+                        aria-invalid={invalid}
+                        className="w-full min-w-0"
+                        id={`order-character-${order._id}`}
+                        onBlur={field.handleBlur}
+                      >
+                        <SelectValue placeholder="Qui traite la commande ?" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {characters.map((character) => (
+                          <SelectItem key={character._id} value={character._id}>
+                            {character.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    {invalid ? (
+                      <FieldError errors={field.state.meta.errors} />
+                    ) : null}
+                  </Field>
+                )
+              }}
+            </form.Field>
+            <form.Field name="occurredOn">
+              {(field) => {
+                const invalid =
+                  field.state.meta.isTouched && !field.state.meta.isValid
+                return (
+                  <Field className="min-w-0" data-invalid={invalid}>
+                    <FieldLabel htmlFor={`order-date-${order._id}`}>
+                      {clientOrder ? "Date du paiement" : "Date de réception"}
+                    </FieldLabel>
+                    <DatePicker
+                      ariaInvalid={invalid}
+                      ariaLabel={
+                        clientOrder ? "Date du paiement" : "Date de réception"
+                      }
+                      className="min-w-0"
+                      id={`order-date-${order._id}`}
+                      max={todayInputValue()}
+                      name={field.name}
+                      onBlur={field.handleBlur}
+                      onChange={field.handleChange}
+                      required
+                      value={field.state.value}
+                    />
+                    {invalid ? (
+                      <FieldError errors={field.state.meta.errors} />
+                    ) : null}
+                  </Field>
+                )
+              }}
+            </form.Field>
           </div>
 
           <AlertDialogFooter>
             <AlertDialogCancel type="button">Retour</AlertDialogCancel>
-            <Button disabled={isSubmitting} type="submit">
-              {isSubmitting ? (
-                <Spinner
-                  aria-hidden="true"
-                  className="motion-reduce:animate-none"
-                />
-              ) : clientOrder ? (
-                <Coins aria-hidden="true" />
-              ) : (
-                <PackageCheck aria-hidden="true" />
+            <form.Subscribe selector={(state) => state.isSubmitting}>
+              {(isSubmitting) => (
+                <Button disabled={isSubmitting} type="submit">
+                  {isSubmitting ? (
+                    <Spinner
+                      aria-hidden="true"
+                      className="motion-reduce:animate-none"
+                    />
+                  ) : clientOrder ? (
+                    <Coins aria-hidden="true" />
+                  ) : (
+                    <PackageCheck aria-hidden="true" />
+                  )}
+                  {processed
+                    ? "Enregistrer la correction"
+                    : clientOrder
+                      ? "Valider le paiement"
+                      : "Valider la réception"}
+                </Button>
               )}
-              {processed
-                ? "Enregistrer la correction"
-                : clientOrder
-                  ? "Valider le paiement"
-                  : "Valider la réception"}
-            </Button>
+            </form.Subscribe>
           </AlertDialogFooter>
         </form>
       </AlertDialogContent>

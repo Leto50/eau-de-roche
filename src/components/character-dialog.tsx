@@ -1,6 +1,7 @@
+import { useForm } from "@tanstack/react-form"
 import { useMutation, useQuery } from "convex/react"
 import { Archive, ArchiveRestore, Pencil, UserRoundPlus } from "lucide-react"
-import { useId, useState, type FormEvent, type ReactElement } from "react"
+import { useId, useState, type ReactElement } from "react"
 import { toast } from "sonner"
 
 import {
@@ -25,11 +26,12 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog"
+import { Field, FieldError, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Spinner } from "@/components/ui/spinner"
 import { getUserFacingErrorMessage } from "@/lib/errors"
+import { namedEntityFormSchema } from "@/lib/form-schemas"
 import { api } from "../../convex/_generated/api"
 import { type Doc } from "../../convex/_generated/dataModel"
 
@@ -44,44 +46,37 @@ export function CharacterDialog({
   const setCharacterActive = useMutation(api.characters.setActive)
   const fieldId = useId()
   const [open, setOpen] = useState(false)
-  const [name, setName] = useState("")
-  const [isSubmitting, setIsSubmitting] = useState(false)
+  const [isArchiving, setIsArchiving] = useState(false)
+  const form = useForm({
+    defaultValues: { name: character?.name ?? "" },
+    onSubmit: async ({ value }) => {
+      try {
+        await saveCharacter({
+          ...(character ? { characterId: character._id } : {}),
+          name: value.name.trim(),
+        })
+        toast.success(character ? "Personnage mis à jour." : "Personnage créé.")
+        setOpen(false)
+      } catch (error) {
+        toast.error(
+          getUserFacingErrorMessage(
+            error,
+            "Impossible d’enregistrer le personnage."
+          )
+        )
+      }
+    },
+    validators: { onSubmit: namedEntityFormSchema },
+  })
 
   function handleOpenChange(nextOpen: boolean) {
-    if (nextOpen && !open) setName(character?.name ?? "")
+    if (nextOpen && !open) form.reset({ name: character?.name ?? "" })
     setOpen(nextOpen)
-  }
-
-  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    if (!name.trim()) {
-      toast.error("Le nom du personnage est obligatoire.")
-      return
-    }
-
-    setIsSubmitting(true)
-    try {
-      await saveCharacter({
-        ...(character ? { characterId: character._id } : {}),
-        name: name.trim(),
-      })
-      toast.success(character ? "Personnage mis à jour." : "Personnage créé.")
-      setOpen(false)
-    } catch (error) {
-      toast.error(
-        getUserFacingErrorMessage(
-          error,
-          "Impossible d’enregistrer le personnage."
-        )
-      )
-    } finally {
-      setIsSubmitting(false)
-    }
   }
 
   async function archiveCharacter() {
     if (!character) return
-    setIsSubmitting(true)
+    setIsArchiving(true)
     try {
       await setCharacterActive({
         active: false,
@@ -94,7 +89,7 @@ export function CharacterDialog({
         getUserFacingErrorMessage(error, "Impossible d’archiver le personnage.")
       )
     } finally {
-      setIsSubmitting(false)
+      setIsArchiving(false)
     }
   }
 
@@ -122,18 +117,41 @@ export function CharacterDialog({
           </DialogDescription>
         </DialogHeader>
 
-        <form className="grid gap-5" onSubmit={handleSubmit}>
-          <div className="grid gap-2">
-            <Label htmlFor={`${fieldId}-name`}>Nom du personnage</Label>
-            <Input
-              id={`${fieldId}-name`}
-              maxLength={100}
-              onChange={(event) => setName(event.target.value)}
-              placeholder="Nom utilisé en jeu"
-              required
-              value={name}
-            />
-          </div>
+        <form
+          className="grid gap-5"
+          noValidate
+          onSubmit={(event) => {
+            event.preventDefault()
+            void form.handleSubmit()
+          }}
+        >
+          <form.Field name="name">
+            {(field) => {
+              const invalid =
+                field.state.meta.isTouched && !field.state.meta.isValid
+              return (
+                <Field data-invalid={invalid}>
+                  <FieldLabel htmlFor={`${fieldId}-name`}>
+                    Nom du personnage
+                  </FieldLabel>
+                  <Input
+                    aria-invalid={invalid}
+                    id={`${fieldId}-name`}
+                    maxLength={100}
+                    name={field.name}
+                    onBlur={field.handleBlur}
+                    onChange={(event) => field.handleChange(event.target.value)}
+                    placeholder="Nom utilisé en jeu"
+                    required
+                    value={field.state.value}
+                  />
+                  {invalid ? (
+                    <FieldError errors={field.state.meta.errors} />
+                  ) : null}
+                </Field>
+              )
+            }}
+          </form.Field>
 
           <DialogFooter className="gap-2 sm:justify-between">
             <div>
@@ -177,19 +195,23 @@ export function CharacterDialog({
               >
                 Annuler
               </Button>
-              <Button disabled={isSubmitting} type="submit">
-                {isSubmitting ? (
-                  <Spinner
-                    aria-hidden="true"
-                    className="motion-reduce:animate-none"
-                  />
-                ) : character ? (
-                  <Pencil aria-hidden="true" />
-                ) : (
-                  <UserRoundPlus aria-hidden="true" />
+              <form.Subscribe selector={(state) => state.isSubmitting}>
+                {(isSubmitting) => (
+                  <Button disabled={isSubmitting || isArchiving} type="submit">
+                    {isSubmitting ? (
+                      <Spinner
+                        aria-hidden="true"
+                        className="motion-reduce:animate-none"
+                      />
+                    ) : character ? (
+                      <Pencil aria-hidden="true" />
+                    ) : (
+                      <UserRoundPlus aria-hidden="true" />
+                    )}
+                    {character ? "Enregistrer" : "Créer le personnage"}
+                  </Button>
                 )}
-                {character ? "Enregistrer" : "Créer le personnage"}
-              </Button>
+              </form.Subscribe>
             </div>
           </DialogFooter>
         </form>

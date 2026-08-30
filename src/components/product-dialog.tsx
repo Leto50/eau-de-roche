@@ -1,3 +1,4 @@
+import { useForm, useStore } from "@tanstack/react-form"
 import { useMutation, useQuery } from "convex/react"
 import {
   Archive,
@@ -6,7 +7,7 @@ import {
   PackagePlus,
   Pencil,
 } from "lucide-react"
-import { useId, useState, type FormEvent, type ReactElement } from "react"
+import { useId, useRef, useState, type ReactElement } from "react"
 import { toast } from "sonner"
 
 import {
@@ -33,7 +34,12 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
+import {
+  Field,
+  FieldDescription,
+  FieldError,
+  FieldLabel,
+} from "@/components/ui/field"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Spinner } from "@/components/ui/spinner"
 import {
@@ -47,17 +53,14 @@ import { Textarea } from "@/components/ui/textarea"
 import { api } from "../../convex/_generated/api"
 import { type Doc } from "../../convex/_generated/dataModel"
 import { getUserFacingErrorMessage } from "@/lib/errors"
+import { productFormSchema } from "@/lib/form-schemas"
 import { categoryLabels } from "@/lib/format"
 import {
   canonicalProductCategory,
   productCategories,
   type ProductCategory,
 } from "@/lib/product-categories"
-import {
-  priceDraftFromValue,
-  priceDraftToValue,
-  type PriceDraft,
-} from "@/lib/prices"
+import { priceDraftFromValue, priceDraftToValue } from "@/lib/prices"
 
 function isProductCategory(value: string): value is ProductCategory {
   return productCategories.some((category) => category === value)
@@ -78,98 +81,66 @@ export function ProductDialog({
   const setProductActive = useMutation(api.products.setActive)
   const fieldId = useId()
   const [open, setOpen] = useState(false)
-  const [name, setName] = useState("")
-  const [category, setCategory] = useState<ProductCategory>("potion")
-  const [craftable, setCraftable] = useState(true)
-  const [purchasePrice, setPurchasePrice] = useState<PriceDraft>(() =>
-    priceDraftFromValue(undefined)
-  )
-  const [salePrice, setSalePrice] = useState<PriceDraft>(() =>
-    priceDraftFromValue(undefined)
-  )
-  const [minimumStock, setMinimumStock] = useState("0")
-  const [targetStock, setTargetStock] = useState("0")
-  const [adjustmentReason, setAdjustmentReason] = useState("")
-  const [isSubmitting, setIsSubmitting] = useState(false)
+  const [isArchiving, setIsArchiving] = useState(false)
+  const submitAction = useRef<"save" | "write-recipe">("save")
 
-  const tracksStock = category !== "service"
-  const effectiveTargetStock = tracksStock ? Number(targetStock) : 0
+  const productValues = () => ({
+    adjustmentReason: "",
+    category: product
+      ? canonicalProductCategory(product.category)
+      : ("potion" as ProductCategory),
+    craftable: product?.craftable !== false,
+    minimumStock: product?.minimumStock.toString() ?? "0",
+    name: product?.name ?? "",
+    originalStock: product?.currentStock ?? 0,
+    purchasePrice: priceDraftFromValue(product?.purchasePrice),
+    salePrice: priceDraftFromValue(product?.salePrice),
+    targetStock: product?.currentStock.toString() ?? "0",
+  })
+
+  const form = useForm({
+    defaultValues: productValues(),
+    validators: { onSubmit: productFormSchema },
+    onSubmit: async ({ value }) => {
+      const productId = await persist(value)
+      if (productId && submitAction.current === "write-recipe") {
+        onWriteRecipe?.(productId)
+      }
+      submitAction.current = "save"
+    },
+  })
+  const formValues = useStore(form.store, (state) => state.values)
+  const tracksStock = formValues.category !== "service"
+  const effectiveTargetStock = tracksStock ? Number(formValues.targetStock) : 0
   const stockChanged =
     product !== undefined && effectiveTargetStock !== product.currentStock
 
-  function resetForm() {
-    setName(product?.name ?? "")
-    setCategory(product ? canonicalProductCategory(product.category) : "potion")
-    setCraftable(product?.craftable !== false)
-    setPurchasePrice(priceDraftFromValue(product?.purchasePrice))
-    setSalePrice(priceDraftFromValue(product?.salePrice))
-    setMinimumStock(product?.minimumStock.toString() ?? "0")
-    setTargetStock(product?.currentStock.toString() ?? "0")
-    setAdjustmentReason("")
-  }
-
   function handleOpenChange(nextOpen: boolean) {
-    if (nextOpen && !open) resetForm()
+    if (nextOpen && !open) form.reset(productValues())
     setOpen(nextOpen)
   }
 
-  async function persist(active: boolean) {
-    const submittedMinimum = tracksStock ? Number(minimumStock) : 0
+  async function persist(value: typeof formValues) {
+    const submittedMinimum = tracksStock ? Number(value.minimumStock) : 0
     const submittedStock = effectiveTargetStock
-    const submittedPurchasePrice = priceDraftToValue(purchasePrice)
-    const submittedSalePrice = priceDraftToValue(salePrice)
-
-    if (!name.trim()) {
-      toast.error("Le nom de la référence est obligatoire.")
-      return undefined
-    }
-    if (
-      !Number.isFinite(submittedMinimum) ||
-      !Number.isFinite(submittedStock) ||
-      !Number.isInteger(submittedMinimum) ||
-      !Number.isInteger(submittedStock) ||
-      submittedMinimum < 0 ||
-      submittedStock < 0
-    ) {
-      toast.error("Les stocks doivent être des nombres entiers positifs.")
-      return undefined
-    }
-    if (
-      (submittedPurchasePrice !== null &&
-        !Number.isFinite(submittedPurchasePrice)) ||
-      (submittedSalePrice !== null && !Number.isFinite(submittedSalePrice))
-    ) {
-      toast.error(
-        "Indiquez un nombre entier de septims pour un nombre entier d’unités."
-      )
-      return undefined
-    }
-    if (stockChanged && !adjustmentReason.trim()) {
-      toast.error("Indiquez pourquoi le stock est corrigé.")
-      return undefined
-    }
-
-    setIsSubmitting(true)
+    const submittedPurchasePrice = priceDraftToValue(value.purchasePrice)
+    const submittedSalePrice = priceDraftToValue(value.salePrice)
     try {
       const productId = await saveProduct({
-        active,
-        ...(adjustmentReason.trim() ? { adjustmentReason } : {}),
-        category,
-        ...(category === "potion" ? { craftable } : {}),
+        active: true,
+        ...(value.adjustmentReason.trim()
+          ? { adjustmentReason: value.adjustmentReason.trim() }
+          : {}),
+        category: value.category,
+        ...(value.category === "potion" ? { craftable: value.craftable } : {}),
         minimumStock: submittedMinimum,
-        name: name.trim(),
+        name: value.name.trim(),
         ...(product ? { productId: product._id } : {}),
         purchasePrice: submittedPurchasePrice,
         salePrice: submittedSalePrice,
         targetStock: submittedStock,
       })
-      toast.success(
-        active
-          ? product
-            ? "Référence mise à jour."
-            : "Référence créée."
-          : "Référence archivée."
-      )
+      toast.success(product ? "Référence mise à jour." : "Référence créée.")
       setOpen(false)
       return productId
     } catch (error) {
@@ -180,24 +151,12 @@ export function ProductDialog({
         )
       )
       return undefined
-    } finally {
-      setIsSubmitting(false)
     }
-  }
-
-  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    await persist(true)
-  }
-
-  async function writeRecipe() {
-    const productId = await persist(true)
-    if (productId) onWriteRecipe?.(productId)
   }
 
   async function archiveProduct() {
     if (!product) return
-    setIsSubmitting(true)
+    setIsArchiving(true)
     try {
       await setProductActive({ active: false, productId: product._id })
       toast.success("Référence archivée.")
@@ -207,7 +166,7 @@ export function ProductDialog({
         getUserFacingErrorMessage(error, "Impossible d’archiver la référence.")
       )
     } finally {
-      setIsSubmitting(false)
+      setIsArchiving(false)
     }
   }
 
@@ -234,129 +193,255 @@ export function ProductDialog({
           </DialogDescription>
         </DialogHeader>
 
-        <form className="grid gap-5" onSubmit={handleSubmit}>
-          <div className="grid gap-2">
-            <Label htmlFor={`${fieldId}-name`}>Nom</Label>
-            <Input
-              id={`${fieldId}-name`}
-              maxLength={100}
-              onChange={(event) => setName(event.target.value)}
-              placeholder="Potion de vigueur"
-              required
-              value={name}
-            />
-          </div>
+        <form
+          className="grid gap-5"
+          noValidate
+          onSubmit={(event) => {
+            event.preventDefault()
+            submitAction.current = "save"
+            void form.handleSubmit()
+          }}
+        >
+          <form.Field name="name">
+            {(field) => {
+              const invalid =
+                field.state.meta.isTouched && !field.state.meta.isValid
+              return (
+                <Field data-invalid={invalid}>
+                  <FieldLabel htmlFor={`${fieldId}-name`}>Nom</FieldLabel>
+                  <Input
+                    aria-invalid={invalid}
+                    id={`${fieldId}-name`}
+                    maxLength={100}
+                    name={field.name}
+                    onBlur={field.handleBlur}
+                    onChange={(event) => field.handleChange(event.target.value)}
+                    placeholder="Potion de vigueur"
+                    required
+                    value={field.state.value}
+                  />
+                  {invalid ? (
+                    <FieldError errors={field.state.meta.errors} />
+                  ) : null}
+                </Field>
+              )
+            }}
+          </form.Field>
 
           <div className="grid gap-4 sm:grid-cols-2">
-            <div className="grid gap-2">
-              <Label htmlFor={`${fieldId}-category`}>Catégorie</Label>
-              <Select
-                onValueChange={(value) => {
-                  if (isProductCategory(value)) setCategory(value)
-                }}
-                value={category}
-              >
-                <SelectTrigger className="w-full" id={`${fieldId}-category`}>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {productCategories.map((entry) => (
-                    <SelectItem key={entry} value={entry}>
-                      {categoryLabels[entry]}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            {category === "potion" ? (
-              <div className="grid gap-2">
-                <Label htmlFor={`${fieldId}-craftable`}>Mode d’obtention</Label>
-                <Select
-                  onValueChange={(value) => setCraftable(value === "recipe")}
-                  value={craftable ? "recipe" : "loot"}
-                >
-                  <SelectTrigger className="w-full" id={`${fieldId}-craftable`}>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="recipe">Fabricable</SelectItem>
-                    <SelectItem value="loot">Trouvée uniquement</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
+            <form.Field name="category">
+              {(field) => (
+                <Field>
+                  <FieldLabel htmlFor={`${fieldId}-category`}>
+                    Catégorie
+                  </FieldLabel>
+                  <Select
+                    name={field.name}
+                    onValueChange={(value) => {
+                      if (isProductCategory(value)) field.handleChange(value)
+                    }}
+                    value={field.state.value}
+                  >
+                    <SelectTrigger
+                      className="w-full"
+                      id={`${fieldId}-category`}
+                      onBlur={field.handleBlur}
+                    >
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {productCategories.map((entry) => (
+                        <SelectItem key={entry} value={entry}>
+                          {categoryLabels[entry]}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </Field>
+              )}
+            </form.Field>
+            {formValues.category === "potion" ? (
+              <form.Field name="craftable">
+                {(field) => (
+                  <Field>
+                    <FieldLabel htmlFor={`${fieldId}-craftable`}>
+                      Mode d’obtention
+                    </FieldLabel>
+                    <Select
+                      name={field.name}
+                      onValueChange={(value) =>
+                        field.handleChange(value === "recipe")
+                      }
+                      value={field.state.value ? "recipe" : "loot"}
+                    >
+                      <SelectTrigger
+                        className="w-full"
+                        id={`${fieldId}-craftable`}
+                        onBlur={field.handleBlur}
+                      >
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="recipe">Fabricable</SelectItem>
+                        <SelectItem value="loot">Trouvée uniquement</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </Field>
+                )}
+              </form.Field>
             ) : null}
           </div>
 
           <div className="grid gap-4 sm:grid-cols-2">
-            <div className="grid gap-2">
-              <Label htmlFor={`${fieldId}-purchase-price`}>Prix d’achat</Label>
-              <PriceInput
-                id={`${fieldId}-purchase-price`}
-                onValueChange={setPurchasePrice}
-                value={purchasePrice}
-              />
-            </div>
-            <div className="grid gap-2">
-              <Label htmlFor={`${fieldId}-sale-price`}>Prix de vente</Label>
-              <PriceInput
-                id={`${fieldId}-sale-price`}
-                onValueChange={setSalePrice}
-                value={salePrice}
-              />
-            </div>
+            <form.Field name="purchasePrice">
+              {(field) => {
+                const invalid =
+                  field.state.meta.isTouched && !field.state.meta.isValid
+                return (
+                  <Field data-invalid={invalid}>
+                    <FieldLabel htmlFor={`${fieldId}-purchase-price`}>
+                      Prix d’achat
+                    </FieldLabel>
+                    <PriceInput
+                      ariaInvalid={invalid}
+                      id={`${fieldId}-purchase-price`}
+                      name={field.name}
+                      onBlur={field.handleBlur}
+                      onValueChange={field.handleChange}
+                      value={field.state.value}
+                    />
+                    {invalid ? (
+                      <FieldError errors={field.state.meta.errors} />
+                    ) : null}
+                  </Field>
+                )
+              }}
+            </form.Field>
+            <form.Field name="salePrice">
+              {(field) => {
+                const invalid =
+                  field.state.meta.isTouched && !field.state.meta.isValid
+                return (
+                  <Field data-invalid={invalid}>
+                    <FieldLabel htmlFor={`${fieldId}-sale-price`}>
+                      Prix de vente
+                    </FieldLabel>
+                    <PriceInput
+                      ariaInvalid={invalid}
+                      id={`${fieldId}-sale-price`}
+                      name={field.name}
+                      onBlur={field.handleBlur}
+                      onValueChange={field.handleChange}
+                      value={field.state.value}
+                    />
+                    {invalid ? (
+                      <FieldError errors={field.state.meta.errors} />
+                    ) : null}
+                  </Field>
+                )
+              }}
+            </form.Field>
           </div>
 
           {tracksStock || stockChanged ? (
             <div className="grid gap-4 border-y border-border/70 py-4 sm:grid-cols-2">
               {tracksStock ? (
                 <>
-                  <div className="grid gap-2">
-                    <Label htmlFor={`${fieldId}-stock`}>Stock actuel</Label>
-                    <Input
-                      id={`${fieldId}-stock`}
-                      min="0"
-                      onChange={(event) => setTargetStock(event.target.value)}
-                      required
-                      step="1"
-                      type="number"
-                      value={targetStock}
-                    />
-                  </div>
-                  <div className="grid gap-2">
-                    <Label htmlFor={`${fieldId}-minimum-stock`}>
-                      Seuil d’alerte
-                    </Label>
-                    <Input
-                      id={`${fieldId}-minimum-stock`}
-                      min="0"
-                      onChange={(event) => setMinimumStock(event.target.value)}
-                      required
-                      step="1"
-                      type="number"
-                      value={minimumStock}
-                    />
-                  </div>
+                  <form.Field name="targetStock">
+                    {(field) => {
+                      const invalid =
+                        field.state.meta.isTouched && !field.state.meta.isValid
+                      return (
+                        <Field data-invalid={invalid}>
+                          <FieldLabel htmlFor={`${fieldId}-stock`}>
+                            Stock actuel
+                          </FieldLabel>
+                          <Input
+                            aria-invalid={invalid}
+                            id={`${fieldId}-stock`}
+                            min="0"
+                            name={field.name}
+                            onBlur={field.handleBlur}
+                            onChange={(event) =>
+                              field.handleChange(event.target.value)
+                            }
+                            required
+                            step="1"
+                            type="number"
+                            value={field.state.value}
+                          />
+                          {invalid ? (
+                            <FieldError errors={field.state.meta.errors} />
+                          ) : null}
+                        </Field>
+                      )
+                    }}
+                  </form.Field>
+                  <form.Field name="minimumStock">
+                    {(field) => {
+                      const invalid =
+                        field.state.meta.isTouched && !field.state.meta.isValid
+                      return (
+                        <Field data-invalid={invalid}>
+                          <FieldLabel htmlFor={`${fieldId}-minimum-stock`}>
+                            Seuil d’alerte
+                          </FieldLabel>
+                          <Input
+                            aria-invalid={invalid}
+                            id={`${fieldId}-minimum-stock`}
+                            min="0"
+                            name={field.name}
+                            onBlur={field.handleBlur}
+                            onChange={(event) =>
+                              field.handleChange(event.target.value)
+                            }
+                            required
+                            step="1"
+                            type="number"
+                            value={field.state.value}
+                          />
+                          {invalid ? (
+                            <FieldError errors={field.state.meta.errors} />
+                          ) : null}
+                        </Field>
+                      )
+                    }}
+                  </form.Field>
                 </>
               ) : null}
               {stockChanged ? (
-                <div className="grid gap-2 sm:col-span-2">
-                  <Label htmlFor={`${fieldId}-reason`}>
-                    Motif de la correction de stock
-                  </Label>
-                  <Textarea
-                    id={`${fieldId}-reason`}
-                    maxLength={500}
-                    onChange={(event) =>
-                      setAdjustmentReason(event.target.value)
-                    }
-                    placeholder="Inventaire physique, perte, retour…"
-                    required
-                    value={adjustmentReason}
-                  />
-                  <p className="text-xs text-muted-foreground">
-                    La correction apparaîtra dans le journal d’activité.
-                  </p>
-                </div>
+                <form.Field name="adjustmentReason">
+                  {(field) => {
+                    const invalid =
+                      field.state.meta.isTouched && !field.state.meta.isValid
+                    return (
+                      <Field className="sm:col-span-2" data-invalid={invalid}>
+                        <FieldLabel htmlFor={`${fieldId}-reason`}>
+                          Motif de la correction de stock
+                        </FieldLabel>
+                        <Textarea
+                          aria-invalid={invalid}
+                          id={`${fieldId}-reason`}
+                          maxLength={500}
+                          name={field.name}
+                          onBlur={field.handleBlur}
+                          onChange={(event) =>
+                            field.handleChange(event.target.value)
+                          }
+                          placeholder="Inventaire physique, perte, retour…"
+                          required
+                          value={field.state.value}
+                        />
+                        <FieldDescription>
+                          La correction apparaîtra dans le journal d’activité.
+                        </FieldDescription>
+                        {invalid ? (
+                          <FieldError errors={field.state.meta.errors} />
+                        ) : null}
+                      </Field>
+                    )
+                  }}
+                </form.Field>
               ) : null}
             </div>
           ) : null}
@@ -403,35 +488,44 @@ export function ProductDialog({
               >
                 Annuler
               </Button>
-              {category === "potion" &&
-              craftable &&
+              {formValues.category === "potion" &&
+              formValues.craftable &&
               onWriteRecipe &&
               (!product || canWriteRecipe) ? (
-                <Button
-                  disabled={isSubmitting}
-                  onClick={() => {
-                    void writeRecipe()
-                  }}
-                  type="button"
-                  variant="outline"
-                >
-                  <BookPlus aria-hidden="true" />
-                  {product ? "Écrire la recette" : "Créer puis écrire"}
-                </Button>
+                <form.Subscribe selector={(state) => state.isSubmitting}>
+                  {(isSubmitting) => (
+                    <Button
+                      disabled={isSubmitting || isArchiving}
+                      onClick={() => {
+                        submitAction.current = "write-recipe"
+                        void form.handleSubmit()
+                      }}
+                      type="button"
+                      variant="outline"
+                    >
+                      <BookPlus aria-hidden="true" />
+                      {product ? "Écrire la recette" : "Créer puis écrire"}
+                    </Button>
+                  )}
+                </form.Subscribe>
               ) : null}
-              <Button disabled={isSubmitting} type="submit">
-                {isSubmitting ? (
-                  <Spinner
-                    aria-hidden="true"
-                    className="motion-reduce:animate-none"
-                  />
-                ) : product ? (
-                  <Pencil aria-hidden="true" />
-                ) : (
-                  <PackagePlus aria-hidden="true" />
+              <form.Subscribe selector={(state) => state.isSubmitting}>
+                {(isSubmitting) => (
+                  <Button disabled={isSubmitting || isArchiving} type="submit">
+                    {isSubmitting ? (
+                      <Spinner
+                        aria-hidden="true"
+                        className="motion-reduce:animate-none"
+                      />
+                    ) : product ? (
+                      <Pencil aria-hidden="true" />
+                    ) : (
+                      <PackagePlus aria-hidden="true" />
+                    )}
+                    {product ? "Enregistrer" : "Créer la référence"}
+                  </Button>
                 )}
-                {product ? "Enregistrer" : "Créer la référence"}
-              </Button>
+              </form.Subscribe>
             </div>
           </DialogFooter>
         </form>

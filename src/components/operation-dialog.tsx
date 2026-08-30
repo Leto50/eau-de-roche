@@ -1,3 +1,4 @@
+import { useForm, useStore } from "@tanstack/react-form"
 import { useMutation } from "convex/react"
 import { type FunctionReturnType } from "convex/server"
 import {
@@ -14,7 +15,7 @@ import {
   ShoppingBasket,
   Trash2,
 } from "lucide-react"
-import { useId, useState, type FormEvent, type ReactElement } from "react"
+import { useId, useState, type ReactElement, type ReactNode } from "react"
 import { toast } from "sonner"
 
 import { DatePicker } from "@/components/date-picker"
@@ -51,6 +52,7 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
+import { Field, FieldError, FieldLabel } from "@/components/ui/field"
 import { Label } from "@/components/ui/label"
 import {
   Popover,
@@ -68,6 +70,7 @@ import { Separator } from "@/components/ui/separator"
 import { Spinner } from "@/components/ui/spinner"
 import { Textarea } from "@/components/ui/textarea"
 import { getUserFacingErrorMessage } from "@/lib/errors"
+import { MAX_DYNAMIC_LINES, operationFormSchema } from "@/lib/form-schemas"
 import { categoryLabels, formatNumber, formatSeptims } from "@/lib/format"
 import {
   canonicalProductCategory,
@@ -205,14 +208,20 @@ function initialTradeLines(
 }
 
 interface ProductPickerProps {
+  ariaInvalid?: boolean
   label: string
+  name?: string
+  onBlur?: () => void
   onProductChange: (productId: string) => void
   products: readonly Doc<"products">[]
   selectedProduct: Doc<"products"> | undefined
 }
 
 function ProductPicker({
+  ariaInvalid = false,
   label,
+  name,
+  onBlur,
   onProductChange,
   products,
   selectedProduct,
@@ -227,8 +236,11 @@ function ProductPicker({
         <PopoverTrigger asChild>
           <Button
             aria-expanded={open}
+            aria-invalid={ariaInvalid}
             className="h-10 w-full justify-between bg-background/50 px-3 text-left text-sm font-normal"
             id={triggerId}
+            name={name}
+            onBlur={onBlur}
             role="combobox"
             type="button"
             variant="outline"
@@ -465,6 +477,7 @@ function TradeCart({
   onRemove,
   onUpdate,
   products,
+  renderLineFields,
 }: Readonly<{
   bundles: readonly Bundle[]
   direction: TradeDirection
@@ -473,6 +486,7 @@ function TradeCart({
   onRemove: (line: TradeLine) => void
   onUpdate: (line: TradeLine, patch: Partial<TradeLine>) => void
   products: readonly Doc<"products">[]
+  renderLineFields?: (line: TradeLine, index: number) => ReactNode
 }>) {
   const visibleLines = lines.filter((line) => line.direction === direction)
   const usedReferences = new Set(
@@ -508,6 +522,7 @@ function TradeCart({
         {visibleLines.length > 0 ? (
           <div className="divide-y divide-border/70 border-y border-border/70">
             {visibleLines.map((line) => {
+              const lineIndex = lines.indexOf(line)
               const inputPrefix = `${line.direction}-${line.kind}-${line.id}`
               const product =
                 line.kind === "product"
@@ -541,36 +556,40 @@ function TradeCart({
                       <Trash2 aria-hidden="true" />
                     </Button>
                   </div>
-                  <div className="grid gap-3 sm:grid-cols-[5.5rem_minmax(0,1fr)]">
-                    <div className="grid gap-1.5">
-                      <Label htmlFor={`${inputPrefix}-quantity`}>
-                        Quantité
-                      </Label>
-                      <Input
-                        id={`${inputPrefix}-quantity`}
-                        min="1"
-                        onChange={(event) =>
-                          onUpdate(line, { quantity: event.target.value })
-                        }
-                        required
-                        step="1"
-                        type="number"
-                        value={line.quantity}
-                      />
+                  {renderLineFields ? (
+                    renderLineFields(line, lineIndex)
+                  ) : (
+                    <div className="grid gap-3 sm:grid-cols-[5.5rem_minmax(0,1fr)]">
+                      <div className="grid gap-1.5">
+                        <Label htmlFor={`${inputPrefix}-quantity`}>
+                          Quantité
+                        </Label>
+                        <Input
+                          id={`${inputPrefix}-quantity`}
+                          min="1"
+                          onChange={(event) =>
+                            onUpdate(line, { quantity: event.target.value })
+                          }
+                          required
+                          step="1"
+                          type="number"
+                          value={line.quantity}
+                        />
+                      </div>
+                      <div className="grid gap-1.5">
+                        <Label htmlFor={`${inputPrefix}-price`}>
+                          Prix unitaire
+                        </Label>
+                        <PriceInput
+                          id={`${inputPrefix}-price`}
+                          onValueChange={(value) =>
+                            onUpdate(line, { unitPrice: value })
+                          }
+                          value={line.unitPrice}
+                        />
+                      </div>
                     </div>
-                    <div className="grid gap-1.5">
-                      <Label htmlFor={`${inputPrefix}-price`}>
-                        Prix unitaire
-                      </Label>
-                      <PriceInput
-                        id={`${inputPrefix}-price`}
-                        onValueChange={(value) =>
-                          onUpdate(line, { unitPrice: value })
-                        }
-                        value={line.unitPrice}
-                      />
-                    </div>
-                  </div>
+                  )}
                 </div>
               )
             })}
@@ -618,35 +637,104 @@ export function OperationDialog({
   const linkedOrderMode = Boolean(transaction?.orderId)
   const [internalOpen, setInternalOpen] = useState(false)
   const open = controlledOpen ?? internalOpen
-  const [productId, setProductId] = useState(
-    transaction?.productId ?? initialProductId ?? ""
-  )
-  const [characterId, setCharacterId] = useState(
-    transaction?.actorCharacterId ?? ""
-  )
-  const [quantity, setQuantity] = useState(
-    transaction?.quantity.toString() ?? "1"
-  )
-  const [tradeLines, setTradeLines] = useState<TradeLine[]>(() =>
-    initialTradeLines(transaction, initialKind)
-  )
-  const [agreedTotal, setAgreedTotal] = useState(
-    transaction?.orderId ? Math.abs(transaction.total).toString() : ""
-  )
-  const [discount, setDiscount] = useState(
-    transaction?.discount?.toString() ?? ""
-  )
-  const [counterparty, setCounterparty] = useState(
-    transaction?.counterparty ?? ""
-  )
-  const [comment, setComment] = useState(transaction?.comment ?? "")
-  const [occurredOn, setOccurredOn] = useState(() =>
-    transaction
-      ? timestampToDateInput(transaction.occurredAt)
-      : todayInputValue()
-  )
   const [detailsOpen, setDetailsOpen] = useState(Boolean(transaction))
-  const [isSubmitting, setIsSubmitting] = useState(false)
+
+  function operationValues() {
+    return {
+      agreedTotal: transaction?.orderId
+        ? Math.abs(transaction.total).toString()
+        : "",
+      characterId: transaction?.actorCharacterId ?? "",
+      comment: transaction?.comment ?? "",
+      counterparty: transaction?.counterparty ?? "",
+      discount: transaction?.discount?.toString() ?? "",
+      linkedOrderMode,
+      occurredOn: transaction
+        ? timestampToDateInput(transaction.occurredAt)
+        : todayInputValue(),
+      productId: transaction?.productId ?? initialProductId ?? "",
+      productionMode,
+      quantity: transaction?.quantity.toString() ?? "1",
+      tradeLines: initialTradeLines(transaction, initialKind),
+    }
+  }
+
+  const form = useForm({
+    defaultValues: operationValues(),
+    validators: { onSubmit: operationFormSchema },
+    onSubmit: async ({ value }) => {
+      const character = characters.find(
+        (entry) => entry._id === value.characterId
+      )
+      const occurredAt = dateInputToTimestamp(value.occurredOn)
+      if (!character || !occurredAt) return
+
+      try {
+        if (productionMode) {
+          const product = productionProducts.find(
+            (entry) => entry._id === value.productId
+          )
+          if (!product) return
+          const args = {
+            characterId: character._id,
+            ...(value.comment.trim() ? { comment: value.comment.trim() } : {}),
+            ...(transaction?.kind === "production" && transaction.counterparty
+              ? { counterparty: transaction.counterparty }
+              : {}),
+            kind: "production" as const,
+            occurredAt,
+            productId: product._id,
+            quantity: Number(value.quantity),
+          }
+          if (transaction) {
+            await updateTransaction({ ...args, transactionId: transaction._id })
+          } else {
+            await recordProduction(args)
+          }
+        } else {
+          const lines = prepareTradeLines(value.tradeLines)
+          if (!lines?.length || invalidAgreedTotal || invalidDiscount) return
+          const args = {
+            ...(linkedOrderMode
+              ? { agreedTotal: Number(value.agreedTotal) }
+              : {}),
+            characterId: character._id,
+            ...(value.comment.trim() ? { comment: value.comment.trim() } : {}),
+            ...(value.counterparty.trim()
+              ? { counterparty: value.counterparty.trim() }
+              : {}),
+            ...(!linkedOrderMode && Number(value.discount) > 0
+              ? { discount: Number(value.discount) }
+              : {}),
+            lines,
+            occurredAt,
+          }
+          if (transaction) {
+            await updateExchange({ ...args, transactionId: transaction._id })
+          } else {
+            await recordExchange(args)
+          }
+        }
+        toast.success(
+          transaction
+            ? "Opération mise à jour."
+            : productionMode
+              ? "Production enregistrée : ingrédients consommés et stock mis à jour."
+              : "Échange enregistré."
+        )
+        if (controlledOpen === undefined) setInternalOpen(false)
+        onOpenChange?.(false)
+      } catch (error) {
+        toast.error(
+          getUserFacingErrorMessage(
+            error,
+            "Impossible d’enregistrer cette opération."
+          )
+        )
+      }
+    },
+  })
+  const formValues = useStore(form.store, (state) => state.values)
 
   const previousDeltas = new Map(
     transaction?.stockDeltas.map((entry) => [entry.productId, entry.delta]) ??
@@ -668,12 +756,12 @@ export function OperationDialog({
         transaction?.productId === product._id)
   )
   const selectedProduct = productionProducts.find(
-    (product) => product._id === productId
+    (product) => product._id === formValues.productId
   )
   const selectedRecipe = recipes.find(
     (recipe) => recipe.productId === selectedProduct?._id
   )
-  const parsedQuantity = Number(quantity)
+  const parsedQuantity = Number(formValues.quantity)
   const previewQuantity =
     Number.isFinite(parsedQuantity) && parsedQuantity > 0 ? parsedQuantity : 0
   const validProductionQuantity =
@@ -683,9 +771,11 @@ export function OperationDialog({
     correctedProducts,
     parsedQuantity
   )
-  const parsedDiscount = discount.trim() ? Number(discount) : 0
+  const parsedDiscount = formValues.discount.trim()
+    ? Number(formValues.discount)
+    : 0
   const previewDiscount = Number.isFinite(parsedDiscount) ? parsedDiscount : 0
-  const parsedAgreedTotal = Number(agreedTotal)
+  const parsedAgreedTotal = Number(formValues.agreedTotal)
   const previewAgreedTotal = Number.isSafeInteger(parsedAgreedTotal)
     ? parsedAgreedTotal
     : 0
@@ -706,16 +796,16 @@ export function OperationDialog({
       : 0
   }
 
-  const outgoingGross = tradeLines
+  const outgoingGross = formValues.tradeLines
     .filter((line) => line.direction === "outgoing")
     .reduce((sum, line) => sum + lineTotal(line), 0)
-  const incomingGross = tradeLines
+  const incomingGross = formValues.tradeLines
     .filter((line) => line.direction === "incoming")
     .reduce((sum, line) => sum + lineTotal(line), 0)
-  const hasOutgoingLines = tradeLines.some(
+  const hasOutgoingLines = formValues.tradeLines.some(
     (line) => line.direction === "outgoing"
   )
-  const hasIncomingLines = tradeLines.some(
+  const hasIncomingLines = formValues.tradeLines.some(
     (line) => line.direction === "incoming"
   )
   const outgoingTotal =
@@ -736,7 +826,7 @@ export function OperationDialog({
       Math.abs(incomingTotal - incomingGross) > roundingTolerance)
 
   const stockDeltas = new Map<string, number>()
-  for (const line of tradeLines) {
+  for (const line of formValues.tradeLines) {
     const lineQuantity = Number(line.quantity)
     if (!Number.isFinite(lineQuantity) || lineQuantity <= 0) continue
     if (line.kind === "product") {
@@ -772,27 +862,8 @@ export function OperationDialog({
     linkedOrderMode &&
     (!Number.isSafeInteger(parsedAgreedTotal) || parsedAgreedTotal < 0)
 
-  function resetForm() {
-    setProductId(transaction?.productId ?? initialProductId ?? "")
-    setCharacterId(transaction?.actorCharacterId ?? "")
-    setQuantity(transaction?.quantity.toString() ?? "1")
-    setTradeLines(initialTradeLines(transaction, initialKind))
-    setAgreedTotal(
-      transaction?.orderId ? Math.abs(transaction.total).toString() : ""
-    )
-    setDiscount(transaction?.discount?.toString() ?? "")
-    setCounterparty(transaction?.counterparty ?? "")
-    setComment(transaction?.comment ?? "")
-    setOccurredOn(
-      transaction
-        ? timestampToDateInput(transaction.occurredAt)
-        : todayInputValue()
-    )
-    setDetailsOpen(Boolean(transaction))
-  }
-
   function updateTradeLine(line: TradeLine, patch: Partial<TradeLine>) {
-    setTradeLines((current) =>
+    form.setFieldValue("tradeLines", (current) =>
       current.map((entry) =>
         entry.direction === line.direction &&
         entry.kind === line.kind &&
@@ -804,7 +875,7 @@ export function OperationDialog({
   }
 
   function removeTradeLine(line: TradeLine) {
-    setTradeLines((current) =>
+    form.setFieldValue("tradeLines", (current) =>
       current.filter(
         (entry) =>
           entry.direction !== line.direction ||
@@ -815,12 +886,17 @@ export function OperationDialog({
   }
 
   function handleOpenChange(nextOpen: boolean) {
-    if (nextOpen && !open) resetForm()
+    if (nextOpen && !open) {
+      form.reset(operationValues())
+      setDetailsOpen(Boolean(transaction))
+    }
     if (controlledOpen === undefined) setInternalOpen(nextOpen)
     onOpenChange?.(nextOpen)
   }
 
-  function prepareTradeLines(): TradeMutationLine[] | undefined {
+  function prepareTradeLines(
+    tradeLines: readonly TradeLine[]
+  ): TradeMutationLine[] | undefined {
     const prepared = tradeLines.flatMap<TradeMutationLine>((line) => {
       const lineQuantity = Number(line.quantity)
       const linePrice = priceDraftToValue(line.unitPrice) ?? undefined
@@ -863,98 +939,6 @@ export function OperationDialog({
     return prepared.length === tradeLines.length ? prepared : undefined
   }
 
-  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    const character = characters.find((entry) => entry._id === characterId)
-    const occurredAt = dateInputToTimestamp(occurredOn)
-    if (!character || !occurredAt) {
-      toast.error("Choisissez un personnage et une date valide.")
-      return
-    }
-
-    setIsSubmitting(true)
-    try {
-      if (productionMode) {
-        const product = productionProducts.find(
-          (entry) => entry._id === productId
-        )
-        if (
-          !product ||
-          !Number.isFinite(parsedQuantity) ||
-          !Number.isInteger(parsedQuantity) ||
-          parsedQuantity <= 0
-        ) {
-          toast.error("Choisissez un produit et une quantité entière valide.")
-          return
-        }
-        const args = {
-          characterId: character._id,
-          ...(comment.trim() ? { comment } : {}),
-          ...(transaction?.kind === "production" && transaction.counterparty
-            ? { counterparty: transaction.counterparty }
-            : {}),
-          kind: "production" as const,
-          occurredAt,
-          productId: product._id,
-          quantity: parsedQuantity,
-        }
-        if (transaction) {
-          await updateTransaction({ ...args, transactionId: transaction._id })
-        } else {
-          await recordProduction(args)
-        }
-      } else {
-        const lines = prepareTradeLines()
-        if (!lines || lines.length === 0) {
-          toast.error("Ajoutez au moins une ligne et vérifiez ses valeurs.")
-          return
-        }
-        if (invalidAgreedTotal) {
-          toast.error("Le total convenu doit être un nombre entier de septims.")
-          return
-        }
-        if (!linkedOrderMode && invalidDiscount) {
-          toast.error("La remise doit rester comprise dans le total vendu.")
-          return
-        }
-        const args = {
-          ...(linkedOrderMode ? { agreedTotal: parsedAgreedTotal } : {}),
-          characterId: character._id,
-          ...(comment.trim() ? { comment } : {}),
-          ...(counterparty.trim() ? { counterparty } : {}),
-          ...(!linkedOrderMode && parsedDiscount > 0
-            ? { discount: parsedDiscount }
-            : {}),
-          lines,
-          occurredAt,
-        }
-        if (transaction) {
-          await updateExchange({ ...args, transactionId: transaction._id })
-        } else {
-          await recordExchange(args)
-        }
-      }
-      toast.success(
-        transaction
-          ? "Opération mise à jour."
-          : productionMode
-            ? "Production enregistrée : ingrédients consommés et stock mis à jour."
-            : "Échange enregistré."
-      )
-      if (controlledOpen === undefined) setInternalOpen(false)
-      onOpenChange?.(false)
-    } catch (error) {
-      toast.error(
-        getUserFacingErrorMessage(
-          error,
-          "Impossible d’enregistrer cette opération."
-        )
-      )
-    } finally {
-      setIsSubmitting(false)
-    }
-  }
-
   const dialogTitle = productionMode
     ? transaction
       ? "Modifier la production"
@@ -970,6 +954,70 @@ export function OperationDialog({
       : netTotal < 0
         ? `Payer ${formatSeptims(Math.abs(netTotal))}`
         : "Valider l’échange"
+
+  function renderTradeLineFields(line: TradeLine, index: number) {
+    const inputPrefix = `${line.direction}-${line.kind}-${line.id}`
+    return (
+      <div className="grid gap-3 sm:grid-cols-[5.5rem_minmax(0,1fr)]">
+        <form.Field name={`tradeLines[${index}].quantity`}>
+          {(field) => {
+            const invalid =
+              field.state.meta.isTouched && !field.state.meta.isValid
+            return (
+              <Field data-invalid={invalid}>
+                <FieldLabel htmlFor={`${inputPrefix}-quantity`}>
+                  Quantité
+                </FieldLabel>
+                <Input
+                  aria-invalid={invalid}
+                  id={`${inputPrefix}-quantity`}
+                  min="1"
+                  name={field.name}
+                  onBlur={field.handleBlur}
+                  onChange={(event) =>
+                    updateTradeLine(line, { quantity: event.target.value })
+                  }
+                  required
+                  step="1"
+                  type="number"
+                  value={field.state.value}
+                />
+                {invalid ? (
+                  <FieldError errors={field.state.meta.errors} />
+                ) : null}
+              </Field>
+            )
+          }}
+        </form.Field>
+        <form.Field name={`tradeLines[${index}].unitPrice`}>
+          {(field) => {
+            const invalid =
+              field.state.meta.isTouched && !field.state.meta.isValid
+            return (
+              <Field data-invalid={invalid}>
+                <FieldLabel htmlFor={`${inputPrefix}-price`}>
+                  Prix unitaire
+                </FieldLabel>
+                <PriceInput
+                  ariaInvalid={invalid}
+                  id={`${inputPrefix}-price`}
+                  name={field.name}
+                  onBlur={field.handleBlur}
+                  onValueChange={(value) =>
+                    updateTradeLine(line, { unitPrice: value })
+                  }
+                  value={field.state.value}
+                />
+                {invalid ? (
+                  <FieldError errors={field.state.meta.errors} />
+                ) : null}
+              </Field>
+            )
+          }}
+        </form.Field>
+      </div>
+    )
+  }
 
   return (
     <Dialog onOpenChange={handleOpenChange} open={open}>
@@ -1000,46 +1048,109 @@ export function OperationDialog({
           </DialogDescription>
         </DialogHeader>
 
-        <form className="mt-1 grid gap-5" onSubmit={handleSubmit}>
+        <form
+          className="mt-1 grid gap-5"
+          noValidate
+          onSubmit={(event) => {
+            event.preventDefault()
+            void form.handleSubmit()
+          }}
+        >
           {productionMode ? (
             <>
-              <ProductPicker
-                label="Produit fabriqué"
-                onProductChange={setProductId}
-                products={productionProducts}
-                selectedProduct={selectedProduct}
-              />
+              <form.Field name="productId">
+                {(field) => {
+                  const invalid =
+                    field.state.meta.isTouched && !field.state.meta.isValid
+                  return (
+                    <Field data-invalid={invalid}>
+                      <ProductPicker
+                        ariaInvalid={invalid}
+                        label="Produit fabriqué"
+                        name={field.name}
+                        onBlur={field.handleBlur}
+                        onProductChange={field.handleChange}
+                        products={productionProducts}
+                        selectedProduct={selectedProduct}
+                      />
+                      {invalid ? (
+                        <FieldError errors={field.state.meta.errors} />
+                      ) : null}
+                    </Field>
+                  )
+                }}
+              </form.Field>
               <div className="grid gap-4 sm:grid-cols-[minmax(0,1fr)_9rem]">
-                <div className="grid gap-2">
-                  <Label htmlFor={`${formId}-character`}>Personnage</Label>
-                  <Select onValueChange={setCharacterId} value={characterId}>
-                    <SelectTrigger
-                      className="h-10 w-full bg-background/50"
-                      id={`${formId}-character`}
-                    >
-                      <SelectValue placeholder="Qui réalise la production ?" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {characters.map((character) => (
-                        <SelectItem key={character._id} value={character._id}>
-                          {character.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="grid gap-2">
-                  <Label htmlFor={`${formId}-quantity`}>Quantité</Label>
-                  <Input
-                    id={`${formId}-quantity`}
-                    min="1"
-                    onChange={(event) => setQuantity(event.target.value)}
-                    required
-                    step="1"
-                    type="number"
-                    value={quantity}
-                  />
-                </div>
+                <form.Field name="characterId">
+                  {(field) => {
+                    const invalid =
+                      field.state.meta.isTouched && !field.state.meta.isValid
+                    return (
+                      <Field data-invalid={invalid}>
+                        <FieldLabel htmlFor={`${formId}-character`}>
+                          Personnage
+                        </FieldLabel>
+                        <Select
+                          name={field.name}
+                          onValueChange={field.handleChange}
+                          value={field.state.value}
+                        >
+                          <SelectTrigger
+                            aria-invalid={invalid}
+                            className="h-10 w-full bg-background/50"
+                            id={`${formId}-character`}
+                            onBlur={field.handleBlur}
+                          >
+                            <SelectValue placeholder="Qui réalise la production ?" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {characters.map((character) => (
+                              <SelectItem
+                                key={character._id}
+                                value={character._id}
+                              >
+                                {character.name}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        {invalid ? (
+                          <FieldError errors={field.state.meta.errors} />
+                        ) : null}
+                      </Field>
+                    )
+                  }}
+                </form.Field>
+                <form.Field name="quantity">
+                  {(field) => {
+                    const invalid =
+                      field.state.meta.isTouched && !field.state.meta.isValid
+                    return (
+                      <Field data-invalid={invalid}>
+                        <FieldLabel htmlFor={`${formId}-quantity`}>
+                          Quantité
+                        </FieldLabel>
+                        <Input
+                          aria-invalid={invalid}
+                          id={`${formId}-quantity`}
+                          min="1"
+                          name={field.name}
+                          onBlur={field.handleBlur}
+                          onChange={(event) =>
+                            field.handleChange(event.target.value)
+                          }
+                          required
+                          step="1"
+                          type="number"
+                          value={field.state.value}
+                        />
+                        {invalid ? (
+                          <FieldError errors={field.state.meta.errors} />
+                        ) : null}
+                      </Field>
+                    )
+                  }}
+                </form.Field>
               </div>
               {selectedProduct ? (
                 <Alert
@@ -1114,51 +1225,102 @@ export function OperationDialog({
             </>
           ) : (
             <>
-              <div className="grid gap-4 md:grid-cols-2">
-                <TradeCart
-                  bundles={bundles}
-                  direction="outgoing"
-                  lines={tradeLines}
-                  onAdd={(line) =>
-                    setTradeLines((current) => [...current, line])
-                  }
-                  onRemove={removeTradeLine}
-                  onUpdate={updateTradeLine}
-                  products={correctedProducts}
-                />
-                <TradeCart
-                  bundles={bundles}
-                  direction="incoming"
-                  lines={tradeLines}
-                  onAdd={(line) =>
-                    setTradeLines((current) => [...current, line])
-                  }
-                  onRemove={removeTradeLine}
-                  onUpdate={updateTradeLine}
-                  products={correctedProducts}
-                />
-              </div>
+              <form.Field name="tradeLines">
+                {(field) => {
+                  const invalid =
+                    field.state.meta.isTouched && !field.state.meta.isValid
+                  return (
+                    <Field data-invalid={invalid}>
+                      <div className="grid gap-4 md:grid-cols-2">
+                        <TradeCart
+                          bundles={bundles}
+                          direction="outgoing"
+                          lines={formValues.tradeLines}
+                          onAdd={(line) => {
+                            if (
+                              formValues.tradeLines.length >= MAX_DYNAMIC_LINES
+                            )
+                              return
+                            form.setFieldValue("tradeLines", (current) => [
+                              ...current,
+                              line,
+                            ])
+                          }}
+                          onRemove={removeTradeLine}
+                          onUpdate={updateTradeLine}
+                          products={correctedProducts}
+                          renderLineFields={renderTradeLineFields}
+                        />
+                        <TradeCart
+                          bundles={bundles}
+                          direction="incoming"
+                          lines={formValues.tradeLines}
+                          onAdd={(line) => {
+                            if (
+                              formValues.tradeLines.length >= MAX_DYNAMIC_LINES
+                            )
+                              return
+                            form.setFieldValue("tradeLines", (current) => [
+                              ...current,
+                              line,
+                            ])
+                          }}
+                          onRemove={removeTradeLine}
+                          onUpdate={updateTradeLine}
+                          products={correctedProducts}
+                          renderLineFields={renderTradeLineFields}
+                        />
+                      </div>
+                      {invalid ? (
+                        <FieldError errors={field.state.meta.errors} />
+                      ) : null}
+                    </Field>
+                  )
+                }}
+              </form.Field>
 
-              <div className="grid gap-2">
-                <Label htmlFor={`${formId}-character`}>Personnage</Label>
-                <Select onValueChange={setCharacterId} value={characterId}>
-                  <SelectTrigger
-                    className="h-10 w-full bg-background/50"
-                    id={`${formId}-character`}
-                  >
-                    <SelectValue placeholder="Qui réalise l’échange ?" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {characters.map((character) => (
-                      <SelectItem key={character._id} value={character._id}>
-                        {character.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
+              <form.Field name="characterId">
+                {(field) => {
+                  const invalid =
+                    field.state.meta.isTouched && !field.state.meta.isValid
+                  return (
+                    <Field data-invalid={invalid}>
+                      <FieldLabel htmlFor={`${formId}-character`}>
+                        Personnage
+                      </FieldLabel>
+                      <Select
+                        name={field.name}
+                        onValueChange={field.handleChange}
+                        value={field.state.value}
+                      >
+                        <SelectTrigger
+                          aria-invalid={invalid}
+                          className="h-10 w-full bg-background/50"
+                          id={`${formId}-character`}
+                          onBlur={field.handleBlur}
+                        >
+                          <SelectValue placeholder="Qui réalise l’échange ?" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {characters.map((character) => (
+                            <SelectItem
+                              key={character._id}
+                              value={character._id}
+                            >
+                              {character.name}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      {invalid ? (
+                        <FieldError errors={field.state.meta.errors} />
+                      ) : null}
+                    </Field>
+                  )
+                }}
+              </form.Field>
 
-              {tradeLines.length > 0 ? (
+              {formValues.tradeLines.length > 0 ? (
                 <Alert
                   className={cn(
                     insufficientProducts.length > 0
@@ -1237,39 +1399,109 @@ export function OperationDialog({
                 )}
               >
                 {!productionMode ? (
-                  <div className="grid gap-2">
-                    <Label
-                      htmlFor={`${formId}-${linkedOrderMode ? "agreed-total" : "discount"}`}
+                  linkedOrderMode ? (
+                    <form.Field name="agreedTotal">
+                      {(field) => {
+                        const invalid =
+                          field.state.meta.isTouched &&
+                          !field.state.meta.isValid
+                        return (
+                          <Field data-invalid={invalid}>
+                            <FieldLabel htmlFor={`${formId}-agreed-total`}>
+                              Total convenu de la commande
+                            </FieldLabel>
+                            <Input
+                              aria-invalid={invalid}
+                              id={`${formId}-agreed-total`}
+                              min="0"
+                              name={field.name}
+                              onBlur={field.handleBlur}
+                              onChange={(event) =>
+                                field.handleChange(event.target.value)
+                              }
+                              placeholder="0"
+                              step="1"
+                              type="number"
+                              value={field.state.value}
+                            />
+                            {invalid ? (
+                              <FieldError errors={field.state.meta.errors} />
+                            ) : null}
+                          </Field>
+                        )
+                      }}
+                    </form.Field>
+                  ) : (
+                    <form.Field
+                      name="discount"
+                      validators={{
+                        onSubmit: ({ value }) => {
+                          const parsed = value.trim() ? Number(value) : 0
+                          return !Number.isFinite(parsed) ||
+                            parsed < 0 ||
+                            parsed > outgoingGross
+                            ? "La remise doit rester comprise dans le total vendu."
+                            : undefined
+                        },
+                      }}
                     >
-                      {linkedOrderMode
-                        ? "Total convenu de la commande"
-                        : "Remise sur ce qui est vendu"}
-                    </Label>
-                    <Input
-                      id={`${formId}-${linkedOrderMode ? "agreed-total" : "discount"}`}
-                      min="0"
-                      onChange={(event) =>
-                        linkedOrderMode
-                          ? setAgreedTotal(event.target.value)
-                          : setDiscount(event.target.value)
-                      }
-                      placeholder="0"
-                      step={linkedOrderMode ? "1" : "any"}
-                      type="number"
-                      value={linkedOrderMode ? agreedTotal : discount}
-                    />
-                  </div>
+                      {(field) => {
+                        const invalid =
+                          field.state.meta.isTouched &&
+                          !field.state.meta.isValid
+                        return (
+                          <Field data-invalid={invalid}>
+                            <FieldLabel htmlFor={`${formId}-discount`}>
+                              Remise sur ce qui est vendu
+                            </FieldLabel>
+                            <Input
+                              aria-invalid={invalid}
+                              id={`${formId}-discount`}
+                              min="0"
+                              name={field.name}
+                              onBlur={field.handleBlur}
+                              onChange={(event) =>
+                                field.handleChange(event.target.value)
+                              }
+                              placeholder="0"
+                              step="any"
+                              type="number"
+                              value={field.state.value}
+                            />
+                            {invalid ? (
+                              <FieldError errors={field.state.meta.errors} />
+                            ) : null}
+                          </Field>
+                        )
+                      }}
+                    </form.Field>
+                  )
                 ) : null}
-                <div className="grid gap-2">
-                  <Label htmlFor={`${formId}-date`}>Date</Label>
-                  <DatePicker
-                    ariaLabel="Date de l’opération"
-                    id={`${formId}-date`}
-                    onChange={setOccurredOn}
-                    required
-                    value={occurredOn}
-                  />
-                </div>
+                <form.Field name="occurredOn">
+                  {(field) => {
+                    const invalid =
+                      field.state.meta.isTouched && !field.state.meta.isValid
+                    return (
+                      <Field data-invalid={invalid}>
+                        <FieldLabel htmlFor={`${formId}-date`}>Date</FieldLabel>
+                        <DatePicker
+                          ariaInvalid={invalid}
+                          ariaLabel="Date de l’opération"
+                          id={`${formId}-date`}
+                          max={todayInputValue()}
+                          name={field.name}
+                          onBlur={field.handleBlur}
+                          onChange={field.handleChange}
+                          required
+                          value={field.state.value}
+                        />
+                        {invalid ? (
+                          <FieldError errors={field.state.meta.errors} />
+                        ) : null}
+                      </Field>
+                    )
+                  }}
+                </form.Field>
               </div>
 
               <Separator className="my-4" />
@@ -1280,30 +1512,64 @@ export function OperationDialog({
                 )}
               >
                 {!productionMode ? (
-                  <div className="grid gap-2">
-                    <Label htmlFor={`${formId}-counterparty`}>
-                      Client, fournisseur ou interlocuteur
-                    </Label>
-                    <Input
-                      id={`${formId}-counterparty`}
-                      maxLength={500}
-                      onChange={(event) => setCounterparty(event.target.value)}
-                      placeholder="Facultatif"
-                      value={counterparty}
-                    />
-                  </div>
+                  <form.Field name="counterparty">
+                    {(field) => {
+                      const invalid =
+                        field.state.meta.isTouched && !field.state.meta.isValid
+                      return (
+                        <Field data-invalid={invalid}>
+                          <FieldLabel htmlFor={`${formId}-counterparty`}>
+                            Client, fournisseur ou interlocuteur
+                          </FieldLabel>
+                          <Input
+                            aria-invalid={invalid}
+                            id={`${formId}-counterparty`}
+                            maxLength={500}
+                            name={field.name}
+                            onBlur={field.handleBlur}
+                            onChange={(event) =>
+                              field.handleChange(event.target.value)
+                            }
+                            placeholder="Facultatif"
+                            value={field.state.value}
+                          />
+                          {invalid ? (
+                            <FieldError errors={field.state.meta.errors} />
+                          ) : null}
+                        </Field>
+                      )
+                    }}
+                  </form.Field>
                 ) : null}
-                <div className="grid gap-2">
-                  <Label htmlFor={`${formId}-comment`}>Note interne</Label>
-                  <Textarea
-                    id={`${formId}-comment`}
-                    maxLength={500}
-                    onChange={(event) => setComment(event.target.value)}
-                    placeholder="Informations utiles…"
-                    rows={2}
-                    value={comment}
-                  />
-                </div>
+                <form.Field name="comment">
+                  {(field) => {
+                    const invalid =
+                      field.state.meta.isTouched && !field.state.meta.isValid
+                    return (
+                      <Field data-invalid={invalid}>
+                        <FieldLabel htmlFor={`${formId}-comment`}>
+                          Note interne
+                        </FieldLabel>
+                        <Textarea
+                          aria-invalid={invalid}
+                          id={`${formId}-comment`}
+                          maxLength={500}
+                          name={field.name}
+                          onBlur={field.handleBlur}
+                          onChange={(event) =>
+                            field.handleChange(event.target.value)
+                          }
+                          placeholder="Informations utiles…"
+                          rows={2}
+                          value={field.state.value}
+                        />
+                        {invalid ? (
+                          <FieldError errors={field.state.meta.errors} />
+                        ) : null}
+                      </Field>
+                    )
+                  }}
+                </form.Field>
               </div>
             </CollapsibleContent>
           </Collapsible>
@@ -1316,40 +1582,40 @@ export function OperationDialog({
             >
               Annuler
             </Button>
-            <Button
-              disabled={
-                isSubmitting ||
-                (productionMode &&
-                  (!selectedProduct ||
-                    !validProductionQuantity ||
-                    !productionPlan.canProduce)) ||
-                insufficientProducts.length > 0 ||
-                (!productionMode &&
-                  (tradeLines.length === 0 ||
-                    invalidAgreedTotal ||
-                    (!linkedOrderMode && invalidDiscount)))
-              }
-              type="submit"
-            >
-              {isSubmitting ? (
-                <Spinner
-                  aria-hidden="true"
-                  className="motion-reduce:animate-none"
-                />
-              ) : transaction ? (
-                <>
-                  <Pencil aria-hidden="true" />
-                  Enregistrer les modifications
-                </>
-              ) : productionMode ? (
-                <>
-                  <Hammer aria-hidden="true" />
-                  Enregistrer la production
-                </>
-              ) : (
-                submitLabel
+            <form.Subscribe selector={(state) => state.isSubmitting}>
+              {(isSubmitting) => (
+                <Button
+                  disabled={
+                    isSubmitting ||
+                    (productionMode &&
+                      Boolean(selectedProduct) &&
+                      validProductionQuantity &&
+                      !productionPlan.canProduce) ||
+                    insufficientProducts.length > 0
+                  }
+                  type="submit"
+                >
+                  {isSubmitting ? (
+                    <Spinner
+                      aria-hidden="true"
+                      className="motion-reduce:animate-none"
+                    />
+                  ) : transaction ? (
+                    <>
+                      <Pencil aria-hidden="true" />
+                      Enregistrer les modifications
+                    </>
+                  ) : productionMode ? (
+                    <>
+                      <Hammer aria-hidden="true" />
+                      Enregistrer la production
+                    </>
+                  ) : (
+                    submitLabel
+                  )}
+                </Button>
               )}
-            </Button>
+            </form.Subscribe>
           </DialogFooter>
         </form>
       </DialogContent>

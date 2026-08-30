@@ -1,13 +1,8 @@
+import { useForm, useStore } from "@tanstack/react-form"
 import { useMutation } from "convex/react"
 import { type FunctionReturnType } from "convex/server"
 import { ClipboardPlus, Pencil, Plus, RefreshCw, Trash2 } from "lucide-react"
-import {
-  useId,
-  useRef,
-  useState,
-  type FormEvent,
-  type ReactElement,
-} from "react"
+import { useId, useRef, useState, type ReactElement } from "react"
 import { toast } from "sonner"
 
 import { DatePicker } from "@/components/date-picker"
@@ -39,12 +34,17 @@ import {
 } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
 import {
+  Field,
+  FieldDescription,
+  FieldError,
+  FieldLabel,
+} from "@/components/ui/field"
+import {
   InputGroup,
   InputGroupAddon,
   InputGroupInput,
   InputGroupText,
 } from "@/components/ui/input-group"
-import { Label } from "@/components/ui/label"
 import {
   Select,
   SelectContent,
@@ -58,6 +58,11 @@ import { Textarea } from "@/components/ui/textarea"
 import { api } from "../../convex/_generated/api"
 import { type Doc } from "../../convex/_generated/dataModel"
 import { getUserFacingErrorMessage } from "@/lib/errors"
+import {
+  MAX_AMOUNT,
+  MAX_DYNAMIC_LINES,
+  orderFormSchema,
+} from "@/lib/form-schemas"
 import { formatOrderStatus, formatSeptims } from "@/lib/format"
 import { calculateOrderPreparation } from "@/lib/order-preparation"
 import {
@@ -152,71 +157,99 @@ export function OrderDialog({
   const fieldId = useId()
   const nextLineKey = useRef(order?.lines.length ?? 1)
   const [internalOpen, setInternalOpen] = useState(false)
+  const [todayValue] = useState(() => dateInputFromTimestamp(Date.now()))
   const open = controlledOpen ?? internalOpen
-  const [kind, setKind] = useState<OrderKind>(order?.kind ?? initialKind)
-  const [contactId, setContactId] = useState(order?.contactId ?? "")
-  const [contactName, setContactName] = useState(order?.contactName ?? "")
-  const [agreedTotal, setAgreedTotal] = useState(order?.total?.toString() ?? "")
-  const [totalOverridden, setTotalOverridden] = useState(
-    order?.total !== undefined
-  )
-  const [dueDate, setDueDate] = useState(() =>
-    dateInputFromTimestamp(order?.dueAt)
-  )
-  const [notes, setNotes] = useState(order?.notes ?? "")
-  const [status, setStatus] = useState<OrderStatus>(order?.status ?? "open")
-  const [processedCharacterId, setProcessedCharacterId] = useState(
-    order?.linkedTransaction?.actorCharacterId ?? ""
-  )
-  const [processedDate, setProcessedDate] = useState(() =>
-    dateInputFromTimestamp(
-      order?.processedAt ?? order?.linkedTransaction?.occurredAt
-    )
-  )
-  const [lines, setLines] = useState<OrderLineDraft[]>(() =>
-    initialOrderLines(order)
-  )
-  const [isSubmitting, setIsSubmitting] = useState(false)
+  const [isDeleting, setIsDeleting] = useState(false)
 
-  function resetForm() {
-    setKind(order?.kind ?? initialKind)
-    setContactId(order?.contactId ?? "")
-    setContactName(order?.contactName ?? "")
-    setAgreedTotal(order?.total?.toString() ?? "")
-    setTotalOverridden(order?.total !== undefined)
-    setDueDate(dateInputFromTimestamp(order?.dueAt))
-    setNotes(order?.notes ?? "")
-    setStatus(order?.status ?? "open")
-    setProcessedCharacterId(order?.linkedTransaction?.actorCharacterId ?? "")
-    setProcessedDate(
-      dateInputFromTimestamp(
+  function orderValues() {
+    return {
+      agreedTotal: order?.total?.toString() ?? "",
+      contactId: order?.contactId ?? "",
+      contactName: order?.contactName ?? "",
+      dueDate: dateInputFromTimestamp(order?.dueAt),
+      kind: order?.kind ?? initialKind,
+      lines: initialOrderLines(order),
+      notes: order?.notes ?? "",
+      processedCharacterId: order?.linkedTransaction?.actorCharacterId ?? "",
+      processedDate: dateInputFromTimestamp(
         order?.processedAt ?? order?.linkedTransaction?.occurredAt
-      )
-    )
-    if (order?.lines.length) {
-      setLines(initialOrderLines(order))
-      nextLineKey.current = order.lines.length
-      return
+      ),
+      requiresProcessedDetails: Boolean(order?.transactionId),
+      status: order?.status ?? "open",
+      totalOverridden: order?.total !== undefined,
     }
-    setLines([
-      {
-        key: 0,
-        productId: "",
-        quantity: "1",
-        unitPrice: priceDraftFromValue(undefined),
-      },
-    ])
-    nextLineKey.current = 1
   }
 
+  const form = useForm({
+    defaultValues: orderValues(),
+    validators: { onSubmit: orderFormSchema },
+    onSubmit: async ({ value }) => {
+      const submittedDueAt = timestampFromDateInput(value.dueDate)
+      const submittedProcessedAt = timestampFromDateInput(value.processedDate)
+      const submittedTotal = value.totalOverridden
+        ? value.agreedTotal
+        : (automaticTotal?.toString() ?? "")
+      const agreedTotalValue = submittedTotal.trim()
+        ? Number(submittedTotal)
+        : null
+
+      try {
+        await saveOrder({
+          ...(order?.transactionId
+            ? {
+                actorCharacterId:
+                  value.processedCharacterId as Doc<"characters">["_id"],
+                processedAt: submittedProcessedAt!,
+              }
+            : {}),
+          ...(value.contactId
+            ? { contactId: value.contactId as Doc<"contacts">["_id"] }
+            : {}),
+          contactName: value.contactName.trim(),
+          dueAt: submittedDueAt,
+          kind: value.kind,
+          lines: value.lines.map((line) => ({
+            productId: line.productId as Doc<"products">["_id"],
+            quantity: Number(line.quantity),
+            unitPrice: priceDraftToValue(line.unitPrice),
+          })),
+          notes: value.notes.trim(),
+          ...(order ? { orderId: order._id } : {}),
+          status: value.status,
+          total: agreedTotalValue,
+        })
+        toast.success(
+          order?.transactionId
+            ? "Commande, transaction et stock mis à jour."
+            : order
+              ? "Commande mise à jour."
+              : "Commande créée."
+        )
+        if (controlledOpen === undefined) setInternalOpen(false)
+        onOpenChange?.(false)
+      } catch (error) {
+        toast.error(
+          getUserFacingErrorMessage(
+            error,
+            "Impossible d’enregistrer la commande."
+          )
+        )
+      }
+    },
+  })
+  const formValues = useStore(form.store, (state) => state.values)
+
   function handleOpenChange(nextOpen: boolean) {
-    if (nextOpen && !open) resetForm()
+    if (nextOpen && !open) {
+      form.reset(orderValues())
+      nextLineKey.current = Math.max(1, order?.lines.length ?? 0)
+    }
     if (controlledOpen === undefined) setInternalOpen(nextOpen)
     onOpenChange?.(nextOpen)
   }
 
   function updateLine(key: number, patch: Partial<OrderLineDraft>) {
-    setLines((current) =>
+    form.setFieldValue("lines", (current) =>
       current.map((line) => (line.key === key ? { ...line, ...patch } : line))
     )
   }
@@ -226,7 +259,7 @@ export function OrderDialog({
     updateLine(key, {
       productId: product?._id ?? "",
       unitPrice: priceDraftFromValue(
-        product ? defaultPrice(product, kind) : undefined
+        product ? defaultPrice(product, formValues.kind) : undefined
       ),
     })
   }
@@ -234,7 +267,7 @@ export function OrderDialog({
   function addLine() {
     const key = nextLineKey.current
     nextLineKey.current += 1
-    setLines((current) => [
+    form.setFieldValue("lines", (current) => [
       ...current,
       {
         key,
@@ -246,10 +279,12 @@ export function OrderDialog({
   }
 
   function removeLine(key: number) {
-    setLines((current) => current.filter((line) => line.key !== key))
+    form.setFieldValue("lines", (current) =>
+      current.filter((line) => line.key !== key)
+    )
   }
 
-  const lineValues = lines.map((line) => ({
+  const lineValues = formValues.lines.map((line) => ({
     quantity: Number(line.quantity),
     unitPrice: priceDraftToValue(line.unitPrice),
   }))
@@ -266,12 +301,11 @@ export function OrderDialog({
   )
     ? roundSeptimsDown(gross)
     : undefined
-  const displayedTotal = totalOverridden
-    ? agreedTotal
+  const displayedTotal = formValues.totalOverridden
+    ? formValues.agreedTotal
     : (automaticTotal?.toString() ?? "")
-  const agreedTotalValue = displayedTotal.trim() ? Number(displayedTotal) : null
   const preparation = calculateOrderPreparation(
-    lines.map((line) => ({
+    formValues.lines.map((line) => ({
       productId: line.productId || undefined,
       productName:
         products.find((product) => product._id === line.productId)?.name ??
@@ -281,145 +315,21 @@ export function OrderDialog({
     products,
     recipes
   )
-  const suggestedContacts = contacts.filter((contact) => contact.kind === kind)
+  const suggestedContacts = contacts.filter(
+    (contact) => contact.kind === formValues.kind
+  )
 
   function updateContactName(value: string) {
-    setContactName(value)
-    setContactId(
+    form.setFieldValue("contactName", value)
+    form.setFieldValue(
+      "contactId",
       suggestedContacts.find((contact) => contact.name === value)?._id ?? ""
     )
   }
 
-  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    const submittedDueAt = timestampFromDateInput(dueDate)
-    const submittedProcessedAt = timestampFromDateInput(processedDate)
-    const preparedLines = lines.map((line) => ({
-      productId: products.find((product) => product._id === line.productId)
-        ?._id,
-      quantity: Number(line.quantity),
-      unitPrice: priceDraftToValue(line.unitPrice),
-    }))
-
-    if (!contactName.trim()) {
-      toast.error(
-        kind === "client"
-          ? "Le nom du client est obligatoire."
-          : "Le nom du fournisseur est obligatoire."
-      )
-      return
-    }
-    if (submittedDueAt !== null && !Number.isFinite(submittedDueAt)) {
-      toast.error("La date prévue n’est pas valide.")
-      return
-    }
-    if (
-      order?.transactionId &&
-      (!characters.some(
-        (character) => character._id === processedCharacterId
-      ) ||
-        submittedProcessedAt === null ||
-        !Number.isFinite(submittedProcessedAt))
-    ) {
-      toast.error("Choisissez le personnage et la date de la transaction liée.")
-      return
-    }
-    if (
-      preparedLines.length === 0 ||
-      preparedLines.some(
-        (line) =>
-          !line.productId ||
-          !Number.isFinite(line.quantity) ||
-          !Number.isInteger(line.quantity) ||
-          line.quantity <= 0
-      )
-    ) {
-      toast.error(
-        "Chaque ligne doit contenir un produit et une quantité entière."
-      )
-      return
-    }
-    if (
-      preparedLines.some(
-        (line) => line.unitPrice !== null && !Number.isFinite(line.unitPrice)
-      )
-    ) {
-      toast.error(
-        "Chaque prix doit indiquer des septims pour un nombre entier d’unités."
-      )
-      return
-    }
-    if (
-      agreedTotalValue !== null &&
-      (!Number.isSafeInteger(agreedTotalValue) || agreedTotalValue < 0)
-    ) {
-      toast.error("Le total convenu doit être un nombre entier de septims.")
-      return
-    }
-    const productIds = preparedLines.flatMap((line) =>
-      line.productId ? [line.productId] : []
-    )
-    if (new Set(productIds).size !== productIds.length) {
-      toast.error("Un produit ne peut apparaître qu’une fois.")
-      return
-    }
-
-    setIsSubmitting(true)
-    try {
-      await saveOrder({
-        ...(order?.transactionId
-          ? {
-              actorCharacterId:
-                processedCharacterId as Doc<"characters">["_id"],
-              processedAt: submittedProcessedAt!,
-            }
-          : {}),
-        ...(contactId
-          ? { contactId: contactId as Doc<"contacts">["_id"] }
-          : {}),
-        contactName: contactName.trim(),
-        dueAt: submittedDueAt,
-        kind,
-        lines: preparedLines.flatMap((line) =>
-          line.productId
-            ? [
-                {
-                  productId: line.productId,
-                  quantity: line.quantity,
-                  unitPrice: line.unitPrice,
-                },
-              ]
-            : []
-        ),
-        notes: notes.trim(),
-        ...(order ? { orderId: order._id } : {}),
-        status,
-        total: agreedTotalValue,
-      })
-      toast.success(
-        order?.transactionId
-          ? "Commande, transaction et stock mis à jour."
-          : order
-            ? "Commande mise à jour."
-            : "Commande créée."
-      )
-      if (controlledOpen === undefined) setInternalOpen(false)
-      onOpenChange?.(false)
-    } catch (error) {
-      toast.error(
-        getUserFacingErrorMessage(
-          error,
-          "Impossible d’enregistrer la commande."
-        )
-      )
-    } finally {
-      setIsSubmitting(false)
-    }
-  }
-
   async function deleteOrder() {
     if (!order) return
-    setIsSubmitting(true)
+    setIsDeleting(true)
     try {
       await removeOrder({ orderId: order._id })
       toast.success("Commande supprimée.")
@@ -430,7 +340,7 @@ export function OrderDialog({
         getUserFacingErrorMessage(error, "Impossible de supprimer la commande.")
       )
     } finally {
-      setIsSubmitting(false)
+      setIsDeleting(false)
     }
   }
 
@@ -472,155 +382,253 @@ export function OrderDialog({
           </Alert>
         ) : null}
 
-        <form className="grid gap-5" onSubmit={handleSubmit}>
+        <form
+          className="grid gap-5"
+          noValidate
+          onSubmit={(event) => {
+            event.preventDefault()
+            void form.handleSubmit()
+          }}
+        >
           <div className="grid gap-4 sm:grid-cols-2">
-            <div className="grid gap-2">
-              <Label htmlFor={`${fieldId}-kind`}>Type de commande</Label>
-              <Select
-                onValueChange={(value) => {
-                  if (value === "client" || value === "supplier") {
-                    if (value !== kind) {
-                      setContactId("")
-                      setContactName("")
-                    }
-                    setKind(value)
-                  }
-                }}
-                value={kind}
-              >
-                <SelectTrigger className="w-full" id={`${fieldId}-kind`}>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="client">Commande client</SelectItem>
-                  <SelectItem value="supplier">Commande fournisseur</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="grid gap-2">
-              <Label htmlFor={`${fieldId}-contact`}>
-                {kind === "client" ? "Client" : "Fournisseur"}
-              </Label>
-              <Input
-                id={`${fieldId}-contact`}
-                list={`${fieldId}-contact-suggestions`}
-                maxLength={100}
-                onChange={(event) => updateContactName(event.target.value)}
-                placeholder={
-                  kind === "client" ? "Nom du client" : "Nom du fournisseur"
-                }
-                required
-                value={contactName}
-              />
-              <datalist id={`${fieldId}-contact-suggestions`}>
-                {suggestedContacts.map((contact) => (
-                  <option key={contact._id} value={contact.name} />
-                ))}
-              </datalist>
-              <p className="text-xs text-muted-foreground">
-                {suggestedContacts.length > 0
-                  ? "Choisissez un contact existant ou saisissez un nouveau nom."
-                  : "Ce nom sera ajouté au carnet après l’enregistrement."}
-              </p>
-            </div>
+            <form.Field name="kind">
+              {(field) => (
+                <Field>
+                  <FieldLabel htmlFor={`${fieldId}-kind`}>
+                    Type de commande
+                  </FieldLabel>
+                  <Select
+                    name={field.name}
+                    onValueChange={(value) => {
+                      if (value === "client" || value === "supplier") {
+                        if (value !== field.state.value) {
+                          form.setFieldValue("contactId", "")
+                          form.setFieldValue("contactName", "")
+                        }
+                        field.handleChange(value)
+                      }
+                    }}
+                    value={field.state.value}
+                  >
+                    <SelectTrigger
+                      className="w-full"
+                      id={`${fieldId}-kind`}
+                      onBlur={field.handleBlur}
+                    >
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="client">Commande client</SelectItem>
+                      <SelectItem value="supplier">
+                        Commande fournisseur
+                      </SelectItem>
+                    </SelectContent>
+                  </Select>
+                </Field>
+              )}
+            </form.Field>
+            <form.Field name="contactName">
+              {(field) => {
+                const invalid =
+                  field.state.meta.isTouched && !field.state.meta.isValid
+                return (
+                  <Field data-invalid={invalid}>
+                    <FieldLabel htmlFor={`${fieldId}-contact`}>
+                      {formValues.kind === "client" ? "Client" : "Fournisseur"}
+                    </FieldLabel>
+                    <Input
+                      aria-invalid={invalid}
+                      id={`${fieldId}-contact`}
+                      list={`${fieldId}-contact-suggestions`}
+                      maxLength={100}
+                      name={field.name}
+                      onBlur={field.handleBlur}
+                      onChange={(event) =>
+                        updateContactName(event.target.value)
+                      }
+                      placeholder={
+                        formValues.kind === "client"
+                          ? "Nom du client"
+                          : "Nom du fournisseur"
+                      }
+                      required
+                      value={field.state.value}
+                    />
+                    <datalist id={`${fieldId}-contact-suggestions`}>
+                      {suggestedContacts.map((contact) => (
+                        <option key={contact._id} value={contact.name} />
+                      ))}
+                    </datalist>
+                    <FieldDescription>
+                      {suggestedContacts.length > 0
+                        ? "Choisissez un contact existant ou saisissez un nouveau nom."
+                        : "Ce nom sera ajouté au carnet après l’enregistrement."}
+                    </FieldDescription>
+                    {invalid ? (
+                      <FieldError errors={field.state.meta.errors} />
+                    ) : null}
+                  </Field>
+                )
+              }}
+            </form.Field>
           </div>
 
           {order?.transactionId ? (
             <Card className="gap-0 rounded-none border-primary/25 bg-primary/[0.035] py-0 ring-0">
               <CardContent className="grid gap-4 p-3 sm:grid-cols-2">
-                <div className="grid min-w-0 gap-2">
-                  <Label htmlFor={`${fieldId}-processed-character`}>
-                    Personnage de la transaction
-                  </Label>
-                  <Select
-                    onValueChange={setProcessedCharacterId}
-                    value={processedCharacterId}
-                  >
-                    <SelectTrigger
-                      className="w-full"
-                      id={`${fieldId}-processed-character`}
-                    >
-                      <SelectValue placeholder="Choisir un personnage" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {characters.map((character) => (
-                        <SelectItem key={character._id} value={character._id}>
-                          {character.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="grid gap-2">
-                  <Label htmlFor={`${fieldId}-processed-date`}>
-                    {kind === "client"
-                      ? "Date du paiement"
-                      : "Date de réception"}
-                  </Label>
-                  <DatePicker
-                    ariaLabel={
-                      kind === "client"
-                        ? "Date du paiement"
-                        : "Date de réception"
-                    }
-                    id={`${fieldId}-processed-date`}
-                    onChange={setProcessedDate}
-                    required
-                    value={processedDate}
-                  />
-                </div>
+                <form.Field name="processedCharacterId">
+                  {(field) => {
+                    const invalid =
+                      field.state.meta.isTouched && !field.state.meta.isValid
+                    return (
+                      <Field className="min-w-0" data-invalid={invalid}>
+                        <FieldLabel htmlFor={`${fieldId}-processed-character`}>
+                          Personnage de la transaction
+                        </FieldLabel>
+                        <Select
+                          name={field.name}
+                          onValueChange={field.handleChange}
+                          value={field.state.value}
+                        >
+                          <SelectTrigger
+                            aria-invalid={invalid}
+                            className="w-full"
+                            id={`${fieldId}-processed-character`}
+                            onBlur={field.handleBlur}
+                          >
+                            <SelectValue placeholder="Choisir un personnage" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {characters.map((character) => (
+                              <SelectItem
+                                key={character._id}
+                                value={character._id}
+                              >
+                                {character.name}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        {invalid ? (
+                          <FieldError errors={field.state.meta.errors} />
+                        ) : null}
+                      </Field>
+                    )
+                  }}
+                </form.Field>
+                <form.Field name="processedDate">
+                  {(field) => {
+                    const invalid =
+                      field.state.meta.isTouched && !field.state.meta.isValid
+                    return (
+                      <Field data-invalid={invalid}>
+                        <FieldLabel htmlFor={`${fieldId}-processed-date`}>
+                          {formValues.kind === "client"
+                            ? "Date du paiement"
+                            : "Date de réception"}
+                        </FieldLabel>
+                        <DatePicker
+                          ariaInvalid={invalid}
+                          ariaLabel={
+                            formValues.kind === "client"
+                              ? "Date du paiement"
+                              : "Date de réception"
+                          }
+                          id={`${fieldId}-processed-date`}
+                          max={todayValue}
+                          name={field.name}
+                          onBlur={field.handleBlur}
+                          onChange={field.handleChange}
+                          required
+                          value={field.state.value}
+                        />
+                        {invalid ? (
+                          <FieldError errors={field.state.meta.errors} />
+                        ) : null}
+                      </Field>
+                    )
+                  }}
+                </form.Field>
               </CardContent>
             </Card>
           ) : null}
 
           <div className="grid gap-4 sm:grid-cols-2">
-            <div className="grid gap-2">
-              <Label htmlFor={`${fieldId}-due-date`}>
-                {kind === "client" ? "Livraison prévue" : "Réception prévue"}
-              </Label>
-              <DatePicker
-                ariaLabel={
-                  kind === "client" ? "Livraison prévue" : "Réception prévue"
-                }
-                id={`${fieldId}-due-date`}
-                onChange={setDueDate}
-                value={dueDate}
-              />
-            </div>
-            <div className="grid gap-2">
-              <Label htmlFor={`${fieldId}-status`}>État</Label>
-              <Select
-                onValueChange={(value) => {
-                  if (orderStatuses.includes(value as OrderStatus)) {
-                    setStatus(value as OrderStatus)
-                  }
-                }}
-                value={status}
-              >
-                <SelectTrigger className="w-full" id={`${fieldId}-status`}>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {orderStatuses.map((entry) => (
-                    <SelectItem key={entry} value={entry}>
-                      {formatOrderStatus(entry, kind)}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
+            <form.Field name="dueDate">
+              {(field) => {
+                const invalid =
+                  field.state.meta.isTouched && !field.state.meta.isValid
+                return (
+                  <Field data-invalid={invalid}>
+                    <FieldLabel htmlFor={`${fieldId}-due-date`}>
+                      {formValues.kind === "client"
+                        ? "Livraison prévue"
+                        : "Réception prévue"}
+                    </FieldLabel>
+                    <DatePicker
+                      ariaInvalid={invalid}
+                      ariaLabel={
+                        formValues.kind === "client"
+                          ? "Livraison prévue"
+                          : "Réception prévue"
+                      }
+                      id={`${fieldId}-due-date`}
+                      name={field.name}
+                      onBlur={field.handleBlur}
+                      onChange={field.handleChange}
+                      value={field.state.value}
+                    />
+                    {invalid ? (
+                      <FieldError errors={field.state.meta.errors} />
+                    ) : null}
+                  </Field>
+                )
+              }}
+            </form.Field>
+            <form.Field name="status">
+              {(field) => (
+                <Field>
+                  <FieldLabel htmlFor={`${fieldId}-status`}>État</FieldLabel>
+                  <Select
+                    name={field.name}
+                    onValueChange={(value) => {
+                      if (orderStatuses.includes(value as OrderStatus)) {
+                        field.handleChange(value as OrderStatus)
+                      }
+                    }}
+                    value={field.state.value}
+                  >
+                    <SelectTrigger
+                      className="w-full"
+                      id={`${fieldId}-status`}
+                      onBlur={field.handleBlur}
+                    >
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {orderStatuses.map((entry) => (
+                        <SelectItem key={entry} value={entry}>
+                          {formatOrderStatus(entry, formValues.kind)}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </Field>
+              )}
+            </form.Field>
           </div>
 
           <Separator />
           <div className="grid gap-3">
             <div className="flex items-end justify-between gap-3">
               <div>
-                <Label>Contenu</Label>
+                <FieldLabel>Contenu</FieldLabel>
                 <p className="mt-1 text-xs text-muted-foreground">
                   Le prix peut être laissé vide s’il reste à convenir.
                 </p>
               </div>
               <Button
+                disabled={formValues.lines.length >= MAX_DYNAMIC_LINES}
                 onClick={addLine}
                 size="sm"
                 type="button"
@@ -631,54 +639,100 @@ export function OrderDialog({
               </Button>
             </div>
 
-            {lines.map((line, index) => (
+            {formValues.lines.map((line, index) => (
               <div
                 className="grid gap-3 border-l-2 border-primary/35 pl-3 sm:grid-cols-[minmax(10rem,1fr)_6rem_minmax(14rem,1fr)_auto] sm:items-end"
                 key={line.key}
               >
-                <div className="grid min-w-0 gap-2">
-                  <Label>Produit {index + 1}</Label>
-                  <ProductPicker
-                    onChange={(value) => selectProduct(line.key, value)}
-                    products={
-                      kind === "supplier"
-                        ? products.filter((product) => product.tracksStock)
-                        : products
-                    }
-                    selectedProductId={line.productId}
-                  />
-                </div>
-                <div className="grid gap-2">
-                  <Label htmlFor={`${fieldId}-quantity-${line.key}`}>
-                    Quantité
-                  </Label>
-                  <Input
-                    id={`${fieldId}-quantity-${line.key}`}
-                    min="1"
-                    onChange={(event) =>
-                      updateLine(line.key, { quantity: event.target.value })
-                    }
-                    required
-                    step="1"
-                    type="number"
-                    value={line.quantity}
-                  />
-                </div>
-                <div className="grid gap-2">
-                  <Label htmlFor={`${fieldId}-price-${line.key}`}>
-                    Prix unitaire
-                  </Label>
-                  <PriceInput
-                    id={`${fieldId}-price-${line.key}`}
-                    onValueChange={(value) =>
-                      updateLine(line.key, { unitPrice: value })
-                    }
-                    value={line.unitPrice}
-                  />
-                </div>
+                <form.Field name={`lines[${index}].productId`}>
+                  {(field) => {
+                    const invalid =
+                      field.state.meta.isTouched && !field.state.meta.isValid
+                    return (
+                      <Field className="min-w-0" data-invalid={invalid}>
+                        <FieldLabel>Produit {index + 1}</FieldLabel>
+                        <ProductPicker
+                          ariaInvalid={invalid}
+                          name={field.name}
+                          onBlur={field.handleBlur}
+                          onChange={(value) => selectProduct(line.key, value)}
+                          products={
+                            formValues.kind === "supplier"
+                              ? products.filter(
+                                  (product) => product.tracksStock
+                                )
+                              : products
+                          }
+                          selectedProductId={field.state.value}
+                        />
+                        {invalid ? (
+                          <FieldError errors={field.state.meta.errors} />
+                        ) : null}
+                      </Field>
+                    )
+                  }}
+                </form.Field>
+                <form.Field name={`lines[${index}].quantity`}>
+                  {(field) => {
+                    const invalid =
+                      field.state.meta.isTouched && !field.state.meta.isValid
+                    return (
+                      <Field data-invalid={invalid}>
+                        <FieldLabel htmlFor={`${fieldId}-quantity-${line.key}`}>
+                          Quantité
+                        </FieldLabel>
+                        <Input
+                          aria-invalid={invalid}
+                          id={`${fieldId}-quantity-${line.key}`}
+                          min="1"
+                          name={field.name}
+                          onBlur={field.handleBlur}
+                          onChange={(event) =>
+                            updateLine(line.key, {
+                              quantity: event.target.value,
+                            })
+                          }
+                          required
+                          step="1"
+                          type="number"
+                          value={field.state.value}
+                        />
+                        {invalid ? (
+                          <FieldError errors={field.state.meta.errors} />
+                        ) : null}
+                      </Field>
+                    )
+                  }}
+                </form.Field>
+                <form.Field name={`lines[${index}].unitPrice`}>
+                  {(field) => {
+                    const invalid =
+                      field.state.meta.isTouched && !field.state.meta.isValid
+                    return (
+                      <Field data-invalid={invalid}>
+                        <FieldLabel htmlFor={`${fieldId}-price-${line.key}`}>
+                          Prix unitaire
+                        </FieldLabel>
+                        <PriceInput
+                          ariaInvalid={invalid}
+                          id={`${fieldId}-price-${line.key}`}
+                          name={field.name}
+                          onBlur={field.handleBlur}
+                          onValueChange={(value) =>
+                            updateLine(line.key, { unitPrice: value })
+                          }
+                          value={field.state.value}
+                        />
+                        {invalid ? (
+                          <FieldError errors={field.state.meta.errors} />
+                        ) : null}
+                      </Field>
+                    )
+                  }}
+                </form.Field>
                 <Button
                   aria-label={`Retirer le produit ${index + 1}`}
-                  disabled={lines.length === 1}
+                  disabled={formValues.lines.length === 1}
                   onClick={() => removeLine(line.key)}
                   size="icon-lg"
                   type="button"
@@ -690,23 +744,37 @@ export function OrderDialog({
             ))}
           </div>
 
-          {kind === "client" ? (
+          {formValues.kind === "client" ? (
             <OrderPreparationDetails
               defaultOpen={!order}
               preparation={preparation}
             />
           ) : null}
 
-          <div className="grid gap-2">
-            <Label htmlFor={`${fieldId}-notes`}>Notes</Label>
-            <Textarea
-              id={`${fieldId}-notes`}
-              maxLength={1000}
-              onChange={(event) => setNotes(event.target.value)}
-              placeholder="Détails utiles pour préparer ou remettre la commande."
-              value={notes}
-            />
-          </div>
+          <form.Field name="notes">
+            {(field) => {
+              const invalid =
+                field.state.meta.isTouched && !field.state.meta.isValid
+              return (
+                <Field data-invalid={invalid}>
+                  <FieldLabel htmlFor={`${fieldId}-notes`}>Notes</FieldLabel>
+                  <Textarea
+                    aria-invalid={invalid}
+                    id={`${fieldId}-notes`}
+                    maxLength={1000}
+                    name={field.name}
+                    onBlur={field.handleBlur}
+                    onChange={(event) => field.handleChange(event.target.value)}
+                    placeholder="Détails utiles pour préparer ou remettre la commande."
+                    value={field.state.value}
+                  />
+                  {invalid ? (
+                    <FieldError errors={field.state.meta.errors} />
+                  ) : null}
+                </Field>
+              )
+            }}
+          </form.Field>
 
           <Card className="gap-0 rounded-none border-primary/25 bg-primary/[0.035] py-0 ring-0">
             <CardContent className="grid gap-4 p-3 sm:grid-cols-[minmax(0,1fr)_minmax(13rem,0.8fr)] sm:items-end">
@@ -723,44 +791,75 @@ export function OrderDialog({
                   Base indicative avant négociation du montant final.
                 </p>
               </div>
-              <div className="grid min-w-0 gap-2">
-                <div className="flex items-center justify-between gap-2">
-                  <Label htmlFor={`${fieldId}-agreed-total`}>
-                    Total convenu
-                  </Label>
-                  {totalOverridden && automaticTotal !== undefined ? (
-                    <Button
-                      className="h-auto px-1 py-0 text-xs"
-                      onClick={() => {
-                        setAgreedTotal("")
-                        setTotalOverridden(false)
-                      }}
-                      type="button"
-                      variant="link"
-                    >
-                      <RefreshCw aria-hidden="true" />
-                      Reprendre le calcul
-                    </Button>
-                  ) : null}
-                </div>
-                <InputGroup className="bg-background/50">
-                  <InputGroupInput
-                    id={`${fieldId}-agreed-total`}
-                    min="0"
-                    onChange={(event) => {
-                      setAgreedTotal(event.target.value)
-                      setTotalOverridden(true)
-                    }}
-                    placeholder="À convenir"
-                    step="1"
-                    type="number"
-                    value={displayedTotal}
-                  />
-                  <InputGroupAddon align="inline-end">
-                    <InputGroupText>septims</InputGroupText>
-                  </InputGroupAddon>
-                </InputGroup>
-              </div>
+              <form.Field
+                name="agreedTotal"
+                validators={{
+                  onSubmit: ({ value }) => {
+                    const submitted = formValues.totalOverridden
+                      ? value
+                      : (automaticTotal?.toString() ?? "")
+                    if (!submitted.trim()) return undefined
+                    const parsed = Number(submitted)
+                    return !Number.isSafeInteger(parsed) ||
+                      parsed < 0 ||
+                      parsed > MAX_AMOUNT
+                      ? `Le total convenu doit être un nombre entier compris entre 0 et ${MAX_AMOUNT}.`
+                      : undefined
+                  },
+                }}
+              >
+                {(field) => {
+                  const invalid =
+                    field.state.meta.isTouched && !field.state.meta.isValid
+                  return (
+                    <Field className="min-w-0" data-invalid={invalid}>
+                      <div className="flex items-center justify-between gap-2">
+                        <FieldLabel htmlFor={`${fieldId}-agreed-total`}>
+                          Total convenu
+                        </FieldLabel>
+                        {formValues.totalOverridden &&
+                        automaticTotal !== undefined ? (
+                          <Button
+                            className="h-auto px-1 py-0 text-xs"
+                            onClick={() => {
+                              field.handleChange("")
+                              form.setFieldValue("totalOverridden", false)
+                            }}
+                            type="button"
+                            variant="link"
+                          >
+                            <RefreshCw aria-hidden="true" />
+                            Reprendre le calcul
+                          </Button>
+                        ) : null}
+                      </div>
+                      <InputGroup className="bg-background/50">
+                        <InputGroupInput
+                          aria-invalid={invalid}
+                          id={`${fieldId}-agreed-total`}
+                          min="0"
+                          name={field.name}
+                          onBlur={field.handleBlur}
+                          onChange={(event) => {
+                            field.handleChange(event.target.value)
+                            form.setFieldValue("totalOverridden", true)
+                          }}
+                          placeholder="À convenir"
+                          step="1"
+                          type="number"
+                          value={displayedTotal}
+                        />
+                        <InputGroupAddon align="inline-end">
+                          <InputGroupText>septims</InputGroupText>
+                        </InputGroupAddon>
+                      </InputGroup>
+                      {invalid ? (
+                        <FieldError errors={field.state.meta.errors} />
+                      ) : null}
+                    </Field>
+                  )
+                }}
+              </form.Field>
             </CardContent>
           </Card>
 
@@ -806,19 +905,23 @@ export function OrderDialog({
               >
                 Annuler
               </Button>
-              <Button disabled={isSubmitting} type="submit">
-                {isSubmitting ? (
-                  <Spinner
-                    aria-hidden="true"
-                    className="motion-reduce:animate-none"
-                  />
-                ) : order ? (
-                  <Pencil aria-hidden="true" />
-                ) : (
-                  <ClipboardPlus aria-hidden="true" />
+              <form.Subscribe selector={(state) => state.isSubmitting}>
+                {(isSubmitting) => (
+                  <Button disabled={isSubmitting || isDeleting} type="submit">
+                    {isSubmitting ? (
+                      <Spinner
+                        aria-hidden="true"
+                        className="motion-reduce:animate-none"
+                      />
+                    ) : order ? (
+                      <Pencil aria-hidden="true" />
+                    ) : (
+                      <ClipboardPlus aria-hidden="true" />
+                    )}
+                    {order ? "Enregistrer" : "Créer la commande"}
+                  </Button>
                 )}
-                {order ? "Enregistrer" : "Créer la commande"}
-              </Button>
+              </form.Subscribe>
             </div>
           </DialogFooter>
         </form>

@@ -1,5 +1,6 @@
+import { useForm } from "@tanstack/react-form"
 import { KeyRound, Power, PowerOff, Save, ShieldAlert } from "lucide-react"
-import { useState, type FormEvent, type ReactNode } from "react"
+import { useState, type ReactNode } from "react"
 import { toast } from "sonner"
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
@@ -23,6 +24,7 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog"
+import { Field, FieldError, FieldLabel } from "@/components/ui/field"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import {
@@ -35,6 +37,7 @@ import {
 import { Separator } from "@/components/ui/separator"
 import { Spinner } from "@/components/ui/spinner"
 import { authClient } from "@/lib/auth-client"
+import { passwordResetFormSchema } from "@/lib/form-schemas"
 
 export type AccountRole = "admin" | "user"
 
@@ -74,24 +77,60 @@ export function AccountAccessDialog({
 }: Readonly<AccountAccessDialogProps>) {
   const [open, setOpen] = useState(false)
   const [role, setRole] = useState<AccountRole>(account.role)
-  const [newPassword, setNewPassword] = useState("")
-  const [passwordConfirmation, setPasswordConfirmation] = useState("")
   const [isSavingRole, setIsSavingRole] = useState(false)
   const [isChangingStatus, setIsChangingStatus] = useState(false)
-  const [isResettingPassword, setIsResettingPassword] = useState(false)
   const [isSuspendConfirmationOpen, setIsSuspendConfirmationOpen] =
     useState(false)
   const isCurrentAccount = account.id === currentUserId
   const roleIsProtected = account.role === "admin" && isLastActiveAdmin
   const statusIsProtected = isCurrentAccount || isLastActiveAdmin
+  const passwordForm = useForm({
+    defaultValues: { confirmation: "", password: "" },
+    onSubmit: async ({ value }) => {
+      try {
+        const passwordResult = await authClient.admin.setUserPassword({
+          newPassword: value.password,
+          userId: account.id,
+        })
+        if (passwordResult.error) {
+          toast.error(
+            resultError(
+              passwordResult.error,
+              "Impossible de remplacer le mot de passe."
+            )
+          )
+          return
+        }
+
+        passwordForm.reset()
+        const sessionsResult = await authClient.admin.revokeUserSessions({
+          userId: account.id,
+        })
+        if (sessionsResult.error) {
+          toast.warning(
+            "Le mot de passe est remplacé, mais certaines sessions n’ont peut-être pas été fermées."
+          )
+          return
+        }
+
+        if (isCurrentAccount) {
+          window.location.assign("/connexion")
+          return
+        }
+        toast.success(
+          `Le mot de passe de ${account.name} est remplacé et ses sessions sont fermées.`
+        )
+      } catch {
+        toast.error("Impossible de remplacer le mot de passe.")
+      }
+    },
+    validators: { onSubmit: passwordResetFormSchema },
+  })
 
   function handleOpenChange(nextOpen: boolean) {
     setOpen(nextOpen)
     if (nextOpen) setRole(account.role)
-    if (!nextOpen) {
-      setNewPassword("")
-      setPasswordConfirmation("")
-    }
+    if (!nextOpen) passwordForm.reset()
   }
 
   async function handleRoleSave() {
@@ -143,60 +182,6 @@ export function AccountAccessDialog({
       toast.error("Impossible de modifier cet accès.")
     } finally {
       setIsChangingStatus(false)
-    }
-  }
-
-  async function handlePasswordReset(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault()
-    if (newPassword.length < 12 || newPassword.length > 128) {
-      toast.error("Le mot de passe doit contenir entre 12 et 128 caractères.")
-      return
-    }
-    if (newPassword !== passwordConfirmation) {
-      toast.error("Les deux mots de passe ne correspondent pas.")
-      return
-    }
-
-    setIsResettingPassword(true)
-    try {
-      const passwordResult = await authClient.admin.setUserPassword({
-        newPassword,
-        userId: account.id,
-      })
-      if (passwordResult.error) {
-        toast.error(
-          resultError(
-            passwordResult.error,
-            "Impossible de remplacer le mot de passe."
-          )
-        )
-        return
-      }
-
-      setNewPassword("")
-      setPasswordConfirmation("")
-
-      const sessionsResult = await authClient.admin.revokeUserSessions({
-        userId: account.id,
-      })
-      if (sessionsResult.error) {
-        toast.warning(
-          "Le mot de passe est remplacé, mais certaines sessions n’ont peut-être pas été fermées."
-        )
-        return
-      }
-
-      if (isCurrentAccount) {
-        window.location.assign("/connexion")
-        return
-      }
-      toast.success(
-        `Le mot de passe de ${account.name} est remplacé et ses sessions sont fermées.`
-      )
-    } catch {
-      toast.error("Impossible de remplacer le mot de passe.")
-    } finally {
-      setIsResettingPassword(false)
     }
   }
 
@@ -343,7 +328,14 @@ export function AccountAccessDialog({
 
         <Separator />
 
-        <form className="grid gap-3" onSubmit={handlePasswordReset}>
+        <form
+          className="grid gap-3"
+          noValidate
+          onSubmit={(event) => {
+            event.preventDefault()
+            void passwordForm.handleSubmit()
+          }}
+        >
           <div>
             <h3 className="font-display text-base">
               Réinitialiser le mot de passe
@@ -354,58 +346,90 @@ export function AccountAccessDialog({
             </p>
           </div>
           <div className="grid gap-3 sm:grid-cols-2">
-            <div className="grid gap-2">
-              <Label htmlFor={`account-password-${account.id}`}>
-                Nouveau mot de passe
-              </Label>
-              <Input
-                autoComplete="new-password"
-                id={`account-password-${account.id}`}
-                maxLength={128}
-                minLength={12}
-                onChange={(event) => setNewPassword(event.target.value)}
-                required
-                type="password"
-                value={newPassword}
-              />
-            </div>
-            <div className="grid gap-2">
-              <Label htmlFor={`account-password-confirm-${account.id}`}>
-                Confirmer
-              </Label>
-              <Input
-                autoComplete="new-password"
-                id={`account-password-confirm-${account.id}`}
-                maxLength={128}
-                minLength={12}
-                onChange={(event) =>
-                  setPasswordConfirmation(event.target.value)
-                }
-                required
-                type="password"
-                value={passwordConfirmation}
-              />
-            </div>
+            <passwordForm.Field name="password">
+              {(field) => {
+                const invalid =
+                  field.state.meta.isTouched && !field.state.meta.isValid
+                return (
+                  <Field data-invalid={invalid}>
+                    <FieldLabel htmlFor={`account-password-${account.id}`}>
+                      Nouveau mot de passe
+                    </FieldLabel>
+                    <Input
+                      aria-invalid={invalid}
+                      autoComplete="new-password"
+                      id={`account-password-${account.id}`}
+                      maxLength={128}
+                      minLength={12}
+                      name={field.name}
+                      onBlur={field.handleBlur}
+                      onChange={(event) =>
+                        field.handleChange(event.target.value)
+                      }
+                      required
+                      type="password"
+                      value={field.state.value}
+                    />
+                    {invalid ? (
+                      <FieldError errors={field.state.meta.errors} />
+                    ) : null}
+                  </Field>
+                )
+              }}
+            </passwordForm.Field>
+            <passwordForm.Field name="confirmation">
+              {(field) => {
+                const invalid =
+                  field.state.meta.isTouched && !field.state.meta.isValid
+                return (
+                  <Field data-invalid={invalid}>
+                    <FieldLabel
+                      htmlFor={`account-password-confirm-${account.id}`}
+                    >
+                      Confirmer
+                    </FieldLabel>
+                    <Input
+                      aria-invalid={invalid}
+                      autoComplete="new-password"
+                      id={`account-password-confirm-${account.id}`}
+                      maxLength={128}
+                      minLength={12}
+                      name={field.name}
+                      onBlur={field.handleBlur}
+                      onChange={(event) =>
+                        field.handleChange(event.target.value)
+                      }
+                      required
+                      type="password"
+                      value={field.state.value}
+                    />
+                    {invalid ? (
+                      <FieldError errors={field.state.meta.errors} />
+                    ) : null}
+                  </Field>
+                )
+              }}
+            </passwordForm.Field>
           </div>
           <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
             <p className="text-xs text-muted-foreground">
               Entre 12 et 128 caractères.
             </p>
-            <Button
-              disabled={isResettingPassword}
-              type="submit"
-              variant="outline"
-            >
-              {isResettingPassword ? (
-                <Spinner
-                  aria-hidden="true"
-                  className="motion-reduce:animate-none"
-                />
-              ) : (
-                <KeyRound aria-hidden="true" />
+            <passwordForm.Subscribe selector={(state) => state.isSubmitting}>
+              {(isSubmitting) => (
+                <Button disabled={isSubmitting} type="submit" variant="outline">
+                  {isSubmitting ? (
+                    <Spinner
+                      aria-hidden="true"
+                      className="motion-reduce:animate-none"
+                    />
+                  ) : (
+                    <KeyRound aria-hidden="true" />
+                  )}
+                  Remplacer le mot de passe
+                </Button>
               )}
-              Remplacer le mot de passe
-            </Button>
+            </passwordForm.Subscribe>
           </div>
         </form>
 
