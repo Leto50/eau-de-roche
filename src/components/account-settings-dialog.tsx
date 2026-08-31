@@ -17,7 +17,12 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
-import { Field, FieldError, FieldLabel } from "@/components/ui/field"
+import {
+  Field,
+  FieldDescription,
+  FieldError,
+  FieldLabel,
+} from "@/components/ui/field"
 import {
   InputGroup,
   InputGroupAddon,
@@ -43,7 +48,7 @@ export function AccountSettingsDialog({
     censusPerEmployee: settings.censusPerEmployee.toString(),
     employeeCount: settings.employeeCount.toString(),
     fundsBalance: settings.fundsBalance.toString(),
-    salaryPerEmployee: settings.salaryPerEmployee.toString(),
+    salaryRatePercent: (settings.salaryRate * 100).toString(),
     taxRatePercent: (settings.taxRate * 100).toString(),
     weeklyRent: settings.weeklyRent.toString(),
   })
@@ -58,7 +63,7 @@ export function AccountSettingsDialog({
           censusPerEmployee: Number(value.censusPerEmployee),
           employeeCount: Number(value.employeeCount),
           fundsBalance: Number(value.fundsBalance),
-          salaryPerEmployee: Number(value.salaryPerEmployee),
+          salaryRate: Number(value.salaryRatePercent) / 100,
           taxRate: Number(value.taxRatePercent) / 100,
           weeklyRent: Number(value.weeklyRent),
         })
@@ -286,19 +291,24 @@ export function AccountSettingsDialog({
                 )
               }}
             </form.Field>
-            <form.Field name="salaryPerEmployee">
+          </div>
+
+          <div className="grid gap-4 sm:grid-cols-2">
+            <form.Field name="salaryRatePercent">
               {(field) => {
                 const invalid =
                   field.state.meta.isTouched && !field.state.meta.isValid
                 return (
                   <Field data-invalid={invalid}>
                     <FieldLabel htmlFor={`${fieldId}-salary`}>
-                      Salaire par employé
+                      Commission sur les ventes
                     </FieldLabel>
                     <InputGroup>
                       <InputGroupInput
                         aria-invalid={invalid}
                         id={`${fieldId}-salary`}
+                        inputMode="decimal"
+                        max="100"
                         min="0"
                         name={field.name}
                         onBlur={field.handleBlur}
@@ -306,12 +316,53 @@ export function AccountSettingsDialog({
                           field.handleChange(event.target.value)
                         }
                         required
-                        step="1"
+                        step="any"
                         type="number"
                         value={field.state.value}
                       />
                       <InputGroupAddon align="inline-end">
-                        <InputGroupText>septims</InputGroupText>
+                        <InputGroupText>%</InputGroupText>
+                      </InputGroupAddon>
+                    </InputGroup>
+                    <FieldDescription>
+                      Appliquée aux ventes du salarié pendant la semaine, hors
+                      commandes.
+                    </FieldDescription>
+                    {invalid ? (
+                      <FieldError errors={field.state.meta.errors} />
+                    ) : null}
+                  </Field>
+                )
+              }}
+            </form.Field>
+            <form.Field name="taxRatePercent">
+              {(field) => {
+                const invalid =
+                  field.state.meta.isTouched && !field.state.meta.isValid
+                return (
+                  <Field data-invalid={invalid}>
+                    <FieldLabel htmlFor={`${fieldId}-tax`}>
+                      Taxe sur les entrées
+                    </FieldLabel>
+                    <InputGroup>
+                      <InputGroupInput
+                        aria-invalid={invalid}
+                        id={`${fieldId}-tax`}
+                        inputMode="decimal"
+                        max="100"
+                        min="0"
+                        name={field.name}
+                        onBlur={field.handleBlur}
+                        onChange={(event) =>
+                          field.handleChange(event.target.value)
+                        }
+                        required
+                        step="any"
+                        type="number"
+                        value={field.state.value}
+                      />
+                      <InputGroupAddon align="inline-end">
+                        <InputGroupText>%</InputGroupText>
                       </InputGroupAddon>
                     </InputGroup>
                     {invalid ? (
@@ -322,44 +373,6 @@ export function AccountSettingsDialog({
               }}
             </form.Field>
           </div>
-
-          <form.Field name="taxRatePercent">
-            {(field) => {
-              const invalid =
-                field.state.meta.isTouched && !field.state.meta.isValid
-              return (
-                <Field className="sm:max-w-56" data-invalid={invalid}>
-                  <FieldLabel htmlFor={`${fieldId}-tax`}>
-                    Taxe sur les entrées
-                  </FieldLabel>
-                  <InputGroup>
-                    <InputGroupInput
-                      aria-invalid={invalid}
-                      id={`${fieldId}-tax`}
-                      inputMode="decimal"
-                      max="100"
-                      min="0"
-                      name={field.name}
-                      onBlur={field.handleBlur}
-                      onChange={(event) =>
-                        field.handleChange(event.target.value)
-                      }
-                      required
-                      step="any"
-                      type="number"
-                      value={field.state.value}
-                    />
-                    <InputGroupAddon align="inline-end">
-                      <InputGroupText>%</InputGroupText>
-                    </InputGroupAddon>
-                  </InputGroup>
-                  {invalid ? (
-                    <FieldError errors={field.state.meta.errors} />
-                  ) : null}
-                </Field>
-              )
-            }}
-          </form.Field>
 
           <DialogFooter>
             <Button

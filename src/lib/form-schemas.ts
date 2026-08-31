@@ -192,7 +192,7 @@ export const accountSettingsFormSchema = z.object({
   censusPerEmployee: wholeNumberInput("Le cens par employé", 0, MAX_AMOUNT),
   employeeCount: wholeNumberInput("Le nombre d’employés", 0, MAX_AMOUNT),
   fundsBalance: wholeNumberInput("Le solde des fonds", 0, MAX_AMOUNT),
-  salaryPerEmployee: wholeNumberInput("Le salaire par employé", 0, MAX_AMOUNT),
+  salaryRatePercent: finiteNumberInput("Le taux de salaire", 0, 100),
   taxRatePercent: finiteNumberInput("Le taux de taxe", 0, 100),
   weeklyRent: wholeNumberInput("Le loyer hebdomadaire", 0, MAX_AMOUNT),
 })

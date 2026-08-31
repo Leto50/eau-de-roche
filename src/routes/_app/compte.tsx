@@ -64,6 +64,8 @@ type ActorSortOption =
   | "operations-desc"
   | "outgoing-asc"
   | "outgoing-desc"
+  | "salary-asc"
+  | "salary-desc"
 
 const actorSortOptions: readonly {
   label: string
@@ -77,6 +79,8 @@ const actorSortOptions: readonly {
   { label: "Achats · plus faibles", value: "outgoing-asc" },
   { label: "Solde · plus élevé", value: "net-desc" },
   { label: "Solde · plus faible", value: "net-asc" },
+  { label: "Salaire · plus élevé", value: "salary-desc" },
+  { label: "Salaire · plus faible", value: "salary-asc" },
   { label: "Opérations · plus", value: "operations-desc" },
   { label: "Opérations · moins", value: "operations-asc" },
 ]
@@ -186,8 +190,8 @@ function AccountPage() {
             Activité par personnage
           </CardTitle>
           <CardDescription>
-            Le chiffre encaissé et les achats traités par chaque membre de la
-            boutique.
+            Le chiffre, les achats et le salaire calculé sur les ventes hors
+            commande de chaque membre de la boutique.
           </CardDescription>
           <CardAction className="flex flex-wrap justify-end gap-2 max-sm:col-span-2 max-sm:row-start-3">
             <Select
@@ -265,6 +269,14 @@ function AccountPage() {
                       onSort={() => handleActorSort("outgoing")}
                     />
                     <SortableTableHead
+                      active={actorSortKey === "salary"}
+                      className="text-right"
+                      direction={actorSortDirection}
+                      inactiveDirection="desc"
+                      label={`Salaire (${formatNumber(data.settings.salaryRate * 100)} %)`}
+                      onSort={() => handleActorSort("salary")}
+                    />
+                    <SortableTableHead
                       active={actorSortKey === "net"}
                       className="text-right"
                       direction={actorSortDirection}
@@ -297,6 +309,14 @@ function AccountPage() {
                       <TableCell className="text-right font-semibold text-[#8a3e2f] tabular-nums">
                         {formatSeptims(actor.outgoing)}
                       </TableCell>
+                      <TableCell className="text-right tabular-nums">
+                        <p className="font-semibold text-primary">
+                          {formatDecimalSeptims(actor.salary)}
+                        </p>
+                        <p className="text-[0.68rem] text-muted-foreground">
+                          sur {formatSeptims(actor.salaryRevenue)}
+                        </p>
+                      </TableCell>
                       <TableCell
                         className={cn(
                           "text-right font-display tabular-nums",
@@ -328,7 +348,7 @@ function AccountPage() {
                       {actor.transactionCount === 1 ? "" : "s"}
                     </Badge>
                   </div>
-                  <div className="grid grid-cols-3 gap-2 text-right">
+                  <div className="grid grid-cols-2 gap-3 text-right">
                     <ActorAmount
                       label="Chiffre"
                       tone="positive"
@@ -344,6 +364,13 @@ function AccountPage() {
                       signed
                       tone={actor.net >= 0 ? "positive" : "negative"}
                       value={actor.net}
+                    />
+                    <ActorAmount
+                      decimal
+                      detail={`sur ${formatSeptims(actor.salaryRevenue)}`}
+                      label={`Salaire · ${formatNumber(data.settings.salaryRate * 100)} %`}
+                      tone="positive"
+                      value={actor.salary}
                     />
                   </div>
                 </div>
@@ -497,6 +524,7 @@ function AccountPage() {
               value={data.charges.tax}
             />
             <ChargeRow
+              detail={`${formatNumber(data.settings.salaryRate * 100)} % de ${formatDecimalSeptims(currentWeek?.salaryRevenue ?? 0)} de ventes hors commande`}
               icon={ArrowDownLeft}
               label="Salaires"
               value={data.charges.salary}
@@ -535,11 +563,15 @@ function AccountPage() {
 }
 
 function ActorAmount({
+  decimal = false,
+  detail,
   label,
   signed = false,
   tone,
   value,
 }: Readonly<{
+  decimal?: boolean
+  detail?: string
   label: string
   signed?: boolean
   tone: "negative" | "positive"
@@ -557,8 +589,11 @@ function ActorAmount({
         )}
       >
         {signed && value > 0 ? "+" : ""}
-        {formatSeptims(value)}
+        {decimal ? formatDecimalSeptims(value) : formatSeptims(value)}
       </p>
+      {detail ? (
+        <p className="mt-0.5 text-[0.68rem] text-muted-foreground">{detail}</p>
+      ) : null}
     </div>
   )
 }
