@@ -306,25 +306,23 @@ describe("products.save", () => {
     expect(product?.craftable).toBe(true)
   })
 
-  it("refuse la gestion du catalogue à un employé", async () => {
+  it("permet la gestion du catalogue à un employé", async () => {
     const backend = createTestBackend()
     const employee = await asAuthenticatedUser(backend)
 
-    await expect(
-      employee.mutation(api.products.save, {
-        active: true,
-        category: "ingredient",
-        minimumStock: 0,
-        name: "Flacon vide",
-        purchasePrice: 1,
-        salePrice: 2,
-        targetStock: 0,
-      })
-    ).rejects.toThrowError("réservée aux administrateurs")
+    await employee.mutation(api.products.save, {
+      active: true,
+      category: "ingredient",
+      minimumStock: 0,
+      name: "Flacon vide",
+      purchasePrice: 1,
+      salePrice: 2,
+      targetStock: 0,
+    })
 
     const products = await backend.run((ctx) =>
       ctx.db.query("products").collect()
     )
-    expect(products).toHaveLength(0)
+    expect(products).toMatchObject([{ name: "Flacon vide" }])
   })
 })

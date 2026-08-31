@@ -150,6 +150,8 @@ pnpm convex run --prod migrations:normalizeCatalogNames
 pnpm convex run --prod migrations:normalizeRecipeFamilies
 pnpm convex run --prod migrations:indexTransactionSearch
 pnpm convex run --prod migrations:normalizeContacts
+pnpm convex run --prod migrations:normalizeSupplierOrderStatuses
+pnpm convex run --prod migrations:rebuildJournalSummary
 ```
 
 Ces migrations sont idempotentes. La première ne rejoue aucun mouvement sur le
@@ -159,7 +161,10 @@ réunissent toutes les potions dans la même catégorie, distinguent les potions
 fabricables de celles trouvées uniquement, uniformisent l’affichage du
 catalogue, normalisent les catégories de recettes, préparent la recherche du
 journal et dédupliquent le carnet de contacts sans réécrire les libellés
-historiques des opérations et commandes.
+historiques des opérations et commandes. La dernière matérialise le solde global
+du journal afin que la page Compte n’ait plus à relire toutes les transactions ;
+la précédente ramène les anciennes commandes fournisseur « prêtes » à l’état
+« À recevoir ».
 
 Après la première connexion, l’administrateur crée les comptes employés depuis
 le menu « Administration ». Il n’existe aucune page d’inscription publique.
@@ -171,20 +176,22 @@ sont isolées de la production.
 
 ## Commandes utiles
 
-| Commande                                                       | Rôle                                                   |
-| -------------------------------------------------------------- | ------------------------------------------------------ |
-| `pnpm dev`                                                     | Convex et site local en parallèle                      |
-| `pnpm seed -- '{…}'`                                           | Importe le seed avec le secret du déploiement          |
-| `pnpm convex run --prod migrations:convertLegacyOperations`    | Convertit les anciennes opérations                     |
-| `pnpm convex run --prod migrations:repairRecipeReferences`     | Répare les références et les coûts des recettes        |
-| `pnpm convex run --prod migrations:reclassifyAnnexePotions`    | Réunit toutes les potions dans la catégorie « Potion » |
-| `pnpm convex run --prod migrations:classifyPotionCraftability` | Renseigne le mode d’obtention des potions              |
-| `pnpm convex run --prod migrations:normalizeCatalogNames`      | Uniformise les noms du catalogue                       |
-| `pnpm convex run --prod migrations:normalizeRecipeFamilies`    | Normalise les catégories de recettes                   |
-| `pnpm convex run --prod migrations:indexTransactionSearch`     | Indexe la recherche textuelle du journal               |
-| `pnpm convex run --prod migrations:normalizeContacts`          | Normalise et déduplique les contacts des commandes     |
-| `pnpm lint`                                                    | ESLint strict, zéro avertissement                      |
-| `pnpm typecheck`                                               | Vérification TypeScript sans émission                  |
-| `pnpm test`                                                    | Tests métier Convex + Better Auth                      |
-| `pnpm build`                                                   | Build client, SSR et fonction Netlify                  |
-| `pnpm build:netlify`                                           | Déploiement Convex puis build Netlify                  |
+| Commande                                                           | Rôle                                                   |
+| ------------------------------------------------------------------ | ------------------------------------------------------ |
+| `pnpm dev`                                                         | Convex et site local en parallèle                      |
+| `pnpm seed -- '{…}'`                                               | Importe le seed avec le secret du déploiement          |
+| `pnpm convex run --prod migrations:convertLegacyOperations`        | Convertit les anciennes opérations                     |
+| `pnpm convex run --prod migrations:repairRecipeReferences`         | Répare les références et les coûts des recettes        |
+| `pnpm convex run --prod migrations:reclassifyAnnexePotions`        | Réunit toutes les potions dans la catégorie « Potion » |
+| `pnpm convex run --prod migrations:classifyPotionCraftability`     | Renseigne le mode d’obtention des potions              |
+| `pnpm convex run --prod migrations:normalizeCatalogNames`          | Uniformise les noms du catalogue                       |
+| `pnpm convex run --prod migrations:normalizeRecipeFamilies`        | Normalise les catégories de recettes                   |
+| `pnpm convex run --prod migrations:indexTransactionSearch`         | Indexe la recherche textuelle du journal               |
+| `pnpm convex run --prod migrations:normalizeContacts`              | Normalise et déduplique les contacts des commandes     |
+| `pnpm convex run --prod migrations:normalizeSupplierOrderStatuses` | Corrige les anciens états fournisseur                  |
+| `pnpm convex run --prod migrations:rebuildJournalSummary`          | Matérialise le solde global du journal                 |
+| `pnpm lint`                                                        | ESLint strict, zéro avertissement                      |
+| `pnpm typecheck`                                                   | Vérification TypeScript sans émission                  |
+| `pnpm test`                                                        | Tests métier Convex + Better Auth                      |
+| `pnpm build`                                                       | Build client, SSR et fonction Netlify                  |
+| `pnpm build:netlify`                                               | Déploiement Convex puis build Netlify                  |

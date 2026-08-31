@@ -2,17 +2,20 @@ import { convexQuery } from "@convex-dev/react-query"
 import { useForm } from "@tanstack/react-form"
 import { useSuspenseQuery } from "@tanstack/react-query"
 import { createFileRoute } from "@tanstack/react-router"
-import { useMutation } from "convex/react"
+import { useMutation, useQuery as useConvexQuery } from "convex/react"
 import { type FunctionReturnType } from "convex/server"
 import {
   AlertTriangle,
   CalendarClock,
   Check,
+  ChevronLeft,
+  ChevronRight,
   Coins,
   History,
   MessageSquareText,
   PackageCheck,
   Pencil,
+  Repeat2,
   Store,
 } from "lucide-react"
 import { useState } from "react"
@@ -60,8 +63,6 @@ import { Table, TableBody, TableCell, TableRow } from "@/components/ui/table"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { api } from "../../../convex/_generated/api"
 import { type Doc } from "../../../convex/_generated/dataModel"
-import { useHydrated } from "@/hooks/use-hydrated"
-import { authClient } from "@/lib/auth-client"
 import { getUserFacingErrorMessage } from "@/lib/errors"
 import { orderProcessingFormSchema } from "@/lib/form-schemas"
 import {
@@ -74,23 +75,28 @@ import {
 import { calculateOrderPreparation } from "@/lib/order-preparation"
 import { cn } from "@/lib/utils"
 import {
+  clientOrderStatuses,
+  normalizeOrderStatus,
+  orderStatusesForKind,
+} from "../../../shared/order-status"
+import {
   orderIsHistorical,
   orderIsOverdue,
   orderNeedsAttention,
 } from "../../../shared/order-attention"
 
-type Order = FunctionReturnType<typeof api.orders.list>[number]
+type Order = NonNullable<FunctionReturnType<typeof api.orders.getById>>
 type Recipe = FunctionReturnType<typeof api.recipes.list>[number]
 type OrderStatus = Order["status"]
 type OrderKind = Order["kind"]
 type OrderView = "attention" | "history" | OrderKind
 
-const statusOptions: readonly OrderStatus[] = [
-  "open",
-  "ready",
-  "delivered",
-  "cancelled",
-]
+const HISTORY_PAGE_SIZE = 20
+
+interface HistoryPaginationState {
+  cursor: string | null
+  previousCursors: Array<string | null>
+}
 
 const orderToneClasses: Readonly<Record<OrderStatus, string>> = {
   cancelled: "border-t-[#8a4233]",
@@ -107,7 +113,11 @@ const statusBadgeClasses: Readonly<Record<OrderStatus, string>> = {
 }
 
 function isOrderStatus(value: string): value is OrderStatus {
-  return statusOptions.includes(value as OrderStatus)
+  return clientOrderStatuses.includes(value as OrderStatus)
+}
+
+function historyQueryArgs(cursor: string | null) {
+  return { paginationOpts: { cursor, numItems: HISTORY_PAGE_SIZE } }
 }
 
 function isOrderKind(value: string): value is OrderKind {
@@ -132,7 +142,12 @@ export const Route = createFileRoute("/_app/commandes")({
   errorComponent: PageError,
   loader: async ({ context }) => {
     await Promise.all([
-      context.queryClient.ensureQueryData(convexQuery(api.orders.list, {})),
+      context.queryClient.ensureQueryData(
+        convexQuery(api.orders.listAttention, {})
+      ),
+      context.queryClient.ensureQueryData(
+        convexQuery(api.orders.listHistoryPage, historyQueryArgs(null))
+      ),
       context.queryClient.ensureQueryData(convexQuery(api.contacts.list, {})),
       context.queryClient.ensureQueryData(
         convexQuery(api.products.selectable, {})
@@ -148,9 +163,23 @@ export const Route = createFileRoute("/_app/commandes")({
 function OrdersPage() {
   const { view } = Route.useSearch()
   const navigate = Route.useNavigate()
-  const { data: session } = authClient.useSession()
-  const isHydrated = useHydrated()
-  const { data: orders } = useSuspenseQuery(convexQuery(api.orders.list, {}))
+  const [historyPagination, setHistoryPagination] =
+    useState<HistoryPaginationState>({ cursor: null, previousCursors: [] })
+  const { data: attentionOrders } = useSuspenseQuery(
+    convexQuery(api.orders.listAttention, {})
+  )
+  const { data: initialHistoryPage } = useSuspenseQuery(
+    convexQuery(api.orders.listHistoryPage, historyQueryArgs(null))
+  )
+  const liveHistoryPage = useConvexQuery(
+    api.orders.listHistoryPage,
+    historyQueryArgs(historyPagination.cursor)
+  )
+  const historyPage =
+    liveHistoryPage ??
+    (historyPagination.cursor === null ? initialHistoryPage : undefined)
+  const historicalOrders = historyPage?.page ?? []
+  const isFetchingHistoryPage = liveHistoryPage === undefined
   const { data: contacts } = useSuspenseQuery(
     convexQuery(api.contacts.list, {})
   )
@@ -162,8 +191,6 @@ function OrdersPage() {
   )
   const { data: recipes } = useSuspenseQuery(convexQuery(api.recipes.list, {}))
   const updateStatus = useMutation(api.orders.updateStatus)
-  const attentionOrders = orders.filter(orderNeedsAttention)
-  const historicalOrders = orders.filter(orderIsHistorical)
   const kind = view === "supplier" ? "supplier" : "client"
   const selectedOrders =
     view === "history"
@@ -172,12 +199,7 @@ function OrdersPage() {
         ? attentionOrders
         : attentionOrders.filter((order) => order.kind === view)
   const visibleOrders = [...selectedOrders].sort((left, right) => {
-    if (view === "history") {
-      return (
-        (right.processedAt ?? right._creationTime) -
-        (left.processedAt ?? left._creationTime)
-      )
-    }
+    if (view === "history") return 0
 
     const leftNeedsAttention = orderNeedsAttention(left)
     const rightNeedsAttention = orderNeedsAttention(right)
@@ -196,11 +218,13 @@ function OrdersPage() {
     return right._creationTime - left._creationTime
   })
   const visibleCount = visibleOrders.length
-  const isAdmin =
-    isHydrated && (session?.user.role?.split(",").includes("admin") ?? false)
 
   async function handleStatusChange(order: Order, value: string) {
-    if (!isOrderStatus(value)) return
+    if (
+      !isOrderStatus(value) ||
+      !orderStatusesForKind(order.kind).includes(value)
+    )
+      return
     try {
       await updateStatus({ orderId: order._id, status: value })
       const updatedOrder = { ...order, status: value }
@@ -239,17 +263,36 @@ function OrdersPage() {
     void navigate({ replace: true, search: { view: value } })
   }
 
+  function showPreviousHistoryPage() {
+    const previousCursor = historyPagination.previousCursors.at(-1)
+    if (previousCursor === undefined) return
+    setHistoryPagination({
+      cursor: previousCursor,
+      previousCursors: historyPagination.previousCursors.slice(0, -1),
+    })
+  }
+
+  function showNextHistoryPage() {
+    if (!historyPage || historyPage.isDone) return
+    setHistoryPagination({
+      cursor: historyPage.continueCursor,
+      previousCursors: [
+        ...historyPagination.previousCursors,
+        historyPagination.cursor,
+      ],
+    })
+  }
+
   return (
     <div className="animate-in duration-300 fade-in slide-in-from-bottom-1 motion-reduce:animate-none">
       <PageHeader
         action={
           <div className="flex flex-wrap items-center gap-2">
-            {isAdmin ? <ContactManagerDialog /> : null}
+            <ContactManagerDialog />
             <OrderDialog
               characters={characters}
               contacts={contacts}
               initialKind={kind}
-              isAdmin={isAdmin}
               products={products}
               recipes={recipes}
             />
@@ -294,8 +337,8 @@ function OrdersPage() {
           </strong>{" "}
           {view === "history"
             ? visibleCount === 1
-              ? "commande dans l’historique"
-              : "commandes dans l’historique"
+              ? "commande sur cette page"
+              : "commandes sur cette page"
             : visibleCount === 1
               ? "commande à traiter"
               : "commandes à traiter"}
@@ -308,7 +351,6 @@ function OrdersPage() {
             <OrderEntry
               characters={characters}
               contacts={contacts}
-              isAdmin={isAdmin}
               key={order._id}
               onStatusChange={(value) => handleStatusChange(order, value)}
               order={order}
@@ -338,6 +380,41 @@ function OrdersPage() {
           </AlertDescription>
         </Alert>
       )}
+      {view === "history" ? (
+        <nav
+          aria-label="Pagination de l’historique des commandes"
+          className="mt-5 flex items-center justify-between gap-3 border-t border-[#5b462b]/20 pt-4"
+        >
+          <Button
+            disabled={
+              historyPagination.previousCursors.length === 0 ||
+              isFetchingHistoryPage
+            }
+            onClick={showPreviousHistoryPage}
+            size="sm"
+            type="button"
+            variant="outline"
+          >
+            <ChevronLeft aria-hidden="true" />
+            Précédente
+          </Button>
+          <span className="text-xs text-muted-foreground">
+            Page {historyPagination.previousCursors.length + 1}
+          </span>
+          <Button
+            disabled={
+              !historyPage || historyPage.isDone || isFetchingHistoryPage
+            }
+            onClick={showNextHistoryPage}
+            size="sm"
+            type="button"
+            variant="outline"
+          >
+            Suivante
+            <ChevronRight aria-hidden="true" />
+          </Button>
+        </nav>
+      ) : null}
     </div>
   )
 }
@@ -355,7 +432,6 @@ function orderTotal(order: Order): number | undefined {
 function OrderEntry({
   characters,
   contacts,
-  isAdmin,
   onStatusChange,
   order,
   products,
@@ -363,7 +439,6 @@ function OrderEntry({
 }: Readonly<{
   characters: readonly Doc<"characters">[]
   contacts: readonly Doc<"contacts">[]
-  isAdmin: boolean
   onStatusChange: (value: string) => void
   order: Order
   products: readonly Doc<"products">[]
@@ -372,12 +447,13 @@ function OrderEntry({
   const total = orderTotal(order)
   const preparation = calculateOrderPreparation(order.lines, products, recipes)
   const overdue = orderIsOverdue(order)
+  const displayedStatus = normalizeOrderStatus(order.kind, order.status)
 
   return (
     <Card
       className={cn(
         "rounded-none border-t-[3px] border-[#5b462b]/35 bg-[#fff8e7]/30 shadow-[3px_4px_0_rgba(76,56,32,0.05)] ring-0",
-        orderToneClasses[order.status],
+        orderToneClasses[displayedStatus],
         !orderNeedsAttention(order) && "opacity-75",
         overdue && "border-t-[#9a3f31]"
       )}
@@ -408,7 +484,7 @@ function OrderEntry({
           </CardDescription>
         ) : null}
         <CardAction className="flex items-center gap-1">
-          <Select onValueChange={onStatusChange} value={order.status}>
+          <Select onValueChange={onStatusChange} value={displayedStatus}>
             <SelectTrigger
               aria-label={`État de la commande ${order.contactName}`}
               className="w-36 bg-background/40"
@@ -416,7 +492,7 @@ function OrderEntry({
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              {statusOptions.map((status) => (
+              {orderStatusesForKind(order.kind).map((status) => (
                 <SelectItem key={status} value={status}>
                   {formatOrderStatus(status, order.kind)}
                 </SelectItem>
@@ -426,7 +502,6 @@ function OrderEntry({
           <OrderDialog
             characters={characters}
             contacts={contacts}
-            isAdmin={isAdmin}
             order={order}
             products={products}
             recipes={recipes}
@@ -483,11 +558,31 @@ function OrderEntry({
 
       <CardFooter className="flex-wrap justify-between gap-3 border-t border-border/60">
         <div className="flex flex-wrap items-center gap-2">
-          <Badge className={statusBadgeClasses[order.status]} variant="outline">
-            {order.status === "delivered" ? <Check aria-hidden="true" /> : null}
-            {formatOrderStatus(order.status, order.kind)}
+          <Badge
+            className={statusBadgeClasses[displayedStatus]}
+            variant="outline"
+          >
+            {displayedStatus === "delivered" ? (
+              <Check aria-hidden="true" />
+            ) : null}
+            {formatOrderStatus(displayedStatus, order.kind)}
           </Badge>
           <OrderProcessingDialog characters={characters} order={order} />
+          {orderIsHistorical(order) ? (
+            <OrderDialog
+              characters={characters}
+              contacts={contacts}
+              copyFrom={order}
+              products={products}
+              recipes={recipes}
+              trigger={
+                <Button size="sm" type="button" variant="outline">
+                  <Repeat2 aria-hidden="true" />
+                  Renouveler
+                </Button>
+              }
+            />
+          ) : null}
         </div>
         <div className="text-right">
           <p className="text-[0.65rem] tracking-wider text-muted-foreground uppercase">

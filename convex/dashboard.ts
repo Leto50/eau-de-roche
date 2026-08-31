@@ -3,6 +3,7 @@ import { summarizeOrderAttention } from "../shared/order-attention"
 import { requireUser } from "./lib/auth"
 import { calculateRecipeCost } from "./lib/recipeCost"
 import { startOfUtcWeek } from "./lib/time"
+import { loadOrdersNeedingAttention } from "./lib/order"
 
 export const overview = query({
   args: {},
@@ -30,7 +31,7 @@ export const overview = query({
           )
         )
         .take(8),
-      ctx.db.query("orders").collect(),
+      loadOrdersNeedingAttention(ctx),
     ])
     const recentTransactions = recentTransactionCandidates
     const productsById = new Map(

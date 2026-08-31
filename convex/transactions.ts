@@ -16,6 +16,7 @@ import {
   prepareExchange,
 } from "./lib/exchange"
 import { orderTransactionLabel, withOrderTotal } from "./lib/order"
+import { applyJournalBalanceChange } from "./lib/journalSummary"
 import { prepareProduction } from "./lib/production"
 import { normalizeName } from "./lib/text"
 import { buildTransactionSearchText } from "./lib/transactionSearch"
@@ -40,37 +41,6 @@ const tradeLineValidator = v.union(
     unitPrice: v.optional(v.number()),
   })
 )
-
-type AuthenticatedUser = Awaited<ReturnType<typeof requireUser>>
-
-function isAdmin(user: AuthenticatedUser): boolean {
-  const roles = typeof user.role === "string" ? user.role.split(",") : []
-  return roles.includes("admin")
-}
-
-function canManageTransaction(
-  user: AuthenticatedUser,
-  transaction: Doc<"transactions">
-): boolean {
-  return (
-    isAdmin(user) ||
-    (transaction.source === "web" &&
-      transaction.actorUserId === String(user._id))
-  )
-}
-
-function requireTransactionManager(
-  user: AuthenticatedUser,
-  transaction: Doc<"transactions">
-): void {
-  if (canManageTransaction(user, transaction)) return
-
-  throw new ConvexError({
-    code: "FORBIDDEN",
-    message:
-      "Vous pouvez corriger uniquement les opérations que vous avez saisies.",
-  })
-}
 
 function isEditableKind(
   kind: Doc<"transactions">["kind"]
@@ -98,7 +68,6 @@ function cleanOptionalText(value: string | undefined): string | undefined {
 
 async function withTransactionDetails(
   ctx: QueryCtx,
-  user: AuthenticatedUser,
   transaction: Doc<"transactions">
 ) {
   const [lines, movements] = await Promise.all([
@@ -124,11 +93,10 @@ async function withTransactionDetails(
       (deltas.get(movement.productId) ?? 0) + movement.delta
     )
   }
-  const canManage = canManageTransaction(user, transaction)
   return {
     ...transaction,
-    canManage,
-    canDelete: canManage,
+    canManage: true,
+    canDelete: true,
     lines,
     stockDeltas: [...deltas].map(([productId, delta]) => ({
       delta,
@@ -147,7 +115,7 @@ export const listPage = query({
     to: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
-    const user = await requireUser(ctx)
+    await requireUser(ctx)
     const from = args.from
     const to = args.to
     if (
@@ -273,14 +241,11 @@ export const listPage = query({
 
     return {
       ...result,
-      page: result.page.map((transaction) => {
-        const canManage = canManageTransaction(user, transaction)
-        return {
-          ...transaction,
-          canManage,
-          canDelete: canManage,
-        }
-      }),
+      page: result.page.map((transaction) => ({
+        ...transaction,
+        canManage: true,
+        canDelete: true,
+      })),
     }
   },
 })
@@ -290,10 +255,10 @@ export const getDetails = query({
     transactionId: v.id("transactions"),
   },
   handler: async (ctx, args) => {
-    const user = await requireUser(ctx)
+    await requireUser(ctx)
     const transaction = await ctx.db.get(args.transactionId)
     if (!transaction) return null
-    return withTransactionDetails(ctx, user, transaction)
+    return withTransactionDetails(ctx, transaction)
   },
 })
 
@@ -302,7 +267,7 @@ export const list = query({
     limit: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
-    const user = await requireUser(ctx)
+    await requireUser(ctx)
     const limit = Math.min(200, Math.max(10, Math.round(args.limit ?? 100)))
     const transactions = await ctx.db
       .query("transactions")
@@ -311,7 +276,7 @@ export const list = query({
       .take(limit)
     return Promise.all(
       transactions.map((transaction) =>
-        withTransactionDetails(ctx, user, transaction)
+        withTransactionDetails(ctx, transaction)
       )
     )
   },
@@ -405,6 +370,10 @@ export const recordExchange = mutation({
       detail: `${prepared.lines.length}:${prepared.total}`,
       entityId: transactionId,
       entityType: "transaction",
+    })
+    await applyJournalBalanceChange(ctx, undefined, {
+      kind: prepared.kind,
+      total: prepared.total,
     })
 
     return {
@@ -664,6 +633,7 @@ export const recordTrade = mutation({
       entityId: transactionId,
       entityType: "transaction",
     })
+    await applyJournalBalanceChange(ctx, undefined, { kind: args.kind, total })
 
     return { total, transactionId }
   },
@@ -806,6 +776,7 @@ export const record = mutation({
       entityId: transactionId,
       entityType: "transaction",
     })
+    await applyJournalBalanceChange(ctx, undefined, { kind: args.kind, total })
 
     return { resultingStock, transactionId }
   },
@@ -837,7 +808,6 @@ export const updateExchange = mutation({
         message: "Une production utilise son formulaire dédié.",
       })
     }
-    requireTransactionManager(user, transaction)
     const character = await ctx.db.get(args.characterId)
     if (!character?.active) {
       throw new ConvexError({
@@ -1068,6 +1038,10 @@ export const updateExchange = mutation({
       entityId: transaction._id,
       entityType: "transaction",
     })
+    await applyJournalBalanceChange(ctx, transaction, {
+      kind: prepared.kind,
+      total: prepared.total,
+    })
 
     return {
       incomingTotal: prepared.incomingTotal,
@@ -1090,8 +1064,6 @@ export const remove = mutation({
         message: "Opération introuvable.",
       })
     }
-    requireTransactionManager(user, transaction)
-
     const { movements, states } = await loadStockBeforeTransaction(
       ctx,
       transaction._id
@@ -1127,6 +1099,7 @@ export const remove = mutation({
       )
     )
     await ctx.db.delete(transaction._id)
+    await applyJournalBalanceChange(ctx, transaction, undefined)
     if (linkedOrder) {
       await ctx.db.patch(linkedOrder._id, {
         processedAt: undefined,
@@ -1173,8 +1146,6 @@ export const update = mutation({
         message: "Ce type d’opération historique ne peut pas être modifié.",
       })
     }
-    requireTransactionManager(user, transaction)
-
     const character = await ctx.db.get(args.characterId)
     if (!character?.active) {
       throw new ConvexError({
@@ -1505,6 +1476,7 @@ export const update = mutation({
       entityId: transaction._id,
       entityType: "transaction",
     })
+    await applyJournalBalanceChange(ctx, transaction, details)
     return { total: details.total, transactionId: transaction._id }
   },
 })

@@ -149,6 +149,76 @@ describe("orders", () => {
     ])
   })
 
+  it("refuse l’état prêt pour une commande fournisseur", async () => {
+    const backend = createTestBackend()
+    const employee = await asAuthenticatedUser(backend)
+    const productId = await seedOrderProduct(backend)
+
+    await expect(
+      employee.mutation(api.orders.save, {
+        contactName: "Fournisseur test",
+        dueAt: null,
+        kind: "supplier",
+        lines: [{ productId, quantity: 1, unitPrice: 1 }],
+        notes: "",
+        status: "ready",
+        total: null,
+      })
+    ).rejects.toThrowError("n’existe pas pour une commande fournisseur")
+
+    const orderId = await employee.mutation(api.orders.save, {
+      contactName: "Fournisseur test",
+      dueAt: null,
+      kind: "supplier",
+      lines: [{ productId, quantity: 1, unitPrice: 1 }],
+      notes: "",
+      status: "open",
+      total: null,
+    })
+    await expect(
+      employee.mutation(api.orders.updateStatus, {
+        orderId,
+        status: "ready",
+      })
+    ).rejects.toThrowError("n’existe pas pour une commande fournisseur")
+  })
+
+  it("pagine uniquement les commandes historiques", async () => {
+    const backend = createTestBackend()
+    const employee = await asAuthenticatedUser(backend)
+
+    await backend.run(async (ctx) => {
+      for (let index = 0; index < 25; index += 1) {
+        await ctx.db.insert("orders", {
+          contactName: `Commande historique ${index}`,
+          kind: "client",
+          status: "cancelled",
+        })
+      }
+      await ctx.db.insert("orders", {
+        contactName: "Commande active",
+        kind: "client",
+        status: "open",
+      })
+    })
+
+    const firstPage = await employee.query(api.orders.listHistoryPage, {
+      paginationOpts: { cursor: null, numItems: 20 },
+    })
+    const secondPage = await employee.query(api.orders.listHistoryPage, {
+      paginationOpts: { cursor: firstPage.continueCursor, numItems: 20 },
+    })
+    const attention = await employee.query(api.orders.listAttention, {})
+
+    expect(firstPage.page).toHaveLength(20)
+    expect(firstPage.isDone).toBe(false)
+    expect(secondPage.page).toHaveLength(5)
+    expect(secondPage.isDone).toBe(true)
+    expect(attention.map((order) => order.contactName)).toEqual([
+      "Commande active",
+    ])
+  })
+
   it("permet à un administrateur de supprimer une commande annulée et ses lignes", async () => {
     const backend = createTestBackend()
     const admin = await asAuthenticatedUser(backend, "admin")
@@ -175,7 +245,7 @@ describe("orders", () => {
     expect(state.audits.at(-1)?.action).toBe("order.deleted")
   })
 
-  it("refuse la suppression d’une commande à un employé", async () => {
+  it("permet la suppression d’une commande à un employé", async () => {
     const backend = createTestBackend()
     const employee = await asAuthenticatedUser(backend)
     const orderId = await backend.run((ctx) =>
@@ -186,9 +256,9 @@ describe("orders", () => {
       })
     )
 
-    await expect(
-      employee.mutation(api.orders.remove, { orderId })
-    ).rejects.toThrowError("réservée aux administrateurs")
+    await employee.mutation(api.orders.remove, { orderId })
+
+    expect(await backend.run((ctx) => ctx.db.get(orderId))).toBeNull()
   })
 
   it("corrige une commande payée, sa transaction et son stock sans doublon", async () => {

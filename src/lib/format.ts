@@ -80,7 +80,8 @@ const supplierOrderStatusLabels = {
   cancelled: "Annulée",
   delivered: "Reçue",
   open: "À recevoir",
-  ready: "Disponible",
+  // Legacy supplier orders may still carry the client-only `ready` value.
+  ready: "À recevoir",
 } as const
 
 export function formatOrderStatus(

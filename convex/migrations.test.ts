@@ -436,3 +436,25 @@ describe("migrations.normalizeContacts", () => {
     })
   })
 })
+
+describe("migrations.normalizeSupplierOrderStatuses", () => {
+  it("remplace l’ancien état prêt des fournisseurs par à recevoir", async () => {
+    const backend = convexTest(schema, modules)
+    const orderId = await backend.run((ctx) =>
+      ctx.db.insert("orders", {
+        contactName: "Fournisseur historique",
+        kind: "supplier",
+        status: "ready",
+      })
+    )
+
+    const result = await backend.mutation(
+      internal.migrations.normalizeSupplierOrderStatuses,
+      {}
+    )
+    const order = await backend.run((ctx) => ctx.db.get(orderId))
+
+    expect(result).toEqual({ normalizedOrders: 1 })
+    expect(order).toMatchObject({ status: "open" })
+  })
+})

@@ -1048,7 +1048,7 @@ describe("transactions.remove", () => {
     expect(state.audits).toHaveLength(1)
   })
 
-  it("refuse à un employé de supprimer la saisie d’un autre compte", async () => {
+  it("permet à un employé de supprimer la saisie d’un autre compte", async () => {
     const backend = createTestBackend()
     const employee = await asAuthenticatedUser(backend)
     const transactionId = await backend.run((ctx) =>
@@ -1064,12 +1064,10 @@ describe("transactions.remove", () => {
       })
     )
     const visibleTransactions = await employee.query(api.transactions.list, {})
-    expect(visibleTransactions[0]?.canDelete).toBe(false)
+    expect(visibleTransactions[0]?.canDelete).toBe(true)
 
-    await expect(
-      employee.mutation(api.transactions.remove, { transactionId })
-    ).rejects.toThrowError("uniquement les opérations que vous avez saisies")
-    expect(await backend.run((ctx) => ctx.db.get(transactionId))).not.toBeNull()
+    await employee.mutation(api.transactions.remove, { transactionId })
+    expect(await backend.run((ctx) => ctx.db.get(transactionId))).toBeNull()
   })
 })
 
@@ -1209,7 +1207,7 @@ describe("transactions.update", () => {
     expect(state.movements[0]?.delta).toBe(3)
   })
 
-  it("refuse à un employé de modifier la saisie d’un autre compte", async () => {
+  it("permet à un employé de modifier la saisie d’un autre compte", async () => {
     const backend = createTestBackend()
     const employee = await asAuthenticatedUser(backend)
     const { characterId, productId } = await seedStock(backend)
@@ -1217,25 +1215,29 @@ describe("transactions.update", () => {
       ctx.db.insert("transactions", {
         actorName: "Autre employé",
         actorUserId: "autre-compte",
-        kind: "production",
+        kind: "purchase",
         occurredAt: Date.now(),
         productId,
-        productName: "Potion de soin",
+        productName: "Essence de test",
         quantity: 1,
         source: "web",
         total: 0,
       })
     )
 
-    await expect(
-      employee.mutation(api.transactions.update, {
-        characterId,
-        kind: "production",
-        occurredAt: Date.now(),
-        productId,
-        quantity: 2,
-        transactionId,
-      })
-    ).rejects.toThrowError("uniquement les opérations que vous avez saisies")
+    await employee.mutation(api.transactions.update, {
+      characterId,
+      kind: "purchase",
+      lines: [{ kind: "product", productId, quantity: 2 }],
+      occurredAt: Date.now(),
+      transactionId,
+    })
+
+    const transaction = await backend.run((ctx) => ctx.db.get(transactionId))
+    expect(transaction).toMatchObject({
+      actorUserId: "autre-compte",
+      kind: "purchase",
+      quantity: 2,
+    })
   })
 })

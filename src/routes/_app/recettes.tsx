@@ -41,8 +41,6 @@ import {
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { api } from "../../../convex/_generated/api"
 import { type Doc } from "../../../convex/_generated/dataModel"
-import { useHydrated } from "@/hooks/use-hydrated"
-import { authClient } from "@/lib/auth-client"
 import { calculateBundleCost } from "@/lib/bundle-cost"
 import {
   formatDecimalSeptims,
@@ -106,8 +104,6 @@ export const Route = createFileRoute("/_app/recettes")({
 function RecipesPage() {
   const filters = Route.useSearch()
   const navigate = Route.useNavigate()
-  const { data: session } = authClient.useSession()
-  const isHydrated = useHydrated()
   const { data: recipes } = useSuspenseQuery(convexQuery(api.recipes.list, {}))
   const { data: bundles } = useSuspenseQuery(
     convexQuery(api.recipes.listBundles, {})
@@ -121,8 +117,6 @@ function RecipesPage() {
   const { data: linkedProductIds } = useSuspenseQuery(
     convexQuery(api.recipes.listLinkedProductIds, {})
   )
-  const isAdmin =
-    isHydrated && (session?.user.role?.split(",").includes("admin") ?? false)
   const [productionProductId, setProductionProductId] =
     useState<Doc<"products">["_id"]>()
   const search = filters.q ?? ""
@@ -265,15 +259,11 @@ function RecipesPage() {
               </h2>
             </div>
             <div className="flex items-center gap-2">
-              {isAdmin ? (
-                <>
-                  <RecipeArchivesDialog />
-                  <RecipeDialog
-                    linkedProductIds={linkedProductIds}
-                    products={products}
-                  />
-                </>
-              ) : null}
+              <RecipeArchivesDialog />
+              <RecipeDialog
+                linkedProductIds={linkedProductIds}
+                products={products}
+              />
               <BookMarked aria-hidden="true" className="size-5 text-primary" />
             </div>
           </div>
@@ -281,7 +271,6 @@ function RecipesPage() {
             <div className="grid grid-cols-3 gap-3 max-xl:grid-cols-2 max-md:grid-cols-1">
               {visibleRecipes.map((recipe) => (
                 <RecipeEntry
-                  isAdmin={isAdmin}
                   key={recipe._id}
                   linkedProductIds={linkedProductIds}
                   onProduce={setProductionProductId}
@@ -315,12 +304,8 @@ function RecipesPage() {
               </h2>
             </div>
             <div className="flex items-center gap-2">
-              {isAdmin ? (
-                <>
-                  <BundleArchivesDialog />
-                  <BundleDialog products={products} />
-                </>
-              ) : null}
+              <BundleArchivesDialog />
+              <BundleDialog products={products} />
               <PackageOpen aria-hidden="true" className="size-5 text-primary" />
             </div>
           </div>
@@ -329,7 +314,6 @@ function RecipesPage() {
               {visibleBundles.map((bundle) => (
                 <BundleEntry
                   bundle={bundle}
-                  isAdmin={isAdmin}
                   key={bundle._id}
                   products={products}
                   recipes={recipes}
@@ -369,13 +353,11 @@ function RecipesPage() {
 }
 
 function RecipeEntry({
-  isAdmin,
   linkedProductIds,
   onProduce,
   products,
   recipe,
 }: Readonly<{
-  isAdmin: boolean
   linkedProductIds: readonly Doc<"products">["_id"][]
   onProduce: (productId: Doc<"products">["_id"]) => void
   products: readonly Doc<"products">[]
@@ -395,22 +377,20 @@ function RecipeEntry({
           {recipe.name}
         </CardTitle>
         <CardAction>
-          {isAdmin ? (
-            <RecipeDialog
-              linkedProductIds={linkedProductIds}
-              products={products}
-              recipe={recipe}
-              trigger={
-                <Button
-                  aria-label={`Modifier ${recipe.name}`}
-                  size="icon"
-                  variant="ghost"
-                >
-                  <Pencil aria-hidden="true" />
-                </Button>
-              }
-            />
-          ) : null}
+          <RecipeDialog
+            linkedProductIds={linkedProductIds}
+            products={products}
+            recipe={recipe}
+            trigger={
+              <Button
+                aria-label={`Modifier ${recipe.name}`}
+                size="icon"
+                variant="ghost"
+              >
+                <Pencil aria-hidden="true" />
+              </Button>
+            }
+          />
         </CardAction>
       </CardHeader>
       <CardContent className="flex flex-1 flex-col p-4 pt-3">
@@ -456,7 +436,7 @@ function RecipeEntry({
               </>
             )
 
-            return isAdmin && product ? (
+            return product ? (
               <ProductDialog
                 key={ingredient._id}
                 product={product}
@@ -514,12 +494,10 @@ function RecipeEntry({
 
 function BundleEntry({
   bundle,
-  isAdmin,
   products,
   recipes,
 }: Readonly<{
   bundle: Bundle
-  isAdmin: boolean
   products: readonly Doc<"products">[]
   recipes: readonly Recipe[]
 }>) {
@@ -532,21 +510,19 @@ function BundleEntry({
           {bundle.name}
         </CardTitle>
         <CardAction>
-          {isAdmin ? (
-            <BundleDialog
-              bundle={bundle}
-              products={products}
-              trigger={
-                <Button
-                  aria-label={`Modifier ${bundle.name}`}
-                  size="icon"
-                  variant="ghost"
-                >
-                  <Pencil aria-hidden="true" />
-                </Button>
-              }
-            />
-          ) : null}
+          <BundleDialog
+            bundle={bundle}
+            products={products}
+            trigger={
+              <Button
+                aria-label={`Modifier ${bundle.name}`}
+                size="icon"
+                variant="ghost"
+              >
+                <Pencil aria-hidden="true" />
+              </Button>
+            }
+          />
         </CardAction>
       </CardHeader>
       <CardContent className="p-4 pt-3">

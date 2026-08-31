@@ -2,7 +2,7 @@ import { ConvexError, v } from "convex/values"
 
 import { type Id } from "./_generated/dataModel"
 import { mutation, query } from "./_generated/server"
-import { requireAdmin, requireUser } from "./lib/auth"
+import { requireUser } from "./lib/auth"
 import { assertFiniteRange, assertWholeNumberRange } from "./lib/numbers"
 import { canonicalProductCategory } from "./lib/products"
 import { normalizeCatalogName, normalizeName } from "./lib/text"
@@ -59,7 +59,7 @@ export const selectable = query({
 export const listArchived = query({
   args: {},
   handler: async (ctx) => {
-    await requireAdmin(ctx)
+    await requireUser(ctx)
     const products = await ctx.db.query("products").collect()
     return products
       .filter((product) => !product.active)
@@ -73,7 +73,7 @@ export const setActive = mutation({
     productId: v.id("products"),
   },
   handler: async (ctx, args) => {
-    const user = await requireAdmin(ctx)
+    const user = await requireUser(ctx)
     const product = await ctx.db.get(args.productId)
     if (!product) {
       throw new ConvexError({
@@ -106,7 +106,7 @@ export const save = mutation({
     targetStock: v.number(),
   },
   handler: async (ctx, args) => {
-    const user = await requireAdmin(ctx)
+    const user = await requireUser(ctx)
     const name = normalizeCatalogName(args.name)
     if (!name || name.length > MAX_NAME_LENGTH) {
       throw new ConvexError({

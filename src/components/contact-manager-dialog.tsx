@@ -39,7 +39,7 @@ const contactKindLabels: Readonly<Record<Contact["kind"], string>> = {
 }
 
 export function ContactManagerDialog() {
-  const contacts = useQuery(api.contacts.listForAdmin)
+  const contacts = useQuery(api.contacts.listForManagement)
   const renameContact = useMutation(api.contacts.rename)
   const setContactActive = useMutation(api.contacts.setActive)
   const [editingId, setEditingId] = useState<string>()

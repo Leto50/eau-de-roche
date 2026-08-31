@@ -42,13 +42,11 @@ import {
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { api } from "../../../convex/_generated/api"
 import { type Doc, type Id } from "../../../convex/_generated/dataModel"
-import { useHydrated } from "@/hooks/use-hydrated"
 import { categoryLabels, formatNumber, formatUnitPrice } from "@/lib/format"
 import {
   canonicalProductCategory,
   type ProductCategory,
 } from "@/lib/product-categories"
-import { authClient } from "@/lib/auth-client"
 import {
   sortInventoryEntries,
   type InventorySortKey,
@@ -152,8 +150,6 @@ export const Route = createFileRoute("/_app/inventaire")({
 function InventoryPage() {
   const filters = Route.useSearch()
   const navigate = Route.useNavigate()
-  const { data: session } = authClient.useSession()
-  const isHydrated = useHydrated()
   const { data: products } = useSuspenseQuery(
     convexQuery(api.products.list, {})
   )
@@ -163,8 +159,6 @@ function InventoryPage() {
   const { data: activeLinkedProductIds } = useSuspenseQuery(
     convexQuery(api.recipes.listActiveLinkedProductIds, {})
   )
-  const isAdmin =
-    isHydrated && (session?.user.role?.split(",").includes("admin") ?? false)
   const category = filters.category ?? "all"
   const search = filters.q ?? ""
   const lowOnly = filters.stock === "low"
@@ -229,12 +223,10 @@ function InventoryPage() {
     <div className="animate-in duration-300 fade-in slide-in-from-bottom-1 motion-reduce:animate-none">
       <PageHeader
         action={
-          isAdmin ? (
-            <div className="flex flex-wrap justify-end gap-2">
-              <ProductArchivesDialog />
-              <ProductDialog onWriteRecipe={setRecipeProductId} />
-            </div>
-          ) : undefined
+          <div className="flex flex-wrap justify-end gap-2">
+            <ProductArchivesDialog />
+            <ProductDialog onWriteRecipe={setRecipeProductId} />
+          </div>
         }
         eyebrow="Gestion des stocks"
         title="Inventaire"
@@ -382,11 +374,9 @@ function InventoryPage() {
                     label="État"
                     onSort={() => handleSort("status")}
                   />
-                  {isAdmin ? (
-                    <TableHead className="w-10">
-                      <span className="sr-only">Modifier</span>
-                    </TableHead>
-                  ) : null}
+                  <TableHead className="w-10">
+                    <span className="sr-only">Modifier</span>
+                  </TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody className="max-md:grid max-md:gap-3">
@@ -394,7 +384,6 @@ function InventoryPage() {
                   <InventoryRow
                     hasAnyRecipe={linkedProducts.has(product._id)}
                     hasRecipe={activeRecipeProducts.has(product._id)}
-                    isAdmin={isAdmin}
                     key={product._id}
                     onWriteRecipe={setRecipeProductId}
                     product={product}
@@ -466,13 +455,11 @@ function productPrice(product: Doc<"products">): string {
 function InventoryRow({
   hasAnyRecipe,
   hasRecipe,
-  isAdmin,
   onWriteRecipe,
   product,
 }: Readonly<{
   hasAnyRecipe: boolean
   hasRecipe: boolean
-  isAdmin: boolean
   onWriteRecipe: (productId: Id<"products">) => void
   product: Doc<"products">
 }>) {
@@ -511,7 +498,7 @@ function InventoryRow({
         <Badge className="w-fit md:hidden" variant="secondary">
           {categoryLabels[product.category]}
         </Badge>
-        {isAdmin && canWriteRecipe ? (
+        {canWriteRecipe ? (
           <Button
             className="h-auto px-1 text-xs"
             onClick={() => onWriteRecipe(product._id)}
@@ -544,24 +531,22 @@ function InventoryRow({
       <TableCell className="pr-4 text-right max-md:col-start-3 max-md:row-start-1 max-md:p-0 max-md:pr-9">
         <ProductState product={product} />
       </TableCell>
-      {isAdmin ? (
-        <TableCell className="max-md:absolute max-md:top-2.5 max-md:right-2 max-md:p-0">
-          <ProductDialog
-            canWriteRecipe={canWriteRecipe}
-            onWriteRecipe={onWriteRecipe}
-            product={product}
-            trigger={
-              <Button
-                aria-label={`Modifier ${product.name}`}
-                size="icon"
-                variant="ghost"
-              >
-                <Pencil aria-hidden="true" />
-              </Button>
-            }
-          />
-        </TableCell>
-      ) : null}
+      <TableCell className="max-md:absolute max-md:top-2.5 max-md:right-2 max-md:p-0">
+        <ProductDialog
+          canWriteRecipe={canWriteRecipe}
+          onWriteRecipe={onWriteRecipe}
+          product={product}
+          trigger={
+            <Button
+              aria-label={`Modifier ${product.name}`}
+              size="icon"
+              variant="ghost"
+            >
+              <Pencil aria-hidden="true" />
+            </Button>
+          }
+        />
+      </TableCell>
     </TableRow>
   )
 }

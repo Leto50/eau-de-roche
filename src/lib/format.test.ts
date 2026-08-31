@@ -13,6 +13,7 @@ describe("formatOrderStatus", () => {
     expect(formatOrderStatus("open", "client")).toBe("À préparer")
     expect(formatOrderStatus("delivered", "client")).toBe("Livrée")
     expect(formatOrderStatus("open", "supplier")).toBe("À recevoir")
+    expect(formatOrderStatus("ready", "supplier")).toBe("À recevoir")
     expect(formatOrderStatus("delivered", "supplier")).toBe("Reçue")
   })
 })

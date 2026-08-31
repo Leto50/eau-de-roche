@@ -149,7 +149,7 @@ describe("bundles.save", () => {
     expect(bundles).toHaveLength(0)
   })
 
-  it("refuse la création d’un lot à un employé", async () => {
+  it("permet la création d’un lot à un employé", async () => {
     const backend = createTestBackend()
     const employee = await asAuthenticatedUser(backend)
     const productId = await backend.run((ctx) =>
@@ -164,12 +164,14 @@ describe("bundles.save", () => {
       })
     )
 
-    await expect(
-      employee.mutation(api.bundles.save, {
-        items: [{ productId, quantity: 1 }],
-        name: "Lot du mineur",
-        price: 5,
-      })
-    ).rejects.toThrowError("réservée aux administrateurs")
+    const bundleId = await employee.mutation(api.bundles.save, {
+      items: [{ productId, quantity: 1 }],
+      name: "Lot du mineur",
+      price: 5,
+    })
+
+    expect(await backend.run((ctx) => ctx.db.get(bundleId))).toMatchObject({
+      name: "Lot du mineur",
+    })
   })
 })

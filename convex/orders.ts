@@ -1,4 +1,5 @@
 import { ConvexError, type Infer, v } from "convex/values"
+import { paginationOptsValidator } from "convex/server"
 
 import { type Doc, type Id } from "./_generated/dataModel"
 import {
@@ -7,7 +8,7 @@ import {
   type MutationCtx,
   type QueryCtx,
 } from "./_generated/server"
-import { requireAdmin, requireUser } from "./lib/auth"
+import { requireUser } from "./lib/auth"
 import {
   type exchangeLineValidator,
   loadStockBeforeTransaction,
@@ -19,9 +20,15 @@ import {
   roundSeptimsDown,
 } from "./lib/numbers"
 import { resolveOrderContact } from "./lib/contacts"
-import { orderTransactionLabel, withOrderTotal } from "./lib/order"
+import {
+  loadOrdersNeedingAttention,
+  orderTransactionLabel,
+  withOrderTotal,
+} from "./lib/order"
 import { buildTransactionSearchText } from "./lib/transactionSearch"
+import { applyJournalBalanceChange } from "./lib/journalSummary"
 import { orderKind, orderStatus } from "./lib/validators"
+import { orderStatusesForKind } from "../shared/order-status"
 
 const MAX_CONTACT_NAME_LENGTH = 100
 const MAX_LINES = 50
@@ -199,6 +206,10 @@ async function synchronizeLinkedTransaction(
       ? { unitPrice: firstLine.unitPrice }
       : {}),
   })
+  await applyJournalBalanceChange(ctx, transaction, {
+    kind: prepared.kind,
+    total: prepared.total,
+  })
   for (const line of prepared.lines) {
     await ctx.db.insert("transactionLines", {
       ...(line.bundleId ? { bundleId: line.bundleId } : {}),
@@ -250,11 +261,11 @@ export const getById = query({
   },
 })
 
-export const list = query({
+export const listAttention = query({
   args: {},
   handler: async (ctx) => {
     await requireUser(ctx)
-    const orders = await ctx.db.query("orders").collect()
+    const orders = await loadOrdersNeedingAttention(ctx)
     const withLines = await Promise.all(
       orders.map((order) => withOrderDetails(ctx, order))
     )
@@ -266,6 +277,33 @@ export const list = query({
         (right.dueAt ?? Number.MAX_SAFE_INTEGER)
       )
     })
+  },
+})
+
+export const listHistoryPage = query({
+  args: { paginationOpts: paginationOptsValidator },
+  handler: async (ctx, args) => {
+    await requireUser(ctx)
+    const result = await ctx.db
+      .query("orders")
+      .order("desc")
+      .filter((filter) =>
+        filter.or(
+          filter.eq(filter.field("status"), "cancelled"),
+          filter.and(
+            filter.eq(filter.field("status"), "delivered"),
+            filter.neq(filter.field("transactionId"), undefined)
+          )
+        )
+      )
+      .paginate(args.paginationOpts)
+
+    return {
+      ...result,
+      page: await Promise.all(
+        result.page.map((order) => withOrderDetails(ctx, order))
+      ),
+    }
   },
 })
 
@@ -291,6 +329,12 @@ export const save = mutation({
   },
   handler: async (ctx, args) => {
     const user = await requireUser(ctx)
+    if (!orderStatusesForKind(args.kind).includes(args.status)) {
+      throw new ConvexError({
+        code: "INVALID_INPUT",
+        message: "Cet état n’existe pas pour une commande fournisseur.",
+      })
+    }
     const submittedContactName = args.contactName.trim()
     const notes = args.notes.trim()
     if (
@@ -529,7 +573,7 @@ export const save = mutation({
 export const remove = mutation({
   args: { orderId: v.id("orders") },
   handler: async (ctx, args) => {
-    const user = await requireAdmin(ctx)
+    const user = await requireUser(ctx)
     const order = await ctx.db.get(args.orderId)
     if (!order) {
       throw new ConvexError({
@@ -572,6 +616,13 @@ export const updateStatus = mutation({
       throw new ConvexError({
         code: "NOT_FOUND",
         message: "Commande introuvable.",
+      })
+    }
+
+    if (!orderStatusesForKind(order.kind).includes(args.status)) {
+      throw new ConvexError({
+        code: "INVALID_INPUT",
+        message: "Cet état n’existe pas pour une commande fournisseur.",
       })
     }
 
@@ -746,6 +797,10 @@ export const process = mutation({
       processedAt: args.occurredAt,
       ...(order.kind === "supplier" ? { status: "delivered" as const } : {}),
       transactionId,
+    })
+    await applyJournalBalanceChange(ctx, undefined, {
+      kind: prepared.kind,
+      total: prepared.total,
     })
     await ctx.db.insert("auditLogs", {
       action:

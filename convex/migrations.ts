@@ -12,6 +12,7 @@ import { calculateRecipeCost } from "./lib/recipeCost"
 import { canonicalRecipeFamily } from "./lib/recipeFamilies"
 import { normalizeCatalogName, normalizeName } from "./lib/text"
 import { buildTransactionSearchText } from "./lib/transactionSearch"
+import { rebuildJournalSummary as rebuildJournalSummaryData } from "./lib/journalSummary"
 
 const CATALOG_NAMES_MIGRATION_KEY = "catalog-names-v1"
 const EXCHANGE_MIGRATION_KEY = "exchange-model-v5"
@@ -825,6 +826,21 @@ export async function normalizeContactsData(ctx: MutationCtx) {
   return result
 }
 
+export async function normalizeSupplierOrderStatusesData(ctx: MutationCtx) {
+  const readySupplierOrders = await ctx.db
+    .query("orders")
+    .withIndex("by_kind_and_status", (index) =>
+      index.eq("kind", "supplier").eq("status", "ready")
+    )
+    .collect()
+  await Promise.all(
+    readySupplierOrders.map((order) =>
+      ctx.db.patch(order._id, { status: "open" as const })
+    )
+  )
+  return { normalizedOrders: readySupplierOrders.length }
+}
+
 export async function convertLegacyOperationsData(ctx: MutationCtx) {
   const existingMigration = await ctx.db
     .query("systemSettings")
@@ -1150,4 +1166,14 @@ export const indexTransactionSearch = internalMutation({
 export const normalizeContacts = internalMutation({
   args: {},
   handler: normalizeContactsData,
+})
+
+export const normalizeSupplierOrderStatuses = internalMutation({
+  args: {},
+  handler: normalizeSupplierOrderStatusesData,
+})
+
+export const rebuildJournalSummary = internalMutation({
+  args: {},
+  handler: rebuildJournalSummaryData,
 })

@@ -2,7 +2,7 @@ import { ConvexError, v } from "convex/values"
 
 import { type Id } from "./_generated/dataModel"
 import { mutation, query } from "./_generated/server"
-import { requireAdmin } from "./lib/auth"
+import { requireUser } from "./lib/auth"
 import { assertFiniteRange, assertWholeNumberRange } from "./lib/numbers"
 import { normalizeCatalogName, normalizeName } from "./lib/text"
 
@@ -14,7 +14,7 @@ const MAX_QUANTITY = 1_000_000
 export const listArchived = query({
   args: {},
   handler: async (ctx) => {
-    await requireAdmin(ctx)
+    await requireUser(ctx)
     const bundles = await ctx.db.query("bundles").collect()
     return bundles
       .filter((bundle) => !bundle.active)
@@ -35,7 +35,7 @@ export const save = mutation({
     price: v.union(v.number(), v.null()),
   },
   handler: async (ctx, args) => {
-    const user = await requireAdmin(ctx)
+    const user = await requireUser(ctx)
     const name = normalizeCatalogName(args.name)
     if (!name || name.length > MAX_NAME_LENGTH) {
       throw new ConvexError({
@@ -150,7 +150,7 @@ export const setActive = mutation({
     bundleId: v.id("bundles"),
   },
   handler: async (ctx, args) => {
-    const user = await requireAdmin(ctx)
+    const user = await requireUser(ctx)
     const bundle = await ctx.db.get(args.bundleId)
     if (!bundle) {
       throw new ConvexError({

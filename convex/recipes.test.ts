@@ -157,19 +157,21 @@ describe("recipes", () => {
     expect(products).toHaveLength(2)
   })
 
-  it("réserve la gestion des recettes aux administrateurs", async () => {
+  it("permet la gestion des recettes aux employés", async () => {
     const backend = createTestBackend()
     const employee = await asAuthenticatedUser(backend)
     const { ingredientId } = await seedRecipeProducts(backend)
 
-    await expect(
-      employee.mutation(api.recipes.save, {
-        effect: "",
-        family: "Utilitaire",
-        ingredients: [{ productId: ingredientId, quantity: 1 }],
-        name: "Élixir du veilleur",
-      })
-    ).rejects.toThrowError("réservée aux administrateurs")
+    const recipeId = await employee.mutation(api.recipes.save, {
+      effect: "",
+      family: "Utilitaire",
+      ingredients: [{ productId: ingredientId, quantity: 1 }],
+      name: "Élixir du veilleur",
+    })
+
+    expect(await backend.run((ctx) => ctx.db.get(recipeId))).toMatchObject({
+      name: "Élixir du veilleur",
+    })
   })
 
   it("refuse de relier une nouvelle recette à un article homonyme", async () => {

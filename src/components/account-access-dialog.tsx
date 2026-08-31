@@ -224,7 +224,8 @@ export function AccountAccessDialog({
               Rôle et permissions
             </h3>
             <p className="text-xs text-muted-foreground">
-              Un administrateur peut gérer les référentiels, les accès et
+              Les employés gèrent toute l’activité de la boutique. Les
+              administrateurs gèrent en plus les paramètres, les accès et
               l’historique d’audit.
             </p>
           </div>

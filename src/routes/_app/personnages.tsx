@@ -20,7 +20,7 @@ export const Route = createFileRoute("/_app/personnages")({
   errorComponent: PageError,
   loader: async ({ context }) => {
     await context.queryClient.ensureQueryData(
-      convexQuery(api.characters.listForAdmin, {})
+      convexQuery(api.characters.list, {})
     )
   },
   pendingComponent: PageSkeleton,
@@ -28,7 +28,7 @@ export const Route = createFileRoute("/_app/personnages")({
 
 function CharactersPage() {
   const { data: characters } = useSuspenseQuery(
-    convexQuery(api.characters.listForAdmin, {})
+    convexQuery(api.characters.list, {})
   )
 
   return (
@@ -40,7 +40,7 @@ function CharactersPage() {
             <CharacterDialog />
           </div>
         }
-        eyebrow="Administration"
+        eyebrow="Équipe de la boutique"
         title="Personnages"
       >
         Les identités de jeu proposées lors des ventes, achats et productions.

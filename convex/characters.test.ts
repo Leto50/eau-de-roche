@@ -40,15 +40,16 @@ describe("characters", () => {
     ])
   })
 
-  it("réserve l’administration des personnages aux administrateurs", async () => {
+  it("permet à un employé de gérer les personnages", async () => {
     const backend = createTestBackend()
     const employee = await asAuthenticatedUser(backend)
 
-    await expect(
-      employee.query(api.characters.listForAdmin, {})
-    ).rejects.toThrowError("réservée aux administrateurs")
-    await expect(
-      employee.mutation(api.characters.save, { name: "Nouvel intendant" })
-    ).rejects.toThrowError("réservée aux administrateurs")
+    const characterId = await employee.mutation(api.characters.save, {
+      name: "Nouvel intendant",
+    })
+
+    expect(await employee.query(api.characters.list, {})).toMatchObject([
+      { _id: characterId, name: "Nouvel intendant" },
+    ])
   })
 })

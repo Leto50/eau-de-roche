@@ -4,22 +4,20 @@ import { api } from "./_generated/api"
 import { asAuthenticatedUser, createTestBackend } from "./test.helpers"
 
 describe("contacts", () => {
-  it("protège la liste des contacts et la vue d’administration", async () => {
+  it("protège les listes des contacts derrière l’authentification", async () => {
     const backend = createTestBackend()
-    const employee = await asAuthenticatedUser(backend)
 
     await expect(backend.query(api.contacts.list)).rejects.toThrowError(
       "connecté"
     )
     await expect(
-      employee.query(api.contacts.listForAdmin)
-    ).rejects.toThrowError("réservée aux administrateurs")
+      backend.query(api.contacts.listForManagement)
+    ).rejects.toThrowError("connecté")
   })
 
-  it("réserve le renommage et l’archivage aux administrateurs sans réécrire les commandes", async () => {
+  it("permet à un employé de renommer et archiver sans réécrire les commandes", async () => {
     const backend = createTestBackend()
     const employee = await asAuthenticatedUser(backend)
-    const admin = await asAuthenticatedUser(backend, "admin")
     const { contactId, orderId } = await backend.run(async (ctx) => {
       const contactId = await ctx.db.insert("contacts", {
         active: true,
@@ -36,18 +34,11 @@ describe("contacts", () => {
       return { contactId, orderId }
     })
 
-    await expect(
-      employee.mutation(api.contacts.rename, {
-        contactId,
-        name: "Maison de Verre",
-      })
-    ).rejects.toThrowError("réservée aux administrateurs")
-
-    await admin.mutation(api.contacts.rename, {
+    await employee.mutation(api.contacts.rename, {
       contactId,
       name: "Maison de Verre",
     })
-    await admin.mutation(api.contacts.setActive, {
+    await employee.mutation(api.contacts.setActive, {
       active: false,
       contactId,
     })

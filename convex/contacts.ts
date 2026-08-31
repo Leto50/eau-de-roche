@@ -1,7 +1,7 @@
 import { ConvexError, v } from "convex/values"
 
 import { mutation, query, type MutationCtx } from "./_generated/server"
-import { requireAdmin, requireUser } from "./lib/auth"
+import { requireUser } from "./lib/auth"
 import { contactIsActive } from "./lib/contacts"
 import { normalizeName } from "./lib/text"
 
@@ -40,10 +40,10 @@ export const list = query({
   },
 })
 
-export const listForAdmin = query({
+export const listForManagement = query({
   args: {},
   handler: async (ctx) => {
-    await requireAdmin(ctx)
+    await requireUser(ctx)
     const contacts = await ctx.db.query("contacts").collect()
     return contacts.sort(
       (left, right) =>
@@ -60,7 +60,7 @@ export const rename = mutation({
     name: v.string(),
   },
   handler: async (ctx, args) => {
-    const user = await requireAdmin(ctx)
+    const user = await requireUser(ctx)
     const contact = await ctx.db.get(args.contactId)
     if (!contact) {
       throw new ConvexError({
@@ -103,7 +103,7 @@ export const setActive = mutation({
     contactId: v.id("contacts"),
   },
   handler: async (ctx, args) => {
-    const user = await requireAdmin(ctx)
+    const user = await requireUser(ctx)
     const contact = await ctx.db.get(args.contactId)
     if (!contact) {
       throw new ConvexError({

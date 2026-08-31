@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
 
-import { api } from "./_generated/api"
+import { api, internal } from "./_generated/api"
 import { asAuthenticatedUser, createTestBackend } from "./test.helpers"
 
 async function insertTransaction(
@@ -23,6 +23,48 @@ async function insertTransaction(
 }
 
 describe("accounts", () => {
+  it("maintient le solde matérialisé lors des écritures du journal", async () => {
+    const backend = createTestBackend()
+    const employee = await asAuthenticatedUser(backend)
+    const now = Date.now()
+    await insertTransaction(backend, now, 100)
+    await backend.mutation(internal.migrations.rebuildJournalSummary, {})
+    const { characterId, productId } = await backend.run(async (ctx) => ({
+      characterId: await ctx.db.insert("characters", {
+        active: true,
+        name: "Vendeuse test",
+      }),
+      productId: await ctx.db.insert("products", {
+        active: true,
+        category: "potion",
+        currentStock: 2,
+        minimumStock: 0,
+        name: "Potion du résumé",
+        normalizedName: "potion du resume",
+        salePrice: 25,
+        tracksStock: true,
+      }),
+    }))
+
+    const created = await employee.mutation(api.transactions.record, {
+      characterId,
+      kind: "sale",
+      occurredAt: now,
+      productId,
+      quantity: 1,
+    })
+    expect(
+      (await employee.query(api.accounts.overview, {})).journalBalance
+    ).toBe(125)
+
+    await employee.mutation(api.transactions.remove, {
+      transactionId: created.transactionId,
+    })
+    expect(
+      (await employee.query(api.accounts.overview, {})).journalBalance
+    ).toBe(100)
+  })
+
   it("calcule le bilan courant et les charges initiales du classeur", async () => {
     const backend = createTestBackend()
     const employee = await asAuthenticatedUser(backend)

@@ -2,7 +2,7 @@ import { ConvexError, v } from "convex/values"
 
 import { type Id } from "./_generated/dataModel"
 import { mutation, query } from "./_generated/server"
-import { requireAdmin, requireUser } from "./lib/auth"
+import { requireUser } from "./lib/auth"
 import { normalizeName } from "./lib/text"
 
 const MAX_NAME_LENGTH = 100
@@ -18,21 +18,10 @@ export const list = query({
   },
 })
 
-export const listForAdmin = query({
-  args: {},
-  handler: async (ctx) => {
-    await requireAdmin(ctx)
-    const characters = await ctx.db.query("characters").collect()
-    return characters
-      .filter((character) => character.active)
-      .sort((left, right) => left.name.localeCompare(right.name, "fr"))
-  },
-})
-
 export const listArchived = query({
   args: {},
   handler: async (ctx) => {
-    await requireAdmin(ctx)
+    await requireUser(ctx)
     const characters = await ctx.db.query("characters").collect()
     return characters
       .filter((character) => !character.active)
@@ -46,7 +35,7 @@ export const save = mutation({
     name: v.string(),
   },
   handler: async (ctx, args) => {
-    const user = await requireAdmin(ctx)
+    const user = await requireUser(ctx)
     const name = args.name.trim()
     if (!name || name.length > MAX_NAME_LENGTH) {
       throw new ConvexError({
@@ -111,7 +100,7 @@ export const setActive = mutation({
     characterId: v.id("characters"),
   },
   handler: async (ctx, args) => {
-    const user = await requireAdmin(ctx)
+    const user = await requireUser(ctx)
     const character = await ctx.db.get(args.characterId)
     if (!character) {
       throw new ConvexError({

@@ -78,8 +78,6 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
-import { useHydrated } from "@/hooks/use-hydrated"
-import { authClient } from "@/lib/auth-client"
 import { getUserFacingErrorMessage } from "@/lib/errors"
 import {
   formatDate,
@@ -236,8 +234,6 @@ const operationToneClasses: Readonly<
 function JournalPage() {
   const filters = Route.useSearch()
   const navigate = Route.useNavigate()
-  const { data: session } = authClient.useSession()
-  const isHydrated = useHydrated()
   const filterKey = JSON.stringify(filters)
   const [pagination, setPagination] = useState<PaginationState>({
     cursor: null,
@@ -264,8 +260,6 @@ function JournalPage() {
   const isFetchingPage = livePage === undefined
   const transactions = page?.page ?? []
   const hasFilters = Object.keys(filters).length > 0
-  const isAdmin =
-    isHydrated && (session?.user.role?.split(",").includes("admin") ?? false)
   const showActions = transactions.some(
     (transaction) => transaction.canManage || transaction.canDelete
   )
@@ -563,11 +557,7 @@ function JournalPage() {
       )}
 
       {editor ? (
-        <ActivityEditor
-          isAdmin={isAdmin}
-          onClose={() => setEditor(null)}
-          request={editor}
-        />
+        <ActivityEditor onClose={() => setEditor(null)} request={editor} />
       ) : null}
     </div>
   )
@@ -860,20 +850,14 @@ function TransactionLineContent({
 }
 
 function ActivityEditor({
-  isAdmin,
   onClose,
   request,
 }: Readonly<{
-  isAdmin: boolean
   onClose: () => void
   request: EditorRequest
 }>) {
   return request.type === "order" ? (
-    <OrderActivityEditor
-      isAdmin={isAdmin}
-      onClose={onClose}
-      request={request}
-    />
+    <OrderActivityEditor onClose={onClose} request={request} />
   ) : (
     <OperationActivityEditor onClose={onClose} request={request} />
   )
@@ -926,11 +910,9 @@ function OperationActivityEditor({
 }
 
 function OrderActivityEditor({
-  isAdmin,
   onClose,
   request,
 }: Readonly<{
-  isAdmin: boolean
   onClose: () => void
   request: Extract<EditorRequest, { type: "order" }>
 }>) {
@@ -960,7 +942,6 @@ function OrderActivityEditor({
     <OrderDialog
       characters={characters}
       contacts={contacts}
-      isAdmin={isAdmin}
       key={request.orderId}
       onOpenChange={(nextOpen) => {
         if (!nextOpen) onClose()

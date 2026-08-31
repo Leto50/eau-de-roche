@@ -5,6 +5,7 @@ import { type Doc, type Id } from "./_generated/dataModel"
 import { mutation } from "./_generated/server"
 import { normalizeName } from "./lib/text"
 import { buildTransactionSearchText } from "./lib/transactionSearch"
+import { rebuildJournalSummary } from "./lib/journalSummary"
 import { isLootOnlyLegacyProduct } from "./lib/products"
 import { canonicalRecipeFamily } from "./lib/recipeFamilies"
 import {
@@ -277,6 +278,7 @@ export const importWorkbook = mutation({
     const migration = await convertLegacyOperationsData(ctx)
     const recipeMigration = await repairRecipeReferencesData(ctx)
     const catalogNamesMigration = await normalizeCatalogNamesData(ctx)
+    await rebuildJournalSummary(ctx)
 
     const updatedAt = Date.parse(seedData.metadata.sourceModifiedAt)
     await ctx.db.insert("systemSettings", {

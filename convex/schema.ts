@@ -25,6 +25,12 @@ export default defineSchema({
     weeklyRent: v.number(),
   }).index("by_key", ["key"]),
 
+  journalSummaries: defineTable({
+    balance: v.number(),
+    key: v.literal("main"),
+    updatedAt: v.number(),
+  }).index("by_key", ["key"]),
+
   products: defineTable({
     active: v.boolean(),
     category: productCategory,

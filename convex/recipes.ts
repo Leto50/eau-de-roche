@@ -2,7 +2,7 @@ import { ConvexError, v } from "convex/values"
 
 import { type Doc, type Id } from "./_generated/dataModel"
 import { mutation, query, type QueryCtx } from "./_generated/server"
-import { requireAdmin, requireUser } from "./lib/auth"
+import { requireUser } from "./lib/auth"
 import { assertWholeNumberRange } from "./lib/numbers"
 import { calculateRecipeCost } from "./lib/recipeCost"
 import { recipeFamily } from "./lib/recipeFamilies"
@@ -129,7 +129,7 @@ export const listActiveLinkedProductIds = query({
 export const listArchived = query({
   args: {},
   handler: async (ctx) => {
-    await requireAdmin(ctx)
+    await requireUser(ctx)
     const [recipes, products] = await Promise.all([
       ctx.db.query("recipes").collect(),
       ctx.db.query("products").collect(),
@@ -162,7 +162,7 @@ export const save = mutation({
     recipeId: v.optional(v.id("recipes")),
   },
   handler: async (ctx, args) => {
-    const user = await requireAdmin(ctx)
+    const user = await requireUser(ctx)
     const name = normalizeCatalogName(args.name)
     const family = args.family
     const effect = args.effect.trim()
@@ -420,7 +420,7 @@ export const setActive = mutation({
     recipeId: v.id("recipes"),
   },
   handler: async (ctx, args) => {
-    const user = await requireAdmin(ctx)
+    const user = await requireUser(ctx)
     const recipe = await ctx.db.get(args.recipeId)
     if (!recipe) {
       throw new ConvexError({

@@ -71,8 +71,12 @@ import {
   roundSeptimsDown,
   type PriceDraft,
 } from "@/lib/prices"
+import {
+  normalizeOrderStatus,
+  orderStatusesForKind,
+} from "../../shared/order-status"
 
-type Order = FunctionReturnType<typeof api.orders.list>[number]
+type Order = NonNullable<FunctionReturnType<typeof api.orders.getById>>
 type Recipe = FunctionReturnType<typeof api.recipes.list>[number]
 type OrderKind = Order["kind"]
 type OrderStatus = Order["status"]
@@ -83,13 +87,6 @@ interface OrderLineDraft {
   quantity: string
   unitPrice: PriceDraft
 }
-
-const orderStatuses: readonly OrderStatus[] = [
-  "open",
-  "ready",
-  "delivered",
-  "cancelled",
-]
 
 function dateInputFromTimestamp(timestamp: number | undefined): string {
   if (timestamp === undefined) return ""
@@ -132,8 +129,8 @@ function initialOrderLines(order: Order | undefined): OrderLineDraft[] {
 export function OrderDialog({
   characters,
   contacts,
+  copyFrom,
   initialKind = "client",
-  isAdmin,
   onOpenChange,
   open: controlledOpen,
   order,
@@ -143,8 +140,8 @@ export function OrderDialog({
 }: Readonly<{
   characters: readonly Doc<"characters">[]
   contacts: readonly Doc<"contacts">[]
+  copyFrom?: Order
   initialKind?: OrderKind
-  isAdmin: boolean
   onOpenChange?: (open: boolean) => void
   open?: boolean
   order?: Order
@@ -155,7 +152,9 @@ export function OrderDialog({
   const saveOrder = useMutation(api.orders.save)
   const removeOrder = useMutation(api.orders.remove)
   const fieldId = useId()
-  const nextLineKey = useRef(order?.lines.length ?? 1)
+  const sourceOrder = order ?? copyFrom
+  const isRenewal = !order && copyFrom !== undefined
+  const nextLineKey = useRef(sourceOrder?.lines.length ?? 1)
   const [internalOpen, setInternalOpen] = useState(false)
   const [todayValue] = useState(() => dateInputFromTimestamp(Date.now()))
   const open = controlledOpen ?? internalOpen
@@ -163,20 +162,22 @@ export function OrderDialog({
 
   function orderValues() {
     return {
-      agreedTotal: order?.total?.toString() ?? "",
-      contactId: order?.contactId ?? "",
-      contactName: order?.contactName ?? "",
-      dueDate: dateInputFromTimestamp(order?.dueAt),
-      kind: order?.kind ?? initialKind,
-      lines: initialOrderLines(order),
-      notes: order?.notes ?? "",
+      agreedTotal: sourceOrder?.total?.toString() ?? "",
+      contactId: sourceOrder?.contactId ?? "",
+      contactName: sourceOrder?.contactName ?? "",
+      dueDate: isRenewal ? "" : dateInputFromTimestamp(order?.dueAt),
+      kind: sourceOrder?.kind ?? initialKind,
+      lines: initialOrderLines(sourceOrder),
+      notes: sourceOrder?.notes ?? "",
       processedCharacterId: order?.linkedTransaction?.actorCharacterId ?? "",
       processedDate: dateInputFromTimestamp(
         order?.processedAt ?? order?.linkedTransaction?.occurredAt
       ),
       requiresProcessedDetails: Boolean(order?.transactionId),
-      status: order?.status ?? "open",
-      totalOverridden: order?.total !== undefined,
+      status: order
+        ? normalizeOrderStatus(order.kind, order.status)
+        : ("open" as const),
+      totalOverridden: sourceOrder?.total !== undefined,
     }
   }
 
@@ -223,7 +224,9 @@ export function OrderDialog({
             ? "Commande, transaction et stock mis à jour."
             : order
               ? "Commande mise à jour."
-              : "Commande créée."
+              : isRenewal
+                ? "Nouvelle commande créée."
+                : "Commande créée."
         )
         if (controlledOpen === undefined) setInternalOpen(false)
         onOpenChange?.(false)
@@ -242,7 +245,7 @@ export function OrderDialog({
   function handleOpenChange(nextOpen: boolean) {
     if (nextOpen && !open) {
       form.reset(orderValues())
-      nextLineKey.current = Math.max(1, order?.lines.length ?? 0)
+      nextLineKey.current = Math.max(1, sourceOrder?.lines.length ?? 0)
     }
     if (controlledOpen === undefined) setInternalOpen(nextOpen)
     onOpenChange?.(nextOpen)
@@ -362,12 +365,18 @@ export function OrderDialog({
             Suivi des commandes
           </p>
           <DialogTitle className="font-display text-2xl">
-            {order ? "Modifier la commande" : "Créer une commande"}
+            {order
+              ? "Modifier la commande"
+              : isRenewal
+                ? "Renouveler la commande"
+                : "Créer une commande"}
           </DialogTitle>
           <DialogDescription>
             {order?.transactionId
               ? "Corrigez la commande sans perdre la transaction déjà associée."
-              : "Une commande prépare un échange futur et ne modifie pas encore le stock."}
+              : isRenewal
+                ? "Une nouvelle commande indépendante est créée à partir de l’ancienne."
+                : "Une commande prépare un échange futur et ne modifie pas encore le stock."}
           </DialogDescription>
         </DialogHeader>
 
@@ -404,6 +413,13 @@ export function OrderDialog({
                         if (value !== field.state.value) {
                           form.setFieldValue("contactId", "")
                           form.setFieldValue("contactName", "")
+                          if (
+                            !orderStatusesForKind(value).includes(
+                              formValues.status
+                            )
+                          ) {
+                            form.setFieldValue("status", "open")
+                          }
                         }
                         field.handleChange(value)
                       }
@@ -593,7 +609,11 @@ export function OrderDialog({
                   <Select
                     name={field.name}
                     onValueChange={(value) => {
-                      if (orderStatuses.includes(value as OrderStatus)) {
+                      if (
+                        orderStatusesForKind(formValues.kind).includes(
+                          value as OrderStatus
+                        )
+                      ) {
                         field.handleChange(value as OrderStatus)
                       }
                     }}
@@ -607,7 +627,7 @@ export function OrderDialog({
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      {orderStatuses.map((entry) => (
+                      {orderStatusesForKind(formValues.kind).map((entry) => (
                         <SelectItem key={entry} value={entry}>
                           {formatOrderStatus(entry, formValues.kind)}
                         </SelectItem>
@@ -866,7 +886,7 @@ export function OrderDialog({
 
           <DialogFooter className="gap-2 sm:justify-between">
             <div>
-              {order && isAdmin && !order.transactionId ? (
+              {order && !order.transactionId ? (
                 <AlertDialog>
                   <AlertDialogTrigger asChild>
                     <Button type="button" variant="ghost">

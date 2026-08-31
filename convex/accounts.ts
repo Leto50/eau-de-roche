@@ -4,6 +4,7 @@ import { type Doc } from "./_generated/dataModel"
 import { mutation, query } from "./_generated/server"
 import { requireAdmin, requireUser } from "./lib/auth"
 import { assertFiniteRange, assertWholeNumberRange } from "./lib/numbers"
+import { readJournalBalance } from "./lib/journalSummary"
 import {
   DAY_IN_MILLISECONDS,
   startOfUtcWeek,
@@ -107,12 +108,21 @@ export const overview = query({
   args: {},
   handler: async (ctx) => {
     await requireUser(ctx)
-    const [storedSettings, transactions] = await Promise.all([
+    const currentWeekStartsAt = startOfUtcWeek(Date.now())
+    const firstWeekStartsAt =
+      currentWeekStartsAt - (WEEK_COUNT - 1) * WEEK_IN_MILLISECONDS
+    const [storedSettings, transactions, journalBalance] = await Promise.all([
       ctx.db
         .query("accountSettings")
         .withIndex("by_key", (index) => index.eq("key", "main"))
         .unique(),
-      ctx.db.query("transactions").collect(),
+      ctx.db
+        .query("transactions")
+        .withIndex("by_occurred_at", (index) =>
+          index.gte("occurredAt", firstWeekStartsAt)
+        )
+        .collect(),
+      readJournalBalance(ctx),
     ])
     const settings = storedSettings ?? DEFAULT_SETTINGS
     const salaryRate = settings.salaryRate ?? DEFAULT_SETTINGS.salaryRate
@@ -120,7 +130,6 @@ export const overview = query({
       (transaction) =>
         transaction.kind !== "adjustment" && transaction.kind !== "production"
     )
-    const currentWeekStartsAt = startOfUtcWeek(Date.now())
     const weeks = Array.from({ length: WEEK_COUNT }, (_, index) => {
       const startsAt = currentWeekStartsAt - index * WEEK_IN_MILLISECONDS
       const nextWeekStartsAt = startsAt + WEEK_IN_MILLISECONDS
@@ -161,11 +170,6 @@ export const overview = query({
       salary: currentWeek?.salary ?? 0,
       tax: Math.floor((currentWeek?.incoming ?? 0) * settings.taxRate),
     }
-    const journalBalance = financialTransactions.reduce(
-      (total, transaction) => total + transaction.total,
-      0
-    )
-
     return {
       charges: {
         ...charges,

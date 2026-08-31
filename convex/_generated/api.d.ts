@@ -20,6 +20,7 @@ import type * as lib_accountSecurity from "../lib/accountSecurity.js";
 import type * as lib_auth from "../lib/auth.js";
 import type * as lib_contacts from "../lib/contacts.js";
 import type * as lib_exchange from "../lib/exchange.js";
+import type * as lib_journalSummary from "../lib/journalSummary.js";
 import type * as lib_numbers from "../lib/numbers.js";
 import type * as lib_order from "../lib/order.js";
 import type * as lib_production from "../lib/production.js";
@@ -56,6 +57,7 @@ declare const fullApi: ApiFromModules<{
   "lib/auth": typeof lib_auth;
   "lib/contacts": typeof lib_contacts;
   "lib/exchange": typeof lib_exchange;
+  "lib/journalSummary": typeof lib_journalSummary;
   "lib/numbers": typeof lib_numbers;
   "lib/order": typeof lib_order;
   "lib/production": typeof lib_production;
