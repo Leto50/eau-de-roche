@@ -1,6 +1,6 @@
-# L’eau de Roche
+# L’eau d’Roche
 
-Application quotidienne de gestion de la boutique RP Skyrim L’eau de Roche,
+Application quotidienne de gestion de la boutique RP Skyrim L’eau d’Roche,
 issue du classeur `Inventaire 2.xlsx`. Elle réunit le stock, les opérations, les
 commandes, les recettes et les lots dans une interface responsive inspirée d’un
 registre d’apothicaire.
