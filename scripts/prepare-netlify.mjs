@@ -14,7 +14,7 @@ if (typeof serverEntrypoint?.fetch !== "function") {
 export default serverEntrypoint.fetch
 
 export const config = {
-  name: "L'eau de Roche SSR",
+  name: "L'eau d'Roche SSR",
   generator: "scripts/prepare-netlify.mjs",
   path: "/*",
   preferStatic: true,
