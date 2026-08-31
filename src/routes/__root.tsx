@@ -18,6 +18,11 @@ import { Toaster } from "@/components/ui/sonner"
 import { TooltipProvider } from "@/components/ui/tooltip"
 import { authClient } from "@/lib/auth-client"
 import { getToken } from "@/lib/auth-server"
+import {
+  type NavigationAuthCache,
+  primeNavigationAuthCache,
+  resolveNavigationAuth,
+} from "@/lib/navigation-auth-cache"
 import appCss from "@/styles.css?url"
 
 const getAuthToken = createServerFn({ method: "GET" }).handler(async () =>
@@ -26,17 +31,21 @@ const getAuthToken = createServerFn({ method: "GET" }).handler(async () =>
 
 export interface RouterContext {
   convexQueryClient: ConvexQueryClient
+  navigationAuth: NavigationAuthCache
   queryClient: QueryClient
 }
 
 export const Route = createRootRouteWithContext<RouterContext>()({
   beforeLoad: async ({ context }) => {
-    const token = await getAuthToken()
-    if (token) context.convexQueryClient.serverHttpClient?.setAuth(token)
-    return {
-      isAuthenticated: Boolean(token),
-      token,
+    const auth = await resolveNavigationAuth(
+      context.navigationAuth,
+      getAuthToken,
+      { isClient: typeof document !== "undefined" }
+    )
+    if (auth.token) {
+      context.convexQueryClient.serverHttpClient?.setAuth(auth.token)
     }
+    return auth
   },
   component: RootComponent,
   head: () => ({
@@ -74,6 +83,11 @@ export const Route = createRootRouteWithContext<RouterContext>()({
 
 function RootComponent() {
   const context = useRouteContext({ from: Route.id })
+  primeNavigationAuthCache(context.navigationAuth, {
+    isAuthenticated: context.isAuthenticated,
+    token: context.token,
+  })
+
   return (
     <ConvexBetterAuthProvider
       // Better Auth 1.6.x keeps the runtime contract but narrows plugin

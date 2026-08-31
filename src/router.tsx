@@ -3,6 +3,8 @@ import { QueryClient, notifyManager } from "@tanstack/react-query"
 import { createRouter as createTanStackRouter } from "@tanstack/react-router"
 import { setupRouterSsrQueryIntegration } from "@tanstack/react-router-ssr-query"
 
+import { createNavigationAuthCache } from "@/lib/navigation-auth-cache"
+
 import { routeTree } from "./routeTree.gen"
 
 export function getRouter() {
@@ -32,7 +34,11 @@ export function getRouter() {
 
   const router = createTanStackRouter({
     routeTree,
-    context: { convexQueryClient, queryClient },
+    context: {
+      convexQueryClient,
+      navigationAuth: createNavigationAuthCache(),
+      queryClient,
+    },
     defaultPreload: "intent",
     defaultPreloadStaleTime: 0,
     scrollRestoration: true,
