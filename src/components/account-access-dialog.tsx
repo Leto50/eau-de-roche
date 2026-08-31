@@ -224,9 +224,9 @@ export function AccountAccessDialog({
               Rôle et permissions
             </h3>
             <p className="text-xs text-muted-foreground">
-              Les employés gèrent toute l’activité de la boutique. Les
-              administrateurs gèrent en plus les paramètres, les accès et
-              l’historique d’audit.
+              Les employés gèrent les opérations de la boutique. Les
+              administrateurs configurent en plus les personnages, les
+              paramètres, les accès et l’historique d’audit.
             </p>
           </div>
           <div className="flex flex-col gap-2 sm:flex-row sm:items-end">

@@ -68,8 +68,13 @@ terminée.
 ## Initialisation des données
 
 Le classeur historique a déjà été converti dans le seed versionné
-`data/inventaire.seed.json`. Le jeu actuel contient 84 produits, 111 opérations
-valides, 12 commandes, 35 recettes, 8 lots, 5 personnages et 11 contacts.
+`data/inventaire.seed.json`. Les transactions ont été actualisées depuis
+`Copie de Inventaire au 19_08.xlsx`. Le jeu actuel contient 84 produits, 232
+opérations valides, 12 commandes, 35 recettes, 8 lots, 5 personnages et 11
+contacts. Les lignes 29, 30 et 173 du classeur sont exclues : les deux premières
+n’ont pas de produit et la dernière n’a pas de quantité. Les montants
+fractionnaires sont arrondis vers le bas au septim entier, comme les opérations
+saisies dans l’application.
 L’import Convex est idempotent : un `systemSetting` empêche de dupliquer un jeu
 déjà initialisé. La mutation d’import refuse toute requête qui ne présente pas
 `SEED_SECRET`.
@@ -77,6 +82,9 @@ déjà initialisé. La mutation d’import refuse toute requête qui ne présent
 ## Règles métier importantes
 
 - Toutes les requêtes et mutations applicatives exigent une session valide.
+- La configuration des personnages, des paramètres et des accès est réservée
+  aux administrateurs ; les employés peuvent sélectionner les personnages
+  actifs dans les opérations.
 - Un échange peut réunir dans le même panier produits, lots et services vendus,
   ainsi que les produits achetés par la boutique. La production reste séparée.
 - Chaque échange écrit dans une même mutation Convex l’opération, ses lignes,
@@ -152,6 +160,7 @@ pnpm convex run --prod migrations:indexTransactionSearch
 pnpm convex run --prod migrations:normalizeContacts
 pnpm convex run --prod migrations:normalizeSupplierOrderStatuses
 pnpm convex run --prod migrations:rebuildJournalSummary
+pnpm convex run --prod migrations:refreshWorkbookTransactions
 ```
 
 Ces migrations sont idempotentes. La première ne rejoue aucun mouvement sur le
@@ -161,10 +170,13 @@ réunissent toutes les potions dans la même catégorie, distinguent les potions
 fabricables de celles trouvées uniquement, uniformisent l’affichage du
 catalogue, normalisent les catégories de recettes, préparent la recherche du
 journal et dédupliquent le carnet de contacts sans réécrire les libellés
-historiques des opérations et commandes. La dernière matérialise le solde global
-du journal afin que la page Compte n’ait plus à relire toutes les transactions ;
-la précédente ramène les anciennes commandes fournisseur « prêtes » à l’état
-« À recevoir ».
+historiques des opérations et commandes. `refreshWorkbookTransactions` remplace
+uniquement les transactions issues du classeur et leurs lignes et mouvements
+dérivés ; les transactions saisies dans l’application et les stocks courants
+restent inchangés. La migration reconstruit aussi le solde global du journal.
+`rebuildJournalSummary` peut être relancée séparément si nécessaire. La
+migration précédente ramène les anciennes commandes fournisseur « prêtes » à
+l’état « À recevoir ».
 
 Après la première connexion, l’administrateur crée les comptes employés depuis
 le menu « Administration ». Il n’existe aucune page d’inscription publique.
@@ -190,6 +202,7 @@ sont isolées de la production.
 | `pnpm convex run --prod migrations:normalizeContacts`              | Normalise et déduplique les contacts des commandes     |
 | `pnpm convex run --prod migrations:normalizeSupplierOrderStatuses` | Corrige les anciens états fournisseur                  |
 | `pnpm convex run --prod migrations:rebuildJournalSummary`          | Matérialise le solde global du journal                 |
+| `pnpm convex run --prod migrations:refreshWorkbookTransactions`    | Actualise uniquement les transactions du classeur      |
 | `pnpm lint`                                                        | ESLint strict, zéro avertissement                      |
 | `pnpm typecheck`                                                   | Vérification TypeScript sans émission                  |
 | `pnpm test`                                                        | Tests métier Convex + Better Auth                      |

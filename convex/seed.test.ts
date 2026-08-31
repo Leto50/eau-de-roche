@@ -50,7 +50,7 @@ describe("seed.importWorkbook", () => {
       imported: true,
       migration: {
         converted: true,
-        convertedTransactions: 111,
+        convertedTransactions: 232,
         linkedBundleItems: 21,
         linkedOrderLines: 8,
       },
@@ -72,7 +72,7 @@ describe("seed.importWorkbook", () => {
           transaction.kind !== "production" && !transaction.lineCount
       )
     ).toHaveLength(0)
-    expect(state.lines).toHaveLength(124)
+    expect(state.lines).toHaveLength(245)
     expect(state.bundleItems.every((item) => item.productId)).toBe(true)
     expect(state.orderLines.every((line) => line.productId)).toBe(true)
     expect(state.recipes.every((recipe) => recipe.productId)).toBe(true)
@@ -132,5 +132,75 @@ describe("seed.importWorkbook", () => {
         .filter((product) => product.legacyKey)
         .map((product) => product.currentStock)
     ).toEqual(seedData.products.map((product) => product.currentStock))
+  })
+
+  it("actualise seulement les transactions du classeur sans modifier les stocks", async () => {
+    process.env.SEED_SECRET = "secret-de-test-valide"
+    const backend = convexTest(schema, modules)
+    await backend.mutation(api.seed.importWorkbook, {
+      seedSecret: "secret-de-test-valide",
+    })
+    const before = await backend.run(async (ctx) => {
+      const webTransactionId = await ctx.db.insert("transactions", {
+        actorName: "Employé web",
+        kind: "service",
+        occurredAt: Date.now(),
+        productName: "Service conservé",
+        quantity: 1,
+        source: "web",
+        total: 42,
+      })
+      return {
+        productStocks: Object.fromEntries(
+          (await ctx.db.query("products").collect()).map((product) => [
+            product._id,
+            product.currentStock,
+          ])
+        ),
+        webTransactionId,
+      }
+    })
+
+    const result = await backend.mutation(
+      internal.migrations.refreshWorkbookTransactions,
+      {}
+    )
+    const second = await backend.mutation(
+      internal.migrations.refreshWorkbookTransactions,
+      {}
+    )
+    const state = await backend.run(async (ctx) => ({
+      products: await ctx.db.query("products").collect(),
+      summary: await ctx.db
+        .query("journalSummaries")
+        .withIndex("by_key", (index) => index.eq("key", "main"))
+        .unique(),
+      transactions: await ctx.db.query("transactions").collect(),
+      webTransaction: await ctx.db.get(before.webTransactionId),
+    }))
+
+    expect(result).toMatchObject({
+      importedTransactions: seedData.transactions.length,
+      preservedWebTransactions: 1,
+      refreshed: true,
+      removedTransactions: seedData.transactions.length,
+    })
+    expect(second).toMatchObject({ refreshed: false })
+    expect(state.webTransaction).not.toBeNull()
+    expect(
+      state.transactions.filter(
+        (transaction) => transaction.source === "workbook"
+      )
+    ).toHaveLength(seedData.transactions.length)
+    expect(state.transactions).toHaveLength(seedData.transactions.length + 1)
+    expect(state.summary?.balance).toBe(
+      seedData.transactions.reduce(
+        (total, transaction) => total + transaction.total,
+        42
+      )
+    )
+    for (const product of state.products) {
+      expect(product.currentStock).toBe(before.productStocks[product._id])
+    }
   })
 })

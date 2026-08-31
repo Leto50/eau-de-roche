@@ -56,7 +56,6 @@ const navigation: readonly NavigationItem[] = [
   { icon: Landmark, label: "Compte", to: "/compte" },
   { icon: ClipboardList, label: "Commandes", to: "/commandes" },
   { icon: BookOpenText, label: "Recettes & lots", to: "/recettes" },
-  { icon: UsersRound, label: "Personnages", to: "/personnages" },
 ]
 
 function Navigation() {
@@ -135,6 +134,19 @@ function Administration() {
       </SidebarGroupLabel>
       <SidebarGroupContent>
         <SidebarMenu className="gap-1">
+          <SidebarMenuItem>
+            <SidebarMenuButton
+              asChild
+              className="h-10 text-sm tracking-[0.02em] data-active:border data-active:border-sidebar-border data-active:bg-sidebar-accent data-active:text-sidebar-accent-foreground"
+              isActive={pathname.startsWith("/personnages")}
+              tooltip="Personnages"
+            >
+              <Link onClick={() => setOpenMobile(false)} to="/personnages">
+                <UsersRound aria-hidden="true" strokeWidth={1.7} />
+                <span>Personnages</span>
+              </Link>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
           <SidebarMenuItem>
             <SidebarMenuButton
               asChild

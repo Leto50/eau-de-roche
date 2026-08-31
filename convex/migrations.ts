@@ -1,5 +1,6 @@
 import { ConvexError } from "convex/values"
 
+import seedData from "../data/inventaire.seed.json"
 import { type Doc, type Id } from "./_generated/dataModel"
 import { internalMutation, type MutationCtx } from "./_generated/server"
 import { roundSeptimsDown } from "./lib/numbers"
@@ -22,6 +23,8 @@ const PRODUCT_CRAFTABILITY_MIGRATION_KEY = "product-craftability-v1"
 const RECIPE_FAMILY_MIGRATION_KEY = "recipe-families-v1"
 const RECIPE_REFERENCE_MIGRATION_KEY = "recipe-references-v1"
 const TRANSACTION_SEARCH_MIGRATION_KEY = "transaction-search-v1"
+const WORKBOOK_TRANSACTIONS_MIGRATION_KEY =
+  "workbook-transactions-2026-08-31-v1"
 
 function assertUniqueCatalogNames(
   entries: readonly { id: string; name: string }[],
@@ -259,10 +262,20 @@ async function prepareTransactionLines(
       ? legacyOrderLines[transaction.legacyKey]
       : undefined
     if (!specs) {
-      throw new ConvexError({
-        code: "MIGRATION_REFERENCE_MISSING",
-        message: `Le détail de ${transaction.legacyKey ?? transaction._id} est absent.`,
-      })
+      const product = requireProduct(products, transaction.productName)
+      const unitPrice =
+        Math.abs(transaction.total) / Math.max(1, transaction.quantity)
+      return [
+        {
+          direction,
+          kind: "product",
+          productId: product._id,
+          productName: product.name,
+          quantity: transaction.quantity,
+          total: Math.abs(transaction.total),
+          unitPrice,
+        },
+      ]
     }
     return specs.map((spec) => {
       const product = requireProduct(products, spec.productName)
@@ -1128,6 +1141,183 @@ export async function convertLegacyOperationsData(ctx: MutationCtx) {
   return result
 }
 
+function parseWorkbookTransactionKind(
+  value: string
+): "bundle" | "order" | "production" | "purchase" | "sale" | "service" {
+  switch (value) {
+    case "bundle":
+    case "order":
+    case "production":
+    case "purchase":
+    case "sale":
+    case "service":
+      return value
+    default:
+      throw new ConvexError({
+        code: "MIGRATION_INVALID_TRANSACTION",
+        message: `Type de transaction inconnu : ${value}.`,
+      })
+  }
+}
+
+export async function refreshWorkbookTransactionsData(ctx: MutationCtx) {
+  const existingMigration = await ctx.db
+    .query("systemSettings")
+    .withIndex("by_key", (index) =>
+      index.eq("key", WORKBOOK_TRANSACTIONS_MIGRATION_KEY)
+    )
+    .unique()
+  if (existingMigration) {
+    return {
+      refreshed: false,
+      message: "Les transactions du classeur sont déjà à jour.",
+    }
+  }
+
+  const [productsList, charactersList, existingTransactions, orders] =
+    await Promise.all([
+      ctx.db.query("products").collect(),
+      ctx.db.query("characters").collect(),
+      ctx.db.query("transactions").collect(),
+      ctx.db.query("orders").collect(),
+    ])
+  const initialStocks = new Map(
+    productsList.map((product) => [product._id, product.currentStock])
+  )
+  const products = new Map(
+    productsList.map((product) => [product.normalizedName, product])
+  )
+  const characters = new Map(
+    charactersList.map((character) => [
+      normalizeName(character.name),
+      character,
+    ])
+  )
+  const workbookTransactions = existingTransactions.filter(
+    (transaction) => transaction.source === "workbook"
+  )
+  const workbookTransactionIds = new Set(
+    workbookTransactions.map((transaction) => transaction._id)
+  )
+  const workbookTransactionsById = new Map(
+    workbookTransactions.map((transaction) => [transaction._id, transaction])
+  )
+
+  for (const order of orders) {
+    if (
+      !order.transactionId ||
+      !workbookTransactionIds.has(order.transactionId)
+    ) {
+      continue
+    }
+    const transaction = workbookTransactionsById.get(order.transactionId)
+    const expectedOrderKey = transaction?.legacyKey
+      ? legacyOrderLinks[transaction.legacyKey]
+      : undefined
+    if (!transaction || expectedOrderKey !== order.legacyKey) {
+      throw new ConvexError({
+        code: "MIGRATION_ORDER_LINK_UNKNOWN",
+        message: `La commande « ${order.contactName} » utilise une transaction du classeur sans liaison reproductible.`,
+      })
+    }
+  }
+
+  let removedLines = 0
+  let removedMovements = 0
+  for (const transaction of workbookTransactions) {
+    const [lines, movements] = await Promise.all([
+      ctx.db
+        .query("transactionLines")
+        .withIndex("by_transaction", (index) =>
+          index.eq("transactionId", transaction._id)
+        )
+        .collect(),
+      ctx.db
+        .query("stockMovements")
+        .withIndex("by_transaction", (index) =>
+          index.eq("transactionId", transaction._id)
+        )
+        .collect(),
+    ])
+    await Promise.all([
+      ...lines.map((line) => ctx.db.delete(line._id)),
+      ...movements.map((movement) => ctx.db.delete(movement._id)),
+    ])
+    removedLines += lines.length
+    removedMovements += movements.length
+    await ctx.db.delete(transaction._id)
+  }
+
+  for (const transaction of seedData.transactions) {
+    const kind = parseWorkbookTransactionKind(transaction.kind)
+    const product = products.get(canonicalProductName(transaction.productName))
+    const character = characters.get(normalizeName(transaction.actorName))
+    const details = {
+      ...(character ? { actorCharacterId: character._id } : {}),
+      actorName: transaction.actorName,
+      ...(transaction.comment ? { comment: transaction.comment } : {}),
+      ...(transaction.counterparty
+        ? { counterparty: transaction.counterparty }
+        : {}),
+      ...(transaction.discount === undefined
+        ? {}
+        : { discount: transaction.discount }),
+      kind,
+      legacyKey: transaction.legacyKey,
+      occurredAt: transaction.occurredAt,
+      ...(product ? { productId: product._id } : {}),
+      productName: transaction.productName,
+      quantity: transaction.quantity,
+      source: "workbook" as const,
+      total: transaction.total,
+      ...(transaction.unitPrice === undefined
+        ? {}
+        : { unitPrice: transaction.unitPrice }),
+    }
+    await ctx.db.insert("transactions", {
+      ...details,
+      searchText: buildTransactionSearchText(details),
+    })
+  }
+
+  const exchangeMigration = await ctx.db
+    .query("systemSettings")
+    .withIndex("by_key", (index) => index.eq("key", EXCHANGE_MIGRATION_KEY))
+    .unique()
+  if (exchangeMigration) await ctx.db.delete(exchangeMigration._id)
+  const conversion = await convertLegacyOperationsData(ctx)
+  await rebuildJournalSummaryData(ctx)
+
+  const productsAfter = await ctx.db.query("products").collect()
+  for (const product of productsAfter) {
+    const initialStock = initialStocks.get(product._id)
+    if (initialStock !== undefined && initialStock !== product.currentStock) {
+      throw new ConvexError({
+        code: "MIGRATION_STOCK_CHANGED",
+        message: `La mise à jour a modifié le stock de « ${product.name} ».`,
+      })
+    }
+  }
+
+  const result = {
+    conversion,
+    importedTransactions: seedData.transactions.length,
+    preservedWebTransactions:
+      existingTransactions.length - workbookTransactions.length,
+    refreshed: true,
+    removedLines,
+    removedMovements,
+    removedTransactions: workbookTransactions.length,
+    sourceModifiedAt: seedData.metadata.sourceModifiedAt,
+  }
+  await ctx.db.insert("systemSettings", {
+    key: WORKBOOK_TRANSACTIONS_MIGRATION_KEY,
+    updatedAt: Date.now(),
+    value: JSON.stringify(result),
+  })
+  return result
+}
+
 export const convertLegacyOperations = internalMutation({
   args: {},
   handler: convertLegacyOperationsData,
@@ -1176,4 +1366,9 @@ export const normalizeSupplierOrderStatuses = internalMutation({
 export const rebuildJournalSummary = internalMutation({
   args: {},
   handler: rebuildJournalSummaryData,
+})
+
+export const refreshWorkbookTransactions = internalMutation({
+  args: {},
+  handler: refreshWorkbookTransactionsData,
 })
