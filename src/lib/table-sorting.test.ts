@@ -52,6 +52,7 @@ describe("sortActorEntries", () => {
       incoming: 12,
       net: 4,
       outgoing: 8,
+      salary: 3,
       transactionCount: 2,
     },
     {
@@ -59,6 +60,7 @@ describe("sortActorEntries", () => {
       incoming: 30,
       net: 25,
       outgoing: 5,
+      salary: 7.5,
       transactionCount: 3,
     },
   ]
@@ -73,6 +75,9 @@ describe("sortActorEntries", () => {
       sortActorEntries(actors, "outgoing", "asc").map(
         (actor) => actor.actorName
       )
+    ).toEqual(["Alix", "Éloïse"])
+    expect(
+      sortActorEntries(actors, "salary", "desc").map((actor) => actor.actorName)
     ).toEqual(["Alix", "Éloïse"])
   })
 })

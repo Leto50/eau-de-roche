@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest"
 
 import {
   accountFormSchema,
+  accountSettingsFormSchema,
   bundleFormSchema,
   operationFormSchema,
   passwordResetFormSchema,
@@ -54,6 +55,26 @@ describe("form schemas", () => {
     expect(result.success).toBe(false)
     if (!result.success)
       expect(result.error.issues[0]?.path).toEqual(["confirmation"])
+  })
+
+  it("valide les taux comptables en pourcentage", () => {
+    const settings = {
+      cashBalance: "100",
+      censusPerEmployee: "80",
+      employeeCount: "2",
+      fundsBalance: "200",
+      salaryRatePercent: "25",
+      taxRatePercent: "20",
+      weeklyRent: "500",
+    }
+
+    expect(accountSettingsFormSchema.safeParse(settings).success).toBe(true)
+    expect(
+      accountSettingsFormSchema.safeParse({
+        ...settings,
+        salaryRatePercent: "100.1",
+      }).success
+    ).toBe(false)
   })
 
   it("refuse les rapports de prix incomplets ou hors limite", () => {

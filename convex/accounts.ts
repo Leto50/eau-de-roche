@@ -19,10 +19,16 @@ const DEFAULT_SETTINGS = {
   employeeCount: 2,
   fundsBalance: 2_713,
   key: "main" as const,
-  salaryPerEmployee: 0,
+  salaryRate: 0.25,
   taxRate: 0.2,
   weeklyRent: 500,
 }
+
+const SALARY_TRANSACTION_KINDS = new Set<Doc<"transactions">["kind"]>([
+  "bundle",
+  "sale",
+  "service",
+])
 
 function transactionFlows(transaction: Doc<"transactions">) {
   // Exchange directions describe merchandise: outgoing goods generate revenue,
@@ -33,7 +39,21 @@ function transactionFlows(transaction: Doc<"transactions">) {
   return { incoming, net: incoming - outgoing, outgoing }
 }
 
-function summarizeActors(transactions: readonly Doc<"transactions">[]) {
+function salaryRevenue(transaction: Doc<"transactions">): number {
+  if (transaction.orderId || !SALARY_TRANSACTION_KINDS.has(transaction.kind)) {
+    return 0
+  }
+  return Math.max(transactionFlows(transaction).incoming, 0)
+}
+
+function calculateSalary(revenue: number, rate: number): number {
+  return Math.round((revenue * rate + Number.EPSILON) * 100) / 100
+}
+
+function summarizeActors(
+  transactions: readonly Doc<"transactions">[],
+  salaryRate: number
+) {
   const actors = new Map<
     string,
     {
@@ -42,6 +62,7 @@ function summarizeActors(transactions: readonly Doc<"transactions">[]) {
       incoming: number
       net: number
       outgoing: number
+      salaryRevenue: number
       transactionCount: number
     }
   >()
@@ -58,21 +79,28 @@ function summarizeActors(transactions: readonly Doc<"transactions">[]) {
       incoming: 0,
       net: 0,
       outgoing: 0,
+      salaryRevenue: 0,
       transactionCount: 0,
     }
     actor.incoming += flows.incoming
     actor.net += flows.net
     actor.outgoing += flows.outgoing
+    actor.salaryRevenue += salaryRevenue(transaction)
     actor.transactionCount += 1
     actors.set(key, actor)
   }
 
-  return [...actors.values()].sort(
-    (left, right) =>
-      right.incoming - left.incoming ||
-      right.net - left.net ||
-      left.actorName.localeCompare(right.actorName, "fr")
-  )
+  return [...actors.values()]
+    .map((actor) => ({
+      ...actor,
+      salary: calculateSalary(actor.salaryRevenue, salaryRate),
+    }))
+    .sort(
+      (left, right) =>
+        right.incoming - left.incoming ||
+        right.net - left.net ||
+        left.actorName.localeCompare(right.actorName, "fr")
+    )
 }
 
 export const overview = query({
@@ -87,6 +115,7 @@ export const overview = query({
       ctx.db.query("transactions").collect(),
     ])
     const settings = storedSettings ?? DEFAULT_SETTINGS
+    const salaryRate = settings.salaryRate ?? DEFAULT_SETTINGS.salaryRate
     const financialTransactions = transactions.filter(
       (transaction) =>
         transaction.kind !== "adjustment" && transaction.kind !== "production"
@@ -109,12 +138,18 @@ export const overview = query({
         (total, transaction) => total + transactionFlows(transaction).outgoing,
         0
       )
+      const actors = summarizeActors(weeklyTransactions, salaryRate)
       return {
-        actors: summarizeActors(weeklyTransactions),
+        actors,
         endsAt,
         incoming,
         net: incoming - outgoing,
         outgoing,
+        salary: actors.reduce((total, actor) => total + actor.salary, 0),
+        salaryRevenue: actors.reduce(
+          (total, actor) => total + actor.salaryRevenue,
+          0
+        ),
         startsAt,
         transactionCount: weeklyTransactions.length,
       }
@@ -123,7 +158,7 @@ export const overview = query({
     const charges = {
       census: settings.censusPerEmployee * settings.employeeCount,
       rent: settings.weeklyRent,
-      salary: settings.salaryPerEmployee * settings.employeeCount,
+      salary: currentWeek?.salary ?? 0,
       tax: Math.floor((currentWeek?.incoming ?? 0) * settings.taxRate),
     }
     const journalBalance = financialTransactions.reduce(
@@ -142,7 +177,7 @@ export const overview = query({
         censusPerEmployee: settings.censusPerEmployee,
         employeeCount: settings.employeeCount,
         fundsBalance: settings.fundsBalance,
-        salaryPerEmployee: settings.salaryPerEmployee,
+        salaryRate,
         taxRate: settings.taxRate,
         weeklyRent: settings.weeklyRent,
       },
@@ -157,7 +192,7 @@ export const saveSettings = mutation({
     censusPerEmployee: v.number(),
     employeeCount: v.number(),
     fundsBalance: v.number(),
-    salaryPerEmployee: v.number(),
+    salaryRate: v.number(),
     taxRate: v.number(),
     weeklyRent: v.number(),
   },
@@ -193,12 +228,7 @@ export const saveSettings = mutation({
       MAX_AMOUNT,
       "Le cens par employé"
     )
-    assertWholeNumberRange(
-      args.salaryPerEmployee,
-      0,
-      MAX_AMOUNT,
-      "Le salaire par employé"
-    )
+    assertFiniteRange(args.salaryRate, 0, 1, "Le taux de salaire")
     assertFiniteRange(args.taxRate, 0, 1, "Le taux de taxe")
 
     const existing = await ctx.db
@@ -222,7 +252,7 @@ export const saveSettings = mutation({
       action: "account.settings_updated",
       actorUserId: String(user._id),
       createdAt: Date.now(),
-      detail: `${args.cashBalance}:${args.fundsBalance}:${args.employeeCount}`,
+      detail: `${args.cashBalance}:${args.fundsBalance}:${args.employeeCount}:${args.salaryRate}`,
       entityId: settingsId,
       entityType: "account_settings",
     })

@@ -1,7 +1,7 @@
 export type SortDirection = "asc" | "desc"
 export type InventorySortKey = "name" | "price" | "status" | "stock"
 export type ActorSortKey =
-  "incoming" | "name" | "net" | "operations" | "outgoing"
+  "incoming" | "name" | "net" | "operations" | "outgoing" | "salary"
 
 interface SortableInventoryEntry {
   currentStock: number
@@ -17,6 +17,7 @@ interface SortableActorEntry {
   incoming: number
   net: number
   outgoing: number
+  salary: number
   transactionCount: number
 }
 
