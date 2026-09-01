@@ -28,39 +28,38 @@ describe("navigationAuthCache", () => {
     const loadToken = vi
       .fn<() => Promise<string>>()
       .mockResolvedValue("inutile")
-    primeNavigationAuthCache(
-      cache,
-      { isAuthenticated: true, token: "token-initial" },
-      1_000
-    )
+    primeNavigationAuthCache(cache, {
+      isAuthenticated: true,
+      token: "token-initial",
+    })
 
     await expect(
-      resolveNavigationAuth(cache, loadToken, {
-        isClient: true,
-        maxAgeMs: 60_000,
-        now: 30_000,
-      })
+      resolveNavigationAuth(cache, loadToken, { isClient: true })
     ).resolves.toEqual({ isAuthenticated: true, token: "token-initial" })
     expect(loadToken).not.toHaveBeenCalled()
   })
 
-  it("rafraîchit un état client arrivé à expiration", async () => {
-    const cache = createNavigationAuthCache()
-    const loadToken = vi.fn<() => Promise<null>>().mockResolvedValue(null)
-    primeNavigationAuthCache(
-      cache,
-      { isAuthenticated: true, token: "ancien-token" },
-      1_000
-    )
-
-    await expect(
-      resolveNavigationAuth(cache, loadToken, {
-        isClient: true,
-        maxAgeMs: 60_000,
-        now: 61_000,
+  it("ne bloque pas la reprise après une longue période d’inactivité", async () => {
+    vi.useFakeTimers()
+    try {
+      vi.setSystemTime(new Date("2026-09-01T08:00:00Z"))
+      const cache = createNavigationAuthCache()
+      const loadToken = vi
+        .fn<() => Promise<string>>()
+        .mockResolvedValue("inutile")
+      primeNavigationAuthCache(cache, {
+        isAuthenticated: true,
+        token: "token-initial",
       })
-    ).resolves.toEqual({ isAuthenticated: false, token: null })
-    expect(loadToken).toHaveBeenCalledOnce()
+
+      vi.setSystemTime(new Date("2026-09-02T08:00:00Z"))
+      await expect(
+        resolveNavigationAuth(cache, loadToken, { isClient: true })
+      ).resolves.toEqual({ isAuthenticated: true, token: "token-initial" })
+      expect(loadToken).not.toHaveBeenCalled()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it("déduplique deux contrôles clients simultanés", async () => {

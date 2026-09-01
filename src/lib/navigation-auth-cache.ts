@@ -1,19 +1,15 @@
-export const NAVIGATION_AUTH_MAX_AGE_MS = 60_000
-
 export interface NavigationAuthSnapshot {
   isAuthenticated: boolean
   token: null | string
 }
 
 export interface NavigationAuthCache {
-  checkedAt: number | undefined
   pending: Promise<NavigationAuthSnapshot> | undefined
   snapshot: NavigationAuthSnapshot | undefined
 }
 
 export function createNavigationAuthCache(): NavigationAuthCache {
   return {
-    checkedAt: undefined,
     pending: undefined,
     snapshot: undefined,
   }
@@ -28,12 +24,10 @@ function snapshotFromToken(
 
 export function primeNavigationAuthCache(
   cache: NavigationAuthCache,
-  snapshot: NavigationAuthSnapshot,
-  now = Date.now()
+  snapshot: NavigationAuthSnapshot
 ) {
   if (cache.snapshot) return
 
-  cache.checkedAt = now
   cache.snapshot = snapshot
 }
 
@@ -42,22 +36,14 @@ export async function resolveNavigationAuth(
   loadToken: () => Promise<null | string | undefined>,
   options: {
     isClient: boolean
-    maxAgeMs?: number
-    now?: number
   }
 ): Promise<NavigationAuthSnapshot> {
-  const now = options.now ?? Date.now()
-
   // Server routers are request-scoped: always read the current request cookies.
   if (!options.isClient) return snapshotFromToken(await loadToken())
 
-  if (
-    cache.snapshot &&
-    cache.checkedAt !== undefined &&
-    now - cache.checkedAt < (options.maxAgeMs ?? NAVIGATION_AUTH_MAX_AGE_MS)
-  ) {
-    return cache.snapshot
-  }
+  // ConvexBetterAuthProvider owns token refreshes for the lifetime of the tab.
+  // Rechecking through Netlify here would reintroduce a cold start after idle.
+  if (cache.snapshot) return cache.snapshot
 
   if (cache.pending) return cache.pending
 
@@ -66,7 +52,6 @@ export async function resolveNavigationAuth(
 
   try {
     const snapshot = await pending
-    cache.checkedAt = Date.now()
     cache.snapshot = snapshot
     return snapshot
   } finally {
