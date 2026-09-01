@@ -34,8 +34,8 @@ describe("recipes", () => {
   it("ne propose à la fabrication que les articles liés à une recette active", async () => {
     const backend = createTestBackend()
     const member = await asAuthenticatedUser(backend)
-    const [activeProductId, archivedProductId] = await backend.run(
-      async (ctx) => {
+    const [activeProductId, archivedProductId, saltProductId] =
+      await backend.run(async (ctx) => {
         const activeProductId = await ctx.db.insert("products", {
           active: true,
           category: "potion",
@@ -54,6 +54,15 @@ describe("recipes", () => {
           normalizedName: "potion trouvee",
           tracksStock: true,
         })
+        const saltProductId = await ctx.db.insert("products", {
+          active: true,
+          category: "ingredient",
+          currentStock: 1,
+          minimumStock: 0,
+          name: "Sel réalisable",
+          normalizedName: "sel realisable",
+          tracksStock: true,
+        })
         await ctx.db.insert("recipes", {
           active: true,
           family: "Soins",
@@ -66,9 +75,14 @@ describe("recipes", () => {
           name: "Potion trouvée",
           productId: archivedProductId,
         })
-        return [activeProductId, archivedProductId] as const
-      }
-    )
+        await ctx.db.insert("recipes", {
+          active: true,
+          family: "Sel",
+          name: "Sel réalisable",
+          productId: saltProductId,
+        })
+        return [activeProductId, archivedProductId, saltProductId] as const
+      })
 
     const result = await member.query(api.recipes.listCraftableProductIds, {})
     const activeLinks = await member.query(
@@ -76,9 +90,9 @@ describe("recipes", () => {
       {}
     )
 
-    expect(result).toEqual([activeProductId])
+    expect(result).toEqual([activeProductId, saltProductId])
     expect(result).not.toContain(archivedProductId)
-    expect(activeLinks).toEqual([activeProductId])
+    expect(activeLinks).toEqual([activeProductId, saltProductId])
   })
 
   it("crée, modifie et archive une recette avec ses ingrédients", async () => {
@@ -219,6 +233,77 @@ describe("recipes", () => {
     expect(state.recipe?.productId).toBe(existingPotionId)
   })
 
+  it("relie une recette à un ingrédient explicitement fabricable", async () => {
+    const backend = createTestBackend()
+    const admin = await asAuthenticatedUser(backend, "admin")
+    const { ingredientId } = await seedRecipeProducts(backend)
+    const saltId = await backend.run((ctx) =>
+      ctx.db.insert("products", {
+        active: true,
+        category: "ingredient",
+        craftable: true,
+        currentStock: 0,
+        minimumStock: 1,
+        name: "Sel de feu",
+        normalizedName: "sel de feu",
+        tracksStock: true,
+      })
+    )
+
+    const recipeId = await admin.mutation(api.recipes.save, {
+      effect: "",
+      family: "Sel",
+      ingredients: [{ productId: ingredientId, quantity: 2 }],
+      name: "Sel de feu",
+      outputProductId: saltId,
+    })
+
+    expect(await backend.run((ctx) => ctx.db.get(recipeId))).toMatchObject({
+      name: "Sel de feu",
+      productId: saltId,
+    })
+  })
+
+  it("modifie et réactive la recette historique d’un ingrédient", async () => {
+    const backend = createTestBackend()
+    const admin = await asAuthenticatedUser(backend, "admin")
+    const { ingredientId } = await seedRecipeProducts(backend)
+    const recipeId = await backend.run(async (ctx) => {
+      const saltId = await ctx.db.insert("products", {
+        active: true,
+        category: "ingredient",
+        currentStock: 4,
+        minimumStock: 1,
+        name: "Sel de néant",
+        normalizedName: "sel de neant",
+        tracksStock: true,
+      })
+      return ctx.db.insert("recipes", {
+        active: true,
+        family: "Sel",
+        name: "Sel de néant",
+        productId: saltId,
+      })
+    })
+
+    await admin.mutation(api.recipes.save, {
+      effect: "Stabilise les préparations.",
+      family: "Sel",
+      ingredients: [{ productId: ingredientId, quantity: 3 }],
+      name: "Sel de néant",
+      recipeId,
+    })
+    await admin.mutation(api.recipes.setActive, { active: false, recipeId })
+    await admin.mutation(api.recipes.setActive, { active: true, recipeId })
+
+    expect(await backend.run((ctx) => ctx.db.get(recipeId))).toMatchObject({
+      active: true,
+      effect: "Stabilise les préparations.",
+      family: "Sel",
+      name: "Sel de néant",
+    })
+  })
+
   it("refuse de fabriquer une potion déclarée comme trouvée uniquement", async () => {
     const backend = createTestBackend()
     const admin = await asAuthenticatedUser(backend, "admin")
@@ -256,7 +341,7 @@ describe("recipes", () => {
 
     await expect(
       admin.mutation(api.recipes.setActive, { active: true, recipeId })
-    ).rejects.toThrowError("Rendez d’abord la potion fabricable")
+    ).rejects.toThrowError("Rendez d’abord l’article fabricable")
   })
 
   it("calcule le coût courant et interdit deux recettes pour le même article", async () => {

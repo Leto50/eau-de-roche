@@ -51,6 +51,7 @@ import { productFormSchema } from "@/lib/form-schemas"
 import { categoryLabels } from "@/lib/format"
 import {
   canonicalProductCategory,
+  isProductCraftable,
   productCategories,
   type ProductCategory,
 } from "@/lib/product-categories"
@@ -62,11 +63,13 @@ function isProductCategory(value: string): value is ProductCategory {
 
 export function ProductDialog({
   canWriteRecipe = false,
+  hasRecipe = false,
   onWriteRecipe,
   product,
   trigger,
 }: Readonly<{
   canWriteRecipe?: boolean
+  hasRecipe?: boolean
   onWriteRecipe?: (productId: Doc<"products">["_id"]) => void
   product?: Doc<"products">
   trigger?: ReactElement
@@ -82,7 +85,7 @@ export function ProductDialog({
     category: product
       ? canonicalProductCategory(product.category)
       : ("potion" as ProductCategory),
-    craftable: product?.craftable !== false,
+    craftable: product ? isProductCraftable(product, hasRecipe) : true,
     minimumStock: product?.minimumStock.toString() ?? "0",
     name: product?.name ?? "",
     purchasePrice: priceDraftFromValue(product?.purchasePrice),
@@ -103,7 +106,6 @@ export function ProductDialog({
   })
   const formValues = useStore(form.store, (state) => state.values)
   const tracksStock = formValues.category !== "service"
-  const effectiveTargetStock = tracksStock ? Number(formValues.targetStock) : 0
 
   function handleOpenChange(nextOpen: boolean) {
     if (nextOpen && !open) form.reset(productValues())
@@ -111,15 +113,18 @@ export function ProductDialog({
   }
 
   async function persist(value: typeof formValues) {
-    const submittedMinimum = tracksStock ? Number(value.minimumStock) : 0
-    const submittedStock = effectiveTargetStock
+    const submittedTracksStock = value.category !== "service"
+    const submittedMinimum = submittedTracksStock
+      ? Number(value.minimumStock)
+      : 0
+    const submittedStock = submittedTracksStock ? Number(value.targetStock) : 0
     const submittedPurchasePrice = priceDraftToValue(value.purchasePrice)
     const submittedSalePrice = priceDraftToValue(value.salePrice)
     try {
       const productId = await saveProduct({
         active: true,
         category: value.category,
-        ...(value.category === "potion" ? { craftable: value.craftable } : {}),
+        ...(submittedTracksStock ? { craftable: value.craftable } : {}),
         minimumStock: submittedMinimum,
         name: value.name.trim(),
         ...(product ? { productId: product._id } : {}),
@@ -248,7 +253,7 @@ export function ProductDialog({
                 </Field>
               )}
             </form.Field>
-            {formValues.category === "potion" ? (
+            {tracksStock ? (
               <form.Field name="craftable">
                 {(field) => (
                   <Field>
@@ -271,7 +276,11 @@ export function ProductDialog({
                       </SelectTrigger>
                       <SelectContent>
                         <SelectItem value="recipe">Fabricable</SelectItem>
-                        <SelectItem value="loot">Trouvée uniquement</SelectItem>
+                        <SelectItem value="loot">
+                          {formValues.category === "potion"
+                            ? "Trouvée uniquement"
+                            : "Non fabricable"}
+                        </SelectItem>
                       </SelectContent>
                     </Select>
                   </Field>
@@ -440,7 +449,7 @@ export function ProductDialog({
               >
                 Annuler
               </Button>
-              {formValues.category === "potion" &&
+              {tracksStock &&
               formValues.craftable &&
               onWriteRecipe &&
               (!product || canWriteRecipe) ? (

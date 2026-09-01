@@ -4,6 +4,7 @@ import { type Doc, type Id } from "./_generated/dataModel"
 import { mutation, query, type QueryCtx } from "./_generated/server"
 import { requireUser } from "./lib/auth"
 import { assertWholeNumberRange } from "./lib/numbers"
+import { isProductDeclaredCraftable } from "./lib/products"
 import { calculateRecipeCost } from "./lib/recipeCost"
 import { recipeFamily } from "./lib/recipeFamilies"
 import { normalizeCatalogName, normalizeName } from "./lib/text"
@@ -75,10 +76,7 @@ export const listCraftableProductIds = query({
       products
         .filter(
           (product) =>
-            product.active &&
-            product.tracksStock &&
-            product.category === "potion" &&
-            product.craftable !== false
+            product.active && product.tracksStock && product.craftable !== false
         )
         .map((product) => product._id)
     )
@@ -254,19 +252,17 @@ export const save = mutation({
       linkedProduct = await ctx.db.get(args.outputProductId)
       if (
         !linkedProduct?.active ||
-        !linkedProduct.tracksStock ||
-        linkedProduct.category !== "potion" ||
-        linkedProduct.craftable === false
+        !isProductDeclaredCraftable(linkedProduct)
       ) {
         throw new ConvexError({
           code: "NOT_FOUND",
-          message: "La potion choisie est introuvable ou non fabricable.",
+          message: "L’article choisi est introuvable ou non fabricable.",
         })
       }
       if (linkedProduct.normalizedName !== normalizedName) {
         throw new ConvexError({
           code: "INVALID_INPUT",
-          message: "La recette doit porter exactement le nom de la potion.",
+          message: "La recette doit porter exactement le nom de l’article.",
         })
       }
       if (
@@ -281,7 +277,7 @@ export const save = mutation({
       if (productsWithName.length > 0) {
         throw new ConvexError({
           code: "ALREADY_EXISTS",
-          message: `Choisissez l’article existant « ${name} » comme potion obtenue.`,
+          message: `Choisissez l’article existant « ${name} » comme produit obtenu.`,
         })
       }
       const productId = await ctx.db.insert("products", {
@@ -308,12 +304,11 @@ export const save = mutation({
     if (
       !linkedProduct?.active ||
       !linkedProduct.tracksStock ||
-      linkedProduct.category !== "potion" ||
       linkedProduct.craftable === false
     ) {
       throw new ConvexError({
         code: "NOT_FOUND",
-        message: "La potion fabriquée est introuvable ou non fabricable.",
+        message: "L’article fabriqué est introuvable ou non fabricable.",
       })
     }
     if (
@@ -435,13 +430,12 @@ export const setActive = mutation({
       if (
         !product?.active ||
         !product.tracksStock ||
-        product.category !== "potion" ||
         product.craftable === false
       ) {
         throw new ConvexError({
           code: "INVALID_OPERATION",
           message:
-            "Rendez d’abord la potion fabricable avant de réactiver sa recette.",
+            "Rendez d’abord l’article fabricable avant de réactiver sa recette.",
         })
       }
     }

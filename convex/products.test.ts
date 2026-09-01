@@ -306,6 +306,70 @@ describe("products.save", () => {
     expect(product?.craftable).toBe(true)
   })
 
+  it("modifie sans migration un ingrédient déjà lié à une recette", async () => {
+    const backend = createTestBackend()
+    const admin = await asAuthenticatedUser(backend, "admin")
+    const productId = await backend.run(async (ctx) => {
+      const id = await ctx.db.insert("products", {
+        active: true,
+        category: "ingredient",
+        currentStock: 6,
+        minimumStock: 2,
+        name: "Sel de givre",
+        normalizedName: "sel de givre",
+        purchasePrice: 2,
+        tracksStock: true,
+      })
+      await ctx.db.insert("recipes", {
+        active: true,
+        family: "Sel",
+        name: "Sel de givre",
+        productId: id,
+      })
+      return id
+    })
+
+    await admin.mutation(api.products.save, {
+      active: true,
+      category: "ingredient",
+      minimumStock: 3,
+      name: "Sel de givre raffiné",
+      productId,
+      purchasePrice: 3,
+      salePrice: null,
+      targetStock: 6,
+    })
+    await expect(
+      admin.mutation(api.products.save, {
+        active: true,
+        category: "ingredient",
+        craftable: false,
+        minimumStock: 3,
+        name: "Sel de givre raffiné",
+        productId,
+        purchasePrice: 3,
+        salePrice: null,
+        targetStock: 6,
+      })
+    ).rejects.toThrowError("Archivez d’abord la recette active")
+
+    const state = await backend.run(async (ctx) => ({
+      product: await ctx.db.get(productId),
+      recipes: await ctx.db.query("recipes").collect(),
+      transactions: await ctx.db.query("transactions").collect(),
+    }))
+    expect(state.product).toMatchObject({
+      category: "ingredient",
+      craftable: true,
+      currentStock: 6,
+      minimumStock: 3,
+      name: "Sel de givre raffiné",
+      purchasePrice: 3,
+    })
+    expect(state.recipes[0]?.name).toBe("Sel de givre raffiné")
+    expect(state.transactions).toHaveLength(0)
+  })
+
   it("permet la gestion du catalogue à un employé", async () => {
     const backend = createTestBackend()
     const employee = await asAuthenticatedUser(backend)

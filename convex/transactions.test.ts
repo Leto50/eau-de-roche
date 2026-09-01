@@ -103,7 +103,7 @@ describe("transactions.record", () => {
         productId,
         quantity: 1,
       })
-    ).rejects.toThrowError("trouvée uniquement")
+    ).rejects.toThrowError("non fabricable")
   })
 
   it("refuse atomiquement une production dont un ingrédient est insuffisant", async () => {
@@ -158,6 +158,63 @@ describe("transactions.record", () => {
     expect(state.transactions).toHaveLength(0)
     expect(state.movements).toHaveLength(0)
     expect(state.audits).toHaveLength(0)
+  })
+
+  it("fabrique un article qui est lui-même classé comme ingrédient", async () => {
+    const backend = createTestBackend()
+    const member = await asAuthenticatedUser(backend)
+    const characterId = await backend.run((ctx) =>
+      ctx.db.insert("characters", { active: true, name: "Alixard Veliane" })
+    )
+    const { rawIngredientId, saltId } = await backend.run(async (ctx) => {
+      const rawIngredientId = await ctx.db.insert("products", {
+        active: true,
+        category: "ingredient",
+        currentStock: 5,
+        minimumStock: 1,
+        name: "Poudre minérale",
+        normalizedName: "poudre minerale",
+        tracksStock: true,
+      })
+      const saltId = await ctx.db.insert("products", {
+        active: true,
+        category: "ingredient",
+        currentStock: 2,
+        minimumStock: 1,
+        name: "Sel de feu",
+        normalizedName: "sel de feu",
+        tracksStock: true,
+      })
+      const recipeId = await ctx.db.insert("recipes", {
+        active: true,
+        family: "Sel",
+        name: "Sel de feu",
+        productId: saltId,
+      })
+      await ctx.db.insert("recipeIngredients", {
+        ingredientName: "Poudre minérale",
+        productId: rawIngredientId,
+        quantity: 2,
+        raw: "2 Poudre minérale",
+        recipeId,
+      })
+      return { rawIngredientId, saltId }
+    })
+
+    await member.mutation(api.transactions.record, {
+      characterId,
+      kind: "production",
+      occurredAt: Date.now(),
+      productId: saltId,
+      quantity: 2,
+    })
+
+    const state = await backend.run(async (ctx) => ({
+      rawIngredient: await ctx.db.get(rawIngredientId),
+      salt: await ctx.db.get(saltId),
+    }))
+    expect(state.salt?.currentStock).toBe(4)
+    expect(state.rawIngredient?.currentStock).toBe(1)
   })
 
   it("corrige puis supprime une production en restaurant tous les stocks", async () => {

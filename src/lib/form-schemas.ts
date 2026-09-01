@@ -308,7 +308,7 @@ export const recipeFormSchema = z
       )
       context.addIssue({
         code: "custom",
-        message: "Une potion ne peut pas être son propre ingrédient.",
+        message: "Un produit ne peut pas être son propre ingrédient.",
         path: ["ingredients", index, "productId"],
       })
     }

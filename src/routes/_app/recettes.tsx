@@ -438,6 +438,7 @@ function RecipeEntry({
 
             return product ? (
               <ProductDialog
+                hasRecipe={linkedProductIds.includes(product._id)}
                 key={ingredient._id}
                 product={product}
                 trigger={

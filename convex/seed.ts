@@ -226,6 +226,7 @@ export const importWorkbook = mutation({
           message: `La catégorie « ${recipe.family} » de la recette « ${recipe.name} » est inconnue.`,
         })
       }
+      await ctx.db.patch(product.id, { craftable: true })
       const recipeId = await ctx.db.insert("recipes", {
         active: true,
         ...(recipe.cost === undefined ? {} : { cost: recipe.cost }),

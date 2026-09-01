@@ -58,7 +58,7 @@ import { type Doc, type Id } from "../../convex/_generated/dataModel"
 import { getUserFacingErrorMessage } from "@/lib/errors"
 import { MAX_DYNAMIC_LINES, recipeFormSchema } from "@/lib/form-schemas"
 import { formatDecimalSeptims } from "@/lib/format"
-import { canonicalProductCategory } from "@/lib/product-categories"
+import { isProductCraftable } from "@/lib/product-categories"
 import {
   isRecipeFamily,
   recipeFamilies,
@@ -109,9 +109,7 @@ export function RecipeDialog({
     () =>
       products.filter(
         (product) =>
-          product.tracksStock &&
-          canonicalProductCategory(product.category) === "potion" &&
-          product.craftable !== false &&
+          isProductCraftable(product, linkedProducts.has(product._id)) &&
           (!linkedProducts.has(product._id) ||
             recipe?.productId === product._id ||
             initialProduct?._id === product._id)
@@ -309,7 +307,7 @@ export function RecipeDialog({
                   return (
                     <Field data-invalid={invalid}>
                       <FieldLabel htmlFor={`${fieldId}-name`}>
-                        Nom de la potion
+                        Nom du produit
                       </FieldLabel>
                       <Input
                         aria-invalid={invalid}
@@ -337,7 +335,7 @@ export function RecipeDialog({
                 {(field) => (
                   <Field>
                     <FieldLabel htmlFor={`${fieldId}-output`}>
-                      Potion obtenue
+                      Produit obtenu
                     </FieldLabel>
                     <Select
                       disabled={initialProduct !== undefined}
@@ -359,10 +357,14 @@ export function RecipeDialog({
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="new">Nouvelle potion</SelectItem>
+                        <SelectItem value="new">
+                          Créer une nouvelle potion
+                        </SelectItem>
                         {outputProducts.length > 0 ? (
                           <SelectGroup>
-                            <SelectLabel>Potions sans recette</SelectLabel>
+                            <SelectLabel>
+                              Produits fabricables sans recette
+                            </SelectLabel>
                             {outputProducts.map((product) => (
                               <SelectItem key={product._id} value={product._id}>
                                 {product.name}
@@ -423,7 +425,7 @@ export function RecipeDialog({
                   return (
                     <Field className="sm:col-span-2" data-invalid={invalid}>
                       <FieldLabel htmlFor={`${fieldId}-name`}>
-                        Nom de la potion
+                        Nom du produit
                       </FieldLabel>
                       <Input
                         aria-invalid={invalid}

@@ -147,22 +147,28 @@ export const save = mutation({
         message: "Référence introuvable.",
       })
     }
-    const craftable =
-      category === "potion"
-        ? (args.craftable ?? existing?.craftable ?? true)
-        : undefined
-    if (existing && (category !== "potion" || craftable === false)) {
-      const linkedRecipes = await ctx.db
-        .query("recipes")
-        .withIndex("by_product", (index) => index.eq("productId", existing._id))
-        .collect()
-      if (linkedRecipes.some((recipe) => recipe.active !== false)) {
-        throw new ConvexError({
-          code: "INVALID_OPERATION",
-          message:
-            "Archivez d’abord la recette active avant de rendre cette potion non fabricable.",
-        })
-      }
+    const linkedRecipes = existing
+      ? await ctx.db
+          .query("recipes")
+          .withIndex("by_product", (index) =>
+            index.eq("productId", existing._id)
+          )
+          .collect()
+      : []
+    const hasActiveRecipe = linkedRecipes.some(
+      (recipe) => recipe.active !== false
+    )
+    const craftable = tracksStock
+      ? (args.craftable ??
+        existing?.craftable ??
+        (category === "potion" || hasActiveRecipe))
+      : undefined
+    if (existing && hasActiveRecipe && (!tracksStock || craftable === false)) {
+      throw new ConvexError({
+        code: "INVALID_OPERATION",
+        message:
+          "Archivez d’abord la recette active avant de rendre cet article non fabricable.",
+      })
     }
 
     const previousStock = existing?.currentStock ?? 0

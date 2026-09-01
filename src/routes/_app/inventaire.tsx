@@ -45,6 +45,7 @@ import { type Doc, type Id } from "../../../convex/_generated/dataModel"
 import { categoryLabels, formatNumber, formatUnitPrice } from "@/lib/format"
 import {
   canonicalProductCategory,
+  isProductCraftable,
   type ProductCategory,
 } from "@/lib/product-categories"
 import {
@@ -464,9 +465,7 @@ function InventoryRow({
   product: Doc<"products">
 }>) {
   const canWriteRecipe =
-    canonicalProductCategory(product.category) === "potion" &&
-    product.craftable !== false &&
-    !hasAnyRecipe
+    isProductCraftable(product, hasAnyRecipe) && !hasAnyRecipe
 
   return (
     <TableRow className="border-[#5b462b]/20 hover:bg-[#fffdeb]/40 max-md:relative max-md:grid max-md:grid-cols-3 max-md:gap-x-3 max-md:gap-y-1 max-md:border max-md:border-[#5b462b]/35 max-md:bg-[#fff8e7]/30 max-md:p-4 max-md:shadow-[2px_3px_0_rgba(84,63,37,0.05)]">
@@ -534,6 +533,7 @@ function InventoryRow({
       <TableCell className="max-md:absolute max-md:top-2.5 max-md:right-2 max-md:p-0">
         <ProductDialog
           canWriteRecipe={canWriteRecipe}
+          hasRecipe={hasAnyRecipe}
           onWriteRecipe={onWriteRecipe}
           product={product}
           trigger={

@@ -20,6 +20,16 @@ export function canonicalProductCategory(
   return category === "annexe" ? "potion" : category
 }
 
+export function isProductDeclaredCraftable(
+  product: Pick<Doc<"products">, "category" | "craftable" | "tracksStock">
+) {
+  if (!product.tracksStock) return false
+  if (product.craftable !== undefined) return product.craftable
+
+  // Before craftability was generalized, only potions stored this field.
+  return canonicalProductCategory(product.category) === "potion"
+}
+
 export function isLootOnlyLegacyProduct(legacyKey: string | undefined) {
   return legacyKey !== undefined && lootOnlyLegacyKeys.has(legacyKey)
 }

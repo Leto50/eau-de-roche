@@ -38,14 +38,14 @@ export async function prepareProduction(
   if (!product?.active || !product.tracksStock) {
     throw new ConvexError({
       code: "NOT_FOUND",
-      message: "La potion fabriquée est introuvable ou archivée.",
+      message: "L’article fabriqué est introuvable ou archivé.",
     })
   }
   if (product.craftable === false) {
     throw new ConvexError({
       code: "INVALID_OPERATION",
       message:
-        "Cette potion est trouvée uniquement et ne peut pas être fabriquée.",
+        "Cet article est déclaré non fabricable et ne peut pas être produit.",
     })
   }
 
@@ -96,7 +96,7 @@ export async function prepareProduction(
     if (ingredientProduct._id === product._id) {
       throw new ConvexError({
         code: "INVALID_OPERATION",
-        message: "Une potion ne peut pas être son propre ingrédient.",
+        message: "Un article ne peut pas être son propre ingrédient.",
       })
     }
     const requiredQuantity = ingredient.quantity * quantity
