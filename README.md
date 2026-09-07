@@ -121,6 +121,10 @@ le point d’entrée SSR attendu par Netlify. Des en-têtes empêchent égalemen
 l’intégration en iframe, la détection incorrecte des contenus et l’accès aux
 capteurs inutiles.
 
+Ne pas définir `VITE_CONVEX_URL` ou `VITE_CONVEX_SITE_URL` comme variables
+globales dans Netlify : `convex deploy` fournit la bonne valeur à chaque build,
+notamment pour isoler les Deploy Previews de la production.
+
 1. Créer ou sélectionner un projet Convex cloud avec `pnpm convex dev`.
 2. Créer le site Netlify à partir du dépôt Git afin de connaître son URL finale.
 3. Générer une clé de déploiement de production dans le tableau de bord Convex.
