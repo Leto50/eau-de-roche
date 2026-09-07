@@ -161,6 +161,7 @@ pnpm convex run --prod migrations:normalizeContacts
 pnpm convex run --prod migrations:normalizeSupplierOrderStatuses
 pnpm convex run --prod migrations:rebuildJournalSummary
 pnpm convex run --prod migrations:refreshWorkbookTransactions
+pnpm convex run --prod migrations:rebuildReadModels
 ```
 
 Ces migrations sont idempotentes. La première ne rejoue aucun mouvement sur le
@@ -176,15 +177,38 @@ dérivés ; les transactions saisies dans l’application et les stocks courants
 restent inchangés. La migration reconstruit aussi le solde global du journal.
 `rebuildJournalSummary` peut être relancée séparément si nécessaire. La
 migration précédente ramène les anciennes commandes fournisseur « prêtes » à
-l’état « À recevoir ».
+l’état « À recevoir ». `rebuildReadModels` renseigne l’index financier et
+reconstruit de manière idempotente les résumés hebdomadaires, le résumé
+d’inventaire et les coûts de recettes. Son marqueur n’est écrit qu’une fois la
+reconstruction entièrement terminée ; jusque-là, les pages utilisent les
+anciens calculs.
 
 Après la première connexion, l’administrateur crée les comptes employés depuis
 le menu « Administration ». Il n’existe aucune page d’inscription publique.
 
 Si le domaine Netlify ou le domaine personnalisé change, mettre à jour
 `SITE_URL` sur Convex avant de se reconnecter. Pour les Deploy Previews, utiliser
-une clé Convex de preview et une URL d’authentification dédiée ; leurs données
-sont isolées de la production.
+une clé Convex de preview dans les contextes Netlify « Deploy Previews » et
+« Branch deploys ». Conserver la clé de production uniquement dans le contexte
+« Production ». Convex réutilise alors le même déploiement isolé pour les builds
+successifs d’une branche ; il ne clone toutefois pas les données de production.
+
+Une fois le premier build de branche terminé, copier un instantané cohérent des
+seules tables métier avec la référence indiquée dans les logs Convex :
+
+```bash
+pnpm preview:copy-data -- preview/<nom-de-la-preview>
+```
+
+Le script exporte la production en lecture seule, retire tous les composants
+Better Auth (comptes, sessions, stockage et JWKS), importe les tables métier
+avec `--replace`, puis reconstruit les modèles de lecture. Il refuse toute
+destination qui ne commence pas par `preview/` et ne touche jamais à la base de
+production. Les comptes de test et les variables `SITE_URL`,
+`BETTER_AUTH_SECRET`, `INITIAL_ADMIN_IDENTIFIER` et
+`INITIAL_ADMIN_PASSWORD` doivent être configurés séparément sur la preview. Le
+build Netlify reconstruit automatiquement les modèles de lecture à chaque
+nouveau déploiement de preview ; cette étape est ignorée en production.
 
 ## Commandes utiles
 
@@ -203,8 +227,10 @@ sont isolées de la production.
 | `pnpm convex run --prod migrations:normalizeSupplierOrderStatuses` | Corrige les anciens états fournisseur                  |
 | `pnpm convex run --prod migrations:rebuildJournalSummary`          | Matérialise le solde global du journal                 |
 | `pnpm convex run --prod migrations:refreshWorkbookTransactions`    | Actualise uniquement les transactions du classeur      |
+| `pnpm convex run --prod migrations:rebuildReadModels`              | Reconstruit les modèles de lecture optimisés           |
 | `pnpm lint`                                                        | ESLint strict, zéro avertissement                      |
 | `pnpm typecheck`                                                   | Vérification TypeScript sans émission                  |
 | `pnpm test`                                                        | Tests métier Convex + Better Auth                      |
 | `pnpm build`                                                       | Build client, SSR et fonction Netlify                  |
 | `pnpm build:netlify`                                               | Déploiement Convex puis build Netlify                  |
+| `pnpm preview:copy-data -- preview/<nom>`                          | Copie les seules données métier vers une preview       |

@@ -3,8 +3,13 @@ import { ConvexError, v } from "convex/values"
 import { type Id } from "./_generated/dataModel"
 import { mutation, query } from "./_generated/server"
 import { requireUser } from "./lib/auth"
+import {
+  applyInventoryProductChanges,
+  rebuildInventorySummaryIfReady,
+} from "./lib/inventorySummary"
 import { assertFiniteRange, assertWholeNumberRange } from "./lib/numbers"
 import { canonicalProductCategory } from "./lib/products"
+import { rebuildRecipeCostProjections } from "./lib/recipeCost"
 import { normalizeCatalogName, normalizeName } from "./lib/text"
 import { buildTransactionSearchText } from "./lib/transactionSearch"
 import { productCategory } from "./lib/validators"
@@ -33,7 +38,10 @@ export const list = query({
             index.eq("category", args.category!)
           )
           .collect()
-      : await ctx.db.query("products").collect()
+      : await ctx.db
+          .query("products")
+          .withIndex("by_active", (index) => index.eq("active", true))
+          .collect()
     const search = normalizeName(args.search ?? "")
 
     return products
@@ -49,10 +57,13 @@ export const selectable = query({
   args: {},
   handler: async (ctx) => {
     await requireUser(ctx)
-    const products = await ctx.db.query("products").collect()
-    return products
-      .filter((product) => product.active)
-      .sort((left, right) => left.name.localeCompare(right.name, "fr"))
+    const products = await ctx.db
+      .query("products")
+      .withIndex("by_active", (index) => index.eq("active", true))
+      .collect()
+    return products.sort((left, right) =>
+      left.name.localeCompare(right.name, "fr")
+    )
   },
 })
 
@@ -60,10 +71,13 @@ export const listArchived = query({
   args: {},
   handler: async (ctx) => {
     await requireUser(ctx)
-    const products = await ctx.db.query("products").collect()
-    return products
-      .filter((product) => !product.active)
-      .sort((left, right) => left.name.localeCompare(right.name, "fr"))
+    const products = await ctx.db
+      .query("products")
+      .withIndex("by_active", (index) => index.eq("active", false))
+      .collect()
+    return products.sort((left, right) =>
+      left.name.localeCompare(right.name, "fr")
+    )
   },
 })
 
@@ -81,7 +95,11 @@ export const setActive = mutation({
         message: "Référence introuvable.",
       })
     }
+    const updatedProduct = { ...product, active: args.active }
     await ctx.db.patch(product._id, { active: args.active })
+    await applyInventoryProductChanges(ctx, [
+      { after: updatedProduct, before: product },
+    ])
     await ctx.db.insert("auditLogs", {
       action: args.active ? "product.reactivated" : "product.archived",
       actorUserId: String(user._id),
@@ -233,6 +251,7 @@ export const save = mutation({
         actorName: user.name,
         actorUserId: String(user._id),
         comment: adjustmentLabel,
+        financial: false,
         kind: "adjustment",
         occurredAt,
         productId,
@@ -273,6 +292,9 @@ export const save = mutation({
       entityId: productId,
       entityType: "product",
     })
+
+    await rebuildRecipeCostProjections(ctx)
+    await rebuildInventorySummaryIfReady(ctx)
 
     return productId
   },

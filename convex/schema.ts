@@ -31,6 +31,40 @@ export default defineSchema({
     updatedAt: v.number(),
   }).index("by_key", ["key"]),
 
+  accountWeekSummaries: defineTable({
+    actors: v.array(
+      v.object({
+        actorCharacterId: v.optional(v.id("characters")),
+        actorName: v.string(),
+        incoming: v.number(),
+        outgoing: v.number(),
+        salaryRevenue: v.number(),
+        transactionCount: v.number(),
+      })
+    ),
+    balance: v.number(),
+    incoming: v.number(),
+    outgoing: v.number(),
+    startsAt: v.number(),
+    transactionCount: v.number(),
+    updatedAt: v.number(),
+  }).index("by_starts_at", ["startsAt"]),
+
+  inventorySummaries: defineTable({
+    key: v.literal("main"),
+    lowStock: v.array(
+      v.object({
+        creationTime: v.number(),
+        currentStock: v.number(),
+        minimumStock: v.number(),
+        productId: v.id("products"),
+        ratio: v.number(),
+      })
+    ),
+    stockValue: v.number(),
+    updatedAt: v.number(),
+  }).index("by_key", ["key"]),
+
   products: defineTable({
     active: v.boolean(),
     category: productCategory,
@@ -44,6 +78,7 @@ export default defineSchema({
     salePrice: v.optional(v.number()),
     tracksStock: v.boolean(),
   })
+    .index("by_active", ["active"])
     .index("by_category", ["category"])
     .index("by_legacy_key", ["legacyKey"])
     .index("by_normalized_name", ["normalizedName"])
@@ -78,6 +113,7 @@ export default defineSchema({
     comment: v.optional(v.string()),
     counterparty: v.optional(v.string()),
     discount: v.optional(v.number()),
+    financial: v.optional(v.boolean()),
     incomingTotal: v.optional(v.number()),
     kind: transactionKind,
     legacyKey: v.optional(v.string()),
@@ -93,12 +129,13 @@ export default defineSchema({
     total: v.number(),
     unitPrice: v.optional(v.number()),
   })
+    .index("by_financial_and_date", ["financial", "occurredAt"])
     .index("by_kind_and_date", ["kind", "occurredAt"])
     .index("by_legacy_key", ["legacyKey"])
     .index("by_occurred_at", ["occurredAt"])
     .index("by_product_and_date", ["productId", "occurredAt"])
     .searchIndex("search_journal", {
-      filterFields: ["kind", "actorCharacterId"],
+      filterFields: ["financial", "kind", "actorCharacterId"],
       searchField: "searchText",
     }),
 
@@ -165,6 +202,7 @@ export default defineSchema({
     effect: v.optional(v.string()),
     family: v.string(),
     legacyKey: v.optional(v.string()),
+    missingCostReferences: v.optional(v.array(v.string())),
     name: v.string(),
     productId: v.optional(v.id("products")),
   })

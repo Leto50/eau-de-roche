@@ -2,9 +2,14 @@ import { v } from "convex/values"
 
 import { type Doc } from "./_generated/dataModel"
 import { mutation, query } from "./_generated/server"
+import {
+  buildAccountWeekSummaries,
+  readAccountWeekSummaries,
+} from "./lib/accountSummary"
 import { requireAdmin, requireUser } from "./lib/auth"
 import { assertFiniteRange, assertWholeNumberRange } from "./lib/numbers"
 import { readJournalBalance } from "./lib/journalSummary"
+import { readModelsAreReady } from "./lib/readModels"
 import {
   DAY_IN_MILLISECONDS,
   startOfUtcWeek,
@@ -13,6 +18,7 @@ import {
 
 const WEEK_COUNT = 8
 const MAX_AMOUNT = 1_000_000_000
+const MAX_TIMESTAMP = 8_640_000_000_000_000
 
 const DEFAULT_SETTINGS = {
   cashBalance: 2_183,
@@ -25,75 +31,19 @@ const DEFAULT_SETTINGS = {
   weeklyRent: 500,
 }
 
-const SALARY_TRANSACTION_KINDS = new Set<Doc<"transactions">["kind"]>([
-  "bundle",
-  "sale",
-  "service",
-])
-
-function transactionFlows(transaction: Doc<"transactions">) {
-  // Exchange directions describe merchandise: outgoing goods generate revenue,
-  // while incoming goods generate an expense for the boutique.
-  const incoming = transaction.outgoingTotal ?? Math.max(transaction.total, 0)
-  const outgoing =
-    transaction.incomingTotal ?? Math.abs(Math.min(transaction.total, 0))
-  return { incoming, net: incoming - outgoing, outgoing }
-}
-
-function salaryRevenue(transaction: Doc<"transactions">): number {
-  if (transaction.orderId || !SALARY_TRANSACTION_KINDS.has(transaction.kind)) {
-    return 0
-  }
-  return Math.max(transactionFlows(transaction).incoming, 0)
-}
-
 function calculateSalary(revenue: number, rate: number): number {
   return Math.round((revenue * rate + Number.EPSILON) * 100) / 100
 }
 
 function summarizeActors(
-  transactions: readonly Doc<"transactions">[],
+  actors: readonly Doc<"accountWeekSummaries">["actors"][number][],
   salaryRate: number
 ) {
-  const actors = new Map<
-    string,
-    {
-      actorCharacterId?: Doc<"transactions">["actorCharacterId"]
-      actorName: string
-      incoming: number
-      net: number
-      outgoing: number
-      salaryRevenue: number
-      transactionCount: number
-    }
-  >()
-
-  for (const transaction of transactions) {
-    const flows = transactionFlows(transaction)
-    if (flows.incoming === 0 && flows.outgoing === 0) continue
-    const key = transaction.actorCharacterId ?? `name:${transaction.actorName}`
-    const actor = actors.get(key) ?? {
-      ...(transaction.actorCharacterId
-        ? { actorCharacterId: transaction.actorCharacterId }
-        : {}),
-      actorName: transaction.actorName,
-      incoming: 0,
-      net: 0,
-      outgoing: 0,
-      salaryRevenue: 0,
-      transactionCount: 0,
-    }
-    actor.incoming += flows.incoming
-    actor.net += flows.net
-    actor.outgoing += flows.outgoing
-    actor.salaryRevenue += salaryRevenue(transaction)
-    actor.transactionCount += 1
-    actors.set(key, actor)
-  }
-
-  return [...actors.values()]
+  return actors
+    .filter((actor) => actor.incoming !== 0 || actor.outgoing !== 0)
     .map((actor) => ({
       ...actor,
+      net: actor.incoming - actor.outgoing,
       salary: calculateSalary(actor.salaryRevenue, salaryRate),
     }))
     .sort(
@@ -105,49 +55,54 @@ function summarizeActors(
 }
 
 export const overview = query({
-  args: {},
-  handler: async (ctx) => {
+  args: {
+    currentWeekStartsAt: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
     await requireUser(ctx)
-    const currentWeekStartsAt = startOfUtcWeek(Date.now())
+    if (args.currentWeekStartsAt !== undefined) {
+      assertFiniteRange(
+        args.currentWeekStartsAt,
+        0,
+        MAX_TIMESTAMP,
+        "Le début de semaine"
+      )
+    }
+    const currentWeekStartsAt = startOfUtcWeek(
+      args.currentWeekStartsAt ?? Date.now()
+    )
     const firstWeekStartsAt =
       currentWeekStartsAt - (WEEK_COUNT - 1) * WEEK_IN_MILLISECONDS
-    const [storedSettings, transactions, journalBalance] = await Promise.all([
+    const readModelsReady = await readModelsAreReady(ctx)
+    const summariesPromise = readModelsReady
+      ? readAccountWeekSummaries(ctx, firstWeekStartsAt, currentWeekStartsAt)
+      : ctx.db
+          .query("transactions")
+          .withIndex("by_occurred_at", (index) =>
+            index.gte("occurredAt", firstWeekStartsAt)
+          )
+          .collect()
+          .then(buildAccountWeekSummaries)
+    const [storedSettings, summaries, journalBalance] = await Promise.all([
       ctx.db
         .query("accountSettings")
         .withIndex("by_key", (index) => index.eq("key", "main"))
         .unique(),
-      ctx.db
-        .query("transactions")
-        .withIndex("by_occurred_at", (index) =>
-          index.gte("occurredAt", firstWeekStartsAt)
-        )
-        .collect(),
+      summariesPromise,
       readJournalBalance(ctx),
     ])
     const settings = storedSettings ?? DEFAULT_SETTINGS
     const salaryRate = settings.salaryRate ?? DEFAULT_SETTINGS.salaryRate
-    const financialTransactions = transactions.filter(
-      (transaction) =>
-        transaction.kind !== "adjustment" && transaction.kind !== "production"
+    const summariesByWeek = new Map(
+      summaries.map((summary) => [summary.startsAt, summary])
     )
     const weeks = Array.from({ length: WEEK_COUNT }, (_, index) => {
       const startsAt = currentWeekStartsAt - index * WEEK_IN_MILLISECONDS
-      const nextWeekStartsAt = startsAt + WEEK_IN_MILLISECONDS
       const endsAt = startsAt + 6.5 * DAY_IN_MILLISECONDS
-      const weeklyTransactions = financialTransactions.filter(
-        (transaction) =>
-          transaction.occurredAt >= startsAt &&
-          transaction.occurredAt < nextWeekStartsAt
-      )
-      const incoming = weeklyTransactions.reduce(
-        (total, transaction) => total + transactionFlows(transaction).incoming,
-        0
-      )
-      const outgoing = weeklyTransactions.reduce(
-        (total, transaction) => total + transactionFlows(transaction).outgoing,
-        0
-      )
-      const actors = summarizeActors(weeklyTransactions, salaryRate)
+      const summary = summariesByWeek.get(startsAt)
+      const incoming = summary?.incoming ?? 0
+      const outgoing = summary?.outgoing ?? 0
+      const actors = summarizeActors(summary?.actors ?? [], salaryRate)
       return {
         actors,
         endsAt,
@@ -160,7 +115,7 @@ export const overview = query({
           0
         ),
         startsAt,
-        transactionCount: weeklyTransactions.length,
+        transactionCount: summary?.transactionCount ?? 0,
       }
     })
     const currentWeek = weeks[0]

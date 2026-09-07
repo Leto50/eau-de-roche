@@ -2,7 +2,7 @@ import betterAuthTest from "@convex-dev/better-auth/test"
 import { convexTest } from "convex-test"
 import { afterEach, describe, expect, it, vi } from "vitest"
 
-import { api, components } from "./_generated/api"
+import { api, components, internal } from "./_generated/api"
 import schema from "./schema"
 import { modules } from "./test.setup"
 
@@ -78,7 +78,7 @@ describe("dashboard.overview", () => {
     const backend = createTestBackend()
     const member = await asAuthenticatedMember(backend)
 
-    await backend.run(async (ctx) => {
+    const { characterId, potionId } = await backend.run(async (ctx) => {
       const potionId = await ctx.db.insert("products", {
         active: true,
         category: "potion",
@@ -143,11 +143,28 @@ describe("dashboard.overview", () => {
         purchasePrice: 50,
         tracksStock: true,
       })
+      const characterId = await ctx.db.insert("characters", {
+        active: true,
+        name: "Alchimiste test",
+      })
+      return { characterId, potionId }
     })
+    await backend.mutation(internal.migrations.rebuildReadModels, {})
 
     const overview = await member.query(api.dashboard.overview, {})
 
     expect(overview.stockValue).toBe(81)
+
+    await member.mutation(api.transactions.record, {
+      characterId,
+      kind: "sale",
+      occurredAt: Date.now(),
+      productId: potionId,
+      quantity: 2,
+    })
+    const updatedOverview = await member.query(api.dashboard.overview, {})
+    expect(updatedOverview.stockValue).toBe(69)
+    expect(updatedOverview.weeklyBalance).toBe(24)
   })
 
   it("utilise la semaine calendaire du lundi au dimanche", async () => {

@@ -1,6 +1,7 @@
 import { convexQuery } from "@convex-dev/react-query"
 import { useSuspenseQuery } from "@tanstack/react-query"
 import { createFileRoute, Link } from "@tanstack/react-router"
+import { useQuery as useConvexQuery } from "convex/react"
 import {
   AlertTriangle,
   ArrowDownLeft,
@@ -12,6 +13,7 @@ import {
   Hammer,
   ScrollText,
 } from "lucide-react"
+import { useState, type ReactElement } from "react"
 
 import { OperationDialog } from "@/components/operation-dialog"
 import { PageError } from "@/components/page-error"
@@ -51,40 +53,33 @@ import {
   operationLabels,
 } from "@/lib/format"
 import { cn } from "@/lib/utils"
+import { startOfUtcDay, startOfUtcWeek } from "../../../shared/time"
+
+function dashboardQueryArgs(now = Date.now()) {
+  return {
+    currentWeekStartsAt: startOfUtcWeek(now),
+    todayStartsAt: startOfUtcDay(now),
+  }
+}
 
 export const Route = createFileRoute("/_app/")({
   component: DashboardPage,
   errorComponent: PageError,
   loader: async ({ context }) => {
-    await Promise.all([
-      context.queryClient.ensureQueryData(
-        convexQuery(api.dashboard.overview, {})
-      ),
-      context.queryClient.ensureQueryData(
-        convexQuery(api.products.selectable, {})
-      ),
-      context.queryClient.ensureQueryData(convexQuery(api.characters.list, {})),
-      context.queryClient.ensureQueryData(
-        convexQuery(api.recipes.listBundles, {})
-      ),
-      context.queryClient.ensureQueryData(convexQuery(api.recipes.list, {})),
-    ])
+    const queryArgs = dashboardQueryArgs()
+    await context.queryClient.ensureQueryData(
+      convexQuery(api.dashboard.overview, queryArgs)
+    )
+    return { queryArgs }
   },
   pendingComponent: PageSkeleton,
 })
 
 function DashboardPage() {
-  const { data } = useSuspenseQuery(convexQuery(api.dashboard.overview, {}))
-  const { data: products } = useSuspenseQuery(
-    convexQuery(api.products.selectable, {})
+  const { queryArgs } = Route.useLoaderData()
+  const { data } = useSuspenseQuery(
+    convexQuery(api.dashboard.overview, queryArgs)
   )
-  const { data: characters } = useSuspenseQuery(
-    convexQuery(api.characters.list, {})
-  )
-  const { data: bundles } = useSuspenseQuery(
-    convexQuery(api.recipes.listBundles, {})
-  )
-  const { data: recipes } = useSuspenseQuery(convexQuery(api.recipes.list, {}))
 
   return (
     <div className="animate-in duration-300 fade-in slide-in-from-bottom-1 motion-reduce:animate-none">
@@ -101,10 +96,7 @@ function DashboardPage() {
           <CardDescription>Que voulez-vous enregistrer ?</CardDescription>
         </CardHeader>
         <CardContent className="grid gap-2 sm:grid-cols-2">
-          <OperationDialog
-            bundles={bundles}
-            characters={characters}
-            products={products}
+          <DashboardOperationDialog
             trigger={
               <Button
                 className="h-20 w-full flex-col gap-1.5 px-3 text-center text-sm whitespace-normal shadow-sm"
@@ -115,12 +107,8 @@ function DashboardPage() {
               </Button>
             }
           />
-          <OperationDialog
-            bundles={bundles}
-            characters={characters}
+          <DashboardOperationDialog
             initialKind="production"
-            products={products}
-            recipes={recipes}
             trigger={
               <Button
                 className="h-20 w-full flex-col gap-1.5 border-[#6a5436]/40 bg-background/35 px-3 text-center text-sm whitespace-normal"
@@ -354,5 +342,45 @@ function DashboardPage() {
         </Card>
       </section>
     </div>
+  )
+}
+
+function DashboardOperationDialog({
+  initialKind = "exchange",
+  trigger,
+}: Readonly<{
+  initialKind?: "exchange" | "production"
+  trigger: ReactElement
+}>) {
+  const [open, setOpen] = useState(false)
+  const productionMode = initialKind === "production"
+  const products = useConvexQuery(api.products.selectable, open ? {} : "skip")
+  const characters = useConvexQuery(api.characters.list, open ? {} : "skip")
+  const bundles = useConvexQuery(
+    api.recipes.listBundles,
+    open && !productionMode ? {} : "skip"
+  )
+  const recipes = useConvexQuery(
+    api.recipes.list,
+    open && productionMode ? {} : "skip"
+  )
+  const loading =
+    open &&
+    (products === undefined ||
+      characters === undefined ||
+      (productionMode ? recipes === undefined : bundles === undefined))
+
+  return (
+    <OperationDialog
+      bundles={bundles ?? []}
+      characters={characters ?? []}
+      initialKind={initialKind}
+      loading={loading}
+      onOpenChange={setOpen}
+      open={open}
+      products={products ?? []}
+      recipes={recipes ?? []}
+      trigger={trigger}
+    />
   )
 }

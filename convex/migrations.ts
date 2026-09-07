@@ -3,13 +3,22 @@ import { ConvexError } from "convex/values"
 import seedData from "../data/inventaire.seed.json"
 import { type Doc, type Id } from "./_generated/dataModel"
 import { internalMutation, type MutationCtx } from "./_generated/server"
+import {
+  isFinancialTransaction,
+  rebuildAccountWeekSummaries,
+} from "./lib/accountSummary"
+import { rebuildInventorySummary } from "./lib/inventorySummary"
 import { roundSeptimsDown } from "./lib/numbers"
 import { orderTransactionLabel } from "./lib/order"
 import {
   canonicalProductCategory,
   isLootOnlyLegacyProduct,
 } from "./lib/products"
-import { calculateRecipeCost } from "./lib/recipeCost"
+import {
+  calculateRecipeCost,
+  rebuildRecipeCostProjections,
+} from "./lib/recipeCost"
+import { markReadModelsReady, readModelsAreReady } from "./lib/readModels"
 import { canonicalRecipeFamily } from "./lib/recipeFamilies"
 import { normalizeCatalogName, normalizeName } from "./lib/text"
 import { buildTransactionSearchText } from "./lib/transactionSearch"
@@ -1262,6 +1271,7 @@ export async function refreshWorkbookTransactionsData(ctx: MutationCtx) {
       ...(transaction.discount === undefined
         ? {}
         : { discount: transaction.discount }),
+      financial: isFinancialTransaction({ kind }),
       kind,
       legacyKey: transaction.legacyKey,
       occurredAt: transaction.occurredAt,
@@ -1287,6 +1297,9 @@ export async function refreshWorkbookTransactionsData(ctx: MutationCtx) {
   if (exchangeMigration) await ctx.db.delete(exchangeMigration._id)
   const conversion = await convertLegacyOperationsData(ctx)
   await rebuildJournalSummaryData(ctx)
+  if (await readModelsAreReady(ctx)) {
+    await rebuildAccountWeekSummaries(ctx)
+  }
 
   const productsAfter = await ctx.db.query("products").collect()
   for (const product of productsAfter) {
@@ -1316,6 +1329,23 @@ export async function refreshWorkbookTransactionsData(ctx: MutationCtx) {
     value: JSON.stringify(result),
   })
   return result
+}
+
+export async function rebuildReadModelsData(ctx: MutationCtx) {
+  const transactions = await ctx.db.query("transactions").collect()
+  let indexedTransactions = 0
+  for (const transaction of transactions) {
+    const financial = isFinancialTransaction(transaction)
+    if (transaction.financial === financial) continue
+    await ctx.db.patch(transaction._id, { financial })
+    indexedTransactions += 1
+  }
+  const projectedRecipes = await rebuildRecipeCostProjections(ctx)
+  await rebuildJournalSummaryData(ctx)
+  const accountWeeks = await rebuildAccountWeekSummaries(ctx)
+  await rebuildInventorySummary(ctx)
+  await markReadModelsReady(ctx)
+  return { accountWeeks, indexedTransactions, projectedRecipes }
 }
 
 export const convertLegacyOperations = internalMutation({
@@ -1366,6 +1396,11 @@ export const normalizeSupplierOrderStatuses = internalMutation({
 export const rebuildJournalSummary = internalMutation({
   args: {},
   handler: rebuildJournalSummaryData,
+})
+
+export const rebuildReadModels = internalMutation({
+  args: {},
+  handler: rebuildReadModelsData,
 })
 
 export const refreshWorkbookTransactions = internalMutation({

@@ -52,6 +52,7 @@ import {
   type SortDirection,
 } from "@/lib/table-sorting"
 import { cn } from "@/lib/utils"
+import { startOfUtcWeek } from "../../../shared/time"
 
 type ActorSortOption =
   | "incoming-asc"
@@ -102,17 +103,22 @@ export const Route = createFileRoute("/_app/compte")({
   component: AccountPage,
   errorComponent: PageError,
   loader: async ({ context }) => {
+    const queryArgs = { currentWeekStartsAt: startOfUtcWeek(Date.now()) }
     await context.queryClient.ensureQueryData(
-      convexQuery(api.accounts.overview, {})
+      convexQuery(api.accounts.overview, queryArgs)
     )
+    return { queryArgs }
   },
   pendingComponent: PageSkeleton,
 })
 
 function AccountPage() {
+  const { queryArgs } = Route.useLoaderData()
   const { data: session } = authClient.useSession()
   const isHydrated = useHydrated()
-  const { data } = useSuspenseQuery(convexQuery(api.accounts.overview, {}))
+  const { data } = useSuspenseQuery(
+    convexQuery(api.accounts.overview, queryArgs)
+  )
   const isAdmin =
     isHydrated && (session?.user.role?.split(",").includes("admin") ?? false)
   const currentWeek = data.weeks[0]

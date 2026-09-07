@@ -1,13 +1,10 @@
+import { startOfUtcDay } from "./time"
+
 export interface AttentionOrder {
   dueAt?: number
   kind: "client" | "supplier"
   status: "cancelled" | "delivered" | "open" | "ready"
   transactionId?: unknown
-}
-
-function startOfUtcDay(timestamp: number): number {
-  const date = new Date(timestamp)
-  return Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate())
 }
 
 export function orderNeedsAttention(order: AttentionOrder): boolean {

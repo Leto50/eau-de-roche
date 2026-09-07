@@ -27,6 +27,7 @@ import {
 } from "./lib/order"
 import { buildTransactionSearchText } from "./lib/transactionSearch"
 import { applyJournalBalanceChange } from "./lib/journalSummary"
+import { applyInventoryProductChanges } from "./lib/inventorySummary"
 import { orderKind, orderStatus } from "./lib/validators"
 import { orderStatusesForKind } from "../shared/order-status"
 
@@ -154,22 +155,29 @@ async function synchronizeLinkedTransaction(
     ...oldLines.map((line) => ctx.db.delete(line._id)),
     ...movements.map((movement) => ctx.db.delete(movement._id)),
   ])
+  const inventoryChanges = []
   for (const productId of stockIds) {
     const state = states.get(productId)
     const newDelta = prepared.deltas.get(productId)
     const product = state?.product ?? newDelta?.product
     if (!product) continue
     const baseStock = state?.baseStock ?? product.currentStock
+    const resultingStock = baseStock + (newDelta?.delta ?? 0)
     await ctx.db.patch(product._id, {
-      currentStock: baseStock + (newDelta?.delta ?? 0),
+      currentStock: resultingStock,
+    })
+    inventoryChanges.push({
+      after: { ...product, currentStock: resultingStock },
+      before: product,
     })
   }
+  await applyInventoryProductChanges(ctx, inventoryChanges)
 
   const firstLine = prepared.lines[0]
   const occurredAt = correction?.occurredAt ?? transaction.occurredAt
   const actorName = correction?.actorName ?? transaction.actorName
   const productName = orderTransactionLabel(orderKind, contactName)
-  await ctx.db.replace(transaction._id, {
+  const updatedTransaction = {
     ...((correction?.actorCharacterId ?? transaction.actorCharacterId)
       ? {
           actorCharacterId:
@@ -182,6 +190,7 @@ async function synchronizeLinkedTransaction(
       : {}),
     ...(transaction.comment ? { comment: transaction.comment } : {}),
     counterparty: contactName,
+    financial: true,
     incomingTotal: prepared.incomingTotal,
     kind: prepared.kind,
     ...(transaction.legacyKey ? { legacyKey: transaction.legacyKey } : {}),
@@ -205,11 +214,9 @@ async function synchronizeLinkedTransaction(
     ...(prepared.lines.length === 1 && firstLine
       ? { unitPrice: firstLine.unitPrice }
       : {}),
-  })
-  await applyJournalBalanceChange(ctx, transaction, {
-    kind: prepared.kind,
-    total: prepared.total,
-  })
+  }
+  await ctx.db.replace(transaction._id, updatedTransaction)
+  await applyJournalBalanceChange(ctx, transaction, updatedTransaction)
   for (const line of prepared.lines) {
     await ctx.db.insert("transactionLines", {
       ...(line.bundleId ? { bundleId: line.bundleId } : {}),
@@ -690,15 +697,25 @@ export const process = mutation({
         character,
         args.occurredAt
       )
-      await ctx.db.patch(transaction._id, {
+      const updatedTransaction = {
+        ...transaction,
         actorCharacterId: character._id,
         actorName: character.name,
+        financial: true,
         occurredAt: args.occurredAt,
         searchText: buildTransactionSearchText({
           ...transaction,
           actorName: character.name,
         }),
+      }
+      await ctx.db.patch(transaction._id, {
+        actorCharacterId: updatedTransaction.actorCharacterId,
+        actorName: updatedTransaction.actorName,
+        financial: updatedTransaction.financial,
+        occurredAt: updatedTransaction.occurredAt,
+        searchText: updatedTransaction.searchText,
       })
+      await applyJournalBalanceChange(ctx, transaction, updatedTransaction)
       await Promise.all(
         movements.map((movement) =>
           ctx.db.patch(movement._id, { occurredAt: args.occurredAt })
@@ -743,11 +760,12 @@ export const process = mutation({
     const prepared = withOrderTotal(preparedFromLines, order.kind, agreedTotal)
     const firstLine = prepared.lines[0]
     const productName = orderTransactionLabel(order.kind, order.contactName)
-    const transactionId = await ctx.db.insert("transactions", {
+    const transactionDetails = {
       actorCharacterId: character._id,
       actorName: character.name,
       actorUserId: String(user._id),
       counterparty: order.contactName,
+      financial: true,
       incomingTotal: prepared.incomingTotal,
       kind: prepared.kind,
       lineCount: prepared.lines.length,
@@ -761,12 +779,16 @@ export const process = mutation({
         counterparty: order.contactName,
         productName,
       }),
-      source: "web",
+      source: "web" as const,
       total: prepared.total,
       ...(prepared.lines.length === 1 && firstLine
         ? { unitPrice: firstLine.unitPrice }
         : {}),
-    })
+    }
+    const transactionId = await ctx.db.insert(
+      "transactions",
+      transactionDetails
+    )
     for (const line of prepared.lines) {
       await ctx.db.insert("transactionLines", {
         ...(line.bundleId ? { bundleId: line.bundleId } : {}),
@@ -780,9 +802,14 @@ export const process = mutation({
         unitPrice: line.unitPrice,
       })
     }
+    const inventoryChanges = []
     for (const { delta, product } of prepared.deltas.values()) {
       const resultingStock = product.currentStock + delta
       await ctx.db.patch(product._id, { currentStock: resultingStock })
+      inventoryChanges.push({
+        after: { ...product, currentStock: resultingStock },
+        before: product,
+      })
       await ctx.db.insert("stockMovements", {
         delta,
         occurredAt: args.occurredAt,
@@ -793,15 +820,13 @@ export const process = mutation({
         transactionId,
       })
     }
+    await applyInventoryProductChanges(ctx, inventoryChanges)
     await ctx.db.patch(order._id, {
       processedAt: args.occurredAt,
       ...(order.kind === "supplier" ? { status: "delivered" as const } : {}),
       transactionId,
     })
-    await applyJournalBalanceChange(ctx, undefined, {
-      kind: prepared.kind,
-      total: prepared.total,
-    })
+    await applyJournalBalanceChange(ctx, undefined, transactionDetails)
     await ctx.db.insert("auditLogs", {
       action:
         order.kind === "client" ? "order.payment_recorded" : "order.received",
