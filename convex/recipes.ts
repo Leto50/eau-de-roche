@@ -4,6 +4,7 @@ import { type Doc, type Id } from "./_generated/dataModel"
 import { mutation, query, type QueryCtx } from "./_generated/server"
 import { requireUser } from "./lib/auth"
 import { assertWholeNumberRange } from "./lib/numbers"
+import { rebuildInventorySummaryIfReady } from "./lib/inventorySummary"
 import { isProductDeclaredCraftable } from "./lib/products"
 import { calculateRecipeCost } from "./lib/recipeCost"
 import { recipeFamily } from "./lib/recipeFamilies"
@@ -17,21 +18,25 @@ const MAX_QUANTITY = 1_000_000
 async function completeRecipe(
   ctx: QueryCtx,
   recipe: Doc<"recipes">,
-  productsById: ReadonlyMap<string, Doc<"products">>
+  productsById?: ReadonlyMap<string, Doc<"products">>
 ) {
   const ingredients = await ctx.db
     .query("recipeIngredients")
     .withIndex("by_recipe", (index) => index.eq("recipeId", recipe._id))
     .collect()
-  const product = recipe.productId
-    ? productsById.get(recipe.productId)
-    : undefined
-  const { cost, missingReferences } = calculateRecipeCost(
-    ingredients,
-    productsById
-  )
+  const product =
+    recipe.productId && productsById
+      ? productsById.get(recipe.productId)
+      : undefined
+  const { cost, missingReferences } = productsById
+    ? calculateRecipeCost(ingredients, productsById)
+    : {
+        cost: recipe.cost,
+        missingReferences: recipe.missingCostReferences ?? [],
+      }
   const storedRecipe = { ...recipe }
   delete storedRecipe.cost
+  delete storedRecipe.missingCostReferences
 
   return {
     ...storedRecipe,
@@ -46,17 +51,20 @@ export const list = query({
   args: {},
   handler: async (ctx) => {
     await requireUser(ctx)
-    const [recipes, products] = await Promise.all([
-      ctx.db.query("recipes").collect(),
-      ctx.db.query("products").collect(),
-    ])
-    const productsById = new Map(
-      products.map((product) => [product._id, product])
+    const recipes = await ctx.db.query("recipes").collect()
+    const activeRecipes = recipes.filter((recipe) => recipe.active !== false)
+    const productsById = activeRecipes.some(
+      (recipe) => recipe.missingCostReferences === undefined
     )
+      ? new Map(
+          (await ctx.db.query("products").collect()).map((product) => [
+            product._id,
+            product,
+          ])
+        )
+      : undefined
     const withIngredients = await Promise.all(
-      recipes
-        .filter((recipe) => recipe.active !== false)
-        .map((recipe) => completeRecipe(ctx, recipe, productsById))
+      activeRecipes.map((recipe) => completeRecipe(ctx, recipe, productsById))
     )
     return withIngredients.sort((left, right) =>
       left.name.localeCompare(right.name, "fr")
@@ -128,14 +136,18 @@ export const listArchived = query({
   args: {},
   handler: async (ctx) => {
     await requireUser(ctx)
-    const [recipes, products] = await Promise.all([
-      ctx.db.query("recipes").collect(),
-      ctx.db.query("products").collect(),
-    ])
+    const recipes = await ctx.db.query("recipes").collect()
     const archived = recipes.filter((recipe) => recipe.active === false)
-    const productsById = new Map(
-      products.map((product) => [product._id, product])
+    const productsById = archived.some(
+      (recipe) => recipe.missingCostReferences === undefined
     )
+      ? new Map(
+          (await ctx.db.query("products").collect()).map((product) => [
+            product._id,
+            product,
+          ])
+        )
+      : undefined
     const withIngredients = await Promise.all(
       archived.map((recipe) => completeRecipe(ctx, recipe, productsById))
     )
@@ -363,7 +375,7 @@ export const save = mutation({
       })
     )
 
-    const { cost } = calculateRecipeCost(
+    const { cost, missingReferences } = calculateRecipeCost(
       preparedIngredients,
       ingredientProductsById
     )
@@ -374,6 +386,7 @@ export const save = mutation({
       ...(effect ? { effect } : {}),
       family,
       ...(existing?.legacyKey ? { legacyKey: existing.legacyKey } : {}),
+      missingCostReferences: missingReferences,
       name,
       productId: linkedProduct._id,
     }
@@ -405,6 +418,7 @@ export const save = mutation({
       entityId: recipeId,
       entityType: "recipe",
     })
+    await rebuildInventorySummaryIfReady(ctx)
     return recipeId
   },
 })
@@ -440,6 +454,7 @@ export const setActive = mutation({
       }
     }
     await ctx.db.patch(recipe._id, { active: args.active })
+    await rebuildInventorySummaryIfReady(ctx)
     await ctx.db.insert("auditLogs", {
       action: args.active ? "recipe.reactivated" : "recipe.archived",
       actorUserId: String(user._id),

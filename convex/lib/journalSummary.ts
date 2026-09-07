@@ -1,5 +1,9 @@
 import { type Doc } from "../_generated/dataModel"
 import { type MutationCtx, type QueryCtx } from "../_generated/server"
+import {
+  applyAccountWeekSummaryChange,
+  type AccountSummaryTransaction,
+} from "./accountSummary"
 
 type FinancialTransaction = Pick<Doc<"transactions">, "kind" | "total">
 
@@ -33,9 +37,10 @@ export async function readJournalBalance(ctx: QueryCtx): Promise<number> {
 
 export async function applyJournalBalanceChange(
   ctx: MutationCtx,
-  before: FinancialTransaction | undefined,
-  after: FinancialTransaction | undefined
+  before: AccountSummaryTransaction | undefined,
+  after: AccountSummaryTransaction | undefined
 ): Promise<void> {
+  await applyAccountWeekSummaryChange(ctx, before, after)
   const summary = await getStoredSummary(ctx)
   if (!summary) return
   const delta = journalContribution(after) - journalContribution(before)

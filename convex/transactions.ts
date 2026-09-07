@@ -4,6 +4,7 @@ import { paginationOptsValidator } from "convex/server"
 import { type Doc, type Id } from "./_generated/dataModel"
 import { mutation, query, type QueryCtx } from "./_generated/server"
 import { requireUser } from "./lib/auth"
+import { isFinancialTransaction } from "./lib/accountSummary"
 import { resolveOrderContact } from "./lib/contacts"
 import {
   assertFiniteRange,
@@ -17,7 +18,9 @@ import {
 } from "./lib/exchange"
 import { orderTransactionLabel, withOrderTotal } from "./lib/order"
 import { applyJournalBalanceChange } from "./lib/journalSummary"
+import { applyInventoryProductChanges } from "./lib/inventorySummary"
 import { prepareProduction } from "./lib/production"
+import { readModelsAreReady } from "./lib/readModels"
 import { normalizeName } from "./lib/text"
 import { buildTransactionSearchText } from "./lib/transactionSearch"
 import { financialTransactionKind, stockOperationKind } from "./lib/validators"
@@ -116,6 +119,7 @@ export const listPage = query({
   },
   handler: async (ctx, args) => {
     await requireUser(ctx)
+    const readModelsReady = await readModelsAreReady(ctx)
     const from = args.from
     const to = args.to
     if (
@@ -150,18 +154,21 @@ export const listPage = query({
           .query("transactions")
           .withSearchIndex("search_journal", (search) => {
             let filters = search.search("searchText", normalizedSearch)
+            if (readModelsReady) filters = filters.eq("financial", true)
             if (args.kind) filters = filters.eq("kind", args.kind)
             if (args.characterId) {
               filters = filters.eq("actorCharacterId", args.characterId)
             }
             return filters
           })
-        searchQuery = searchQuery.filter((filter) =>
-          filter.and(
-            filter.neq(filter.field("kind"), "adjustment"),
-            filter.neq(filter.field("kind"), "production")
+        if (!readModelsReady) {
+          searchQuery = searchQuery.filter((filter) =>
+            filter.and(
+              filter.neq(filter.field("kind"), "adjustment"),
+              filter.neq(filter.field("kind"), "production")
+            )
           )
-        )
+        }
         if (from !== undefined) {
           searchQuery = searchQuery.filter((filter) =>
             filter.gte(filter.field("occurredAt"), from)
@@ -202,27 +209,54 @@ export const listPage = query({
                   .withIndex("by_kind_and_date", (index) =>
                     index.eq("kind", args.kind!)
                   )
-        : from !== undefined && to !== undefined
-          ? ctx.db
-              .query("transactions")
-              .withIndex("by_occurred_at", (index) =>
-                index.gte("occurredAt", from).lt("occurredAt", to)
-              )
-          : from !== undefined
+        : readModelsReady
+          ? from !== undefined && to !== undefined
+            ? ctx.db
+                .query("transactions")
+                .withIndex("by_financial_and_date", (index) =>
+                  index
+                    .eq("financial", true)
+                    .gte("occurredAt", from)
+                    .lt("occurredAt", to)
+                )
+            : from !== undefined
+              ? ctx.db
+                  .query("transactions")
+                  .withIndex("by_financial_and_date", (index) =>
+                    index.eq("financial", true).gte("occurredAt", from)
+                  )
+              : to !== undefined
+                ? ctx.db
+                    .query("transactions")
+                    .withIndex("by_financial_and_date", (index) =>
+                      index.eq("financial", true).lt("occurredAt", to)
+                    )
+                : ctx.db
+                    .query("transactions")
+                    .withIndex("by_financial_and_date", (index) =>
+                      index.eq("financial", true)
+                    )
+          : from !== undefined && to !== undefined
             ? ctx.db
                 .query("transactions")
                 .withIndex("by_occurred_at", (index) =>
-                  index.gte("occurredAt", from)
+                  index.gte("occurredAt", from).lt("occurredAt", to)
                 )
-            : to !== undefined
+            : from !== undefined
               ? ctx.db
                   .query("transactions")
                   .withIndex("by_occurred_at", (index) =>
-                    index.lt("occurredAt", to)
+                    index.gte("occurredAt", from)
                   )
-              : ctx.db.query("transactions").withIndex("by_occurred_at")
+              : to !== undefined
+                ? ctx.db
+                    .query("transactions")
+                    .withIndex("by_occurred_at", (index) =>
+                      index.lt("occurredAt", to)
+                    )
+                : ctx.db.query("transactions").withIndex("by_occurred_at")
       let filteredQuery = indexedQuery.order("desc")
-      if (!args.kind) {
+      if (!args.kind && !readModelsReady) {
         filteredQuery = filteredQuery.filter((filter) =>
           filter.and(
             filter.neq(filter.field("kind"), "adjustment"),
@@ -310,13 +344,14 @@ export const recordExchange = mutation({
       prepared.lines.length === 1 && firstLine
         ? firstLine.productName
         : `${prepared.lines.length} références`
-    const transactionId = await ctx.db.insert("transactions", {
+    const transactionDetails = {
       actorCharacterId: character._id,
       actorName: character.name,
       actorUserId: String(user._id),
       ...(comment ? { comment } : {}),
       ...(counterparty ? { counterparty } : {}),
       ...(discount > 0 ? { discount } : {}),
+      financial: true,
       incomingTotal: prepared.incomingTotal,
       kind: prepared.kind,
       lineCount: prepared.lines.length,
@@ -330,12 +365,16 @@ export const recordExchange = mutation({
         counterparty,
         productName,
       }),
-      source: "web",
+      source: "web" as const,
       total: prepared.total,
       ...(prepared.lines.length === 1 && firstLine
         ? { unitPrice: firstLine.unitPrice }
         : {}),
-    })
+    }
+    const transactionId = await ctx.db.insert(
+      "transactions",
+      transactionDetails
+    )
 
     for (const line of prepared.lines) {
       await ctx.db.insert("transactionLines", {
@@ -350,9 +389,14 @@ export const recordExchange = mutation({
         unitPrice: line.unitPrice,
       })
     }
+    const inventoryChanges = []
     for (const { delta, product } of prepared.deltas.values()) {
       const resultingStock = product.currentStock + delta
       await ctx.db.patch(product._id, { currentStock: resultingStock })
+      inventoryChanges.push({
+        after: { ...product, currentStock: resultingStock },
+        before: product,
+      })
       await ctx.db.insert("stockMovements", {
         delta,
         occurredAt: args.occurredAt,
@@ -363,6 +407,7 @@ export const recordExchange = mutation({
         transactionId,
       })
     }
+    await applyInventoryProductChanges(ctx, inventoryChanges)
     await ctx.db.insert("auditLogs", {
       action: "exchange.recorded",
       actorUserId: String(user._id),
@@ -371,10 +416,7 @@ export const recordExchange = mutation({
       entityId: transactionId,
       entityType: "transaction",
     })
-    await applyJournalBalanceChange(ctx, undefined, {
-      kind: prepared.kind,
-      total: prepared.total,
-    })
+    await applyJournalBalanceChange(ctx, undefined, transactionDetails)
 
     return {
       incomingTotal: prepared.incomingTotal,
@@ -571,13 +613,14 @@ export const recordTrade = mutation({
       preparedLines.length === 1 && firstLine
         ? firstLine.productName
         : `${preparedLines.length} références`
-    const transactionId = await ctx.db.insert("transactions", {
+    const transactionDetails = {
       actorCharacterId: character._id,
       actorName: character.name,
       actorUserId: String(user._id),
       ...(comment ? { comment } : {}),
       ...(counterparty ? { counterparty } : {}),
       ...(discount > 0 ? { discount } : {}),
+      financial: true,
       kind: args.kind,
       lineCount: preparedLines.length,
       occurredAt,
@@ -589,12 +632,16 @@ export const recordTrade = mutation({
         counterparty,
         productName,
       }),
-      source: "web",
+      source: "web" as const,
       total,
       ...(preparedLines.length === 1 && firstLine
         ? { unitPrice: firstLine.unitPrice }
         : {}),
-    })
+    }
+    const transactionId = await ctx.db.insert(
+      "transactions",
+      transactionDetails
+    )
 
     for (const line of preparedLines) {
       await ctx.db.insert("transactionLines", {
@@ -608,12 +655,17 @@ export const recordTrade = mutation({
         unitPrice: line.unitPrice,
       })
     }
+    const inventoryChanges = []
     for (const requirement of stockRequirements.values()) {
       const delta =
         args.kind === "purchase" ? requirement.quantity : -requirement.quantity
       const resultingStock = requirement.product.currentStock + delta
       await ctx.db.patch(requirement.product._id, {
         currentStock: resultingStock,
+      })
+      inventoryChanges.push({
+        after: { ...requirement.product, currentStock: resultingStock },
+        before: requirement.product,
       })
       await ctx.db.insert("stockMovements", {
         delta,
@@ -625,6 +677,7 @@ export const recordTrade = mutation({
         transactionId,
       })
     }
+    await applyInventoryProductChanges(ctx, inventoryChanges)
     await ctx.db.insert("auditLogs", {
       action: `${args.kind}.recorded`,
       actorUserId: String(user._id),
@@ -633,7 +686,7 @@ export const recordTrade = mutation({
       entityId: transactionId,
       entityType: "transaction",
     })
-    await applyJournalBalanceChange(ctx, undefined, { kind: args.kind, total })
+    await applyJournalBalanceChange(ctx, undefined, transactionDetails)
 
     return { total, transactionId }
   },
@@ -731,13 +784,14 @@ export const record = mutation({
           : net
     const counterparty = cleanOptionalText(args.counterparty)
     const comment = cleanOptionalText(args.comment)
-    const transactionId = await ctx.db.insert("transactions", {
+    const transactionDetails = {
       actorCharacterId: character._id,
       actorName: character.name,
       actorUserId: String(user._id),
       ...(comment ? { comment } : {}),
       ...(counterparty ? { counterparty } : {}),
       ...(discount > 0 ? { discount } : {}),
+      financial: isFinancialTransaction({ kind: args.kind }),
       kind: args.kind,
       occurredAt: args.occurredAt,
       productId: product._id,
@@ -749,14 +803,23 @@ export const record = mutation({
         counterparty,
         productName: product.name,
       }),
-      source: "web",
+      source: "web" as const,
       total,
       unitPrice,
-    })
+    }
+    const transactionId = await ctx.db.insert(
+      "transactions",
+      transactionDetails
+    )
 
+    const inventoryChanges = []
     for (const change of stockDeltas.values()) {
       const changedStock = change.product.currentStock + change.delta
       await ctx.db.patch(change.product._id, { currentStock: changedStock })
+      inventoryChanges.push({
+        after: { ...change.product, currentStock: changedStock },
+        before: change.product,
+      })
       await ctx.db.insert("stockMovements", {
         delta: change.delta,
         occurredAt: args.occurredAt,
@@ -767,6 +830,7 @@ export const record = mutation({
         transactionId,
       })
     }
+    await applyInventoryProductChanges(ctx, inventoryChanges)
 
     await ctx.db.insert("auditLogs", {
       action: "transaction.recorded",
@@ -776,7 +840,7 @@ export const record = mutation({
       entityId: transactionId,
       entityType: "transaction",
     })
-    await applyJournalBalanceChange(ctx, undefined, { kind: args.kind, total })
+    await applyJournalBalanceChange(ctx, undefined, transactionDetails)
 
     return { resultingStock, transactionId }
   },
@@ -906,16 +970,23 @@ export const updateExchange = mutation({
       ...existingLines.map((line) => ctx.db.delete(line._id)),
       ...movements.map((movement) => ctx.db.delete(movement._id)),
     ])
+    const inventoryChanges = []
     for (const productId of stockIds) {
       const state = states.get(productId)
       const newDelta = prepared.deltas.get(productId)
       const product = state?.product ?? newDelta?.product
       if (!product) continue
       const baseStock = state?.baseStock ?? product.currentStock
+      const resultingStock = baseStock + (newDelta?.delta ?? 0)
       await ctx.db.patch(product._id, {
-        currentStock: baseStock + (newDelta?.delta ?? 0),
+        currentStock: resultingStock,
+      })
+      inventoryChanges.push({
+        after: { ...product, currentStock: resultingStock },
+        before: product,
       })
     }
+    await applyInventoryProductChanges(ctx, inventoryChanges)
 
     const comment = cleanOptionalText(args.comment)
     const counterparty = cleanOptionalText(args.counterparty)
@@ -944,13 +1015,14 @@ export const updateExchange = mutation({
       : prepared.lines.length === 1 && firstLine
         ? firstLine.productName
         : `${prepared.lines.length} références`
-    await ctx.db.replace(transaction._id, {
+    const updatedTransaction = {
       actorCharacterId: character._id,
       actorName: character.name,
       actorUserId: transaction.actorUserId ?? String(user._id),
       ...(comment ? { comment } : {}),
       ...(resolvedCounterparty ? { counterparty: resolvedCounterparty } : {}),
       ...(!linkedOrder && discount > 0 ? { discount } : {}),
+      financial: true,
       incomingTotal: prepared.incomingTotal,
       kind: prepared.kind,
       ...(transaction.legacyKey ? { legacyKey: transaction.legacyKey } : {}),
@@ -971,7 +1043,8 @@ export const updateExchange = mutation({
       ...(prepared.lines.length === 1 && firstLine
         ? { unitPrice: firstLine.unitPrice }
         : {}),
-    })
+    }
+    await ctx.db.replace(transaction._id, updatedTransaction)
     for (const line of prepared.lines) {
       await ctx.db.insert("transactionLines", {
         ...(line.bundleId ? { bundleId: line.bundleId } : {}),
@@ -1038,10 +1111,7 @@ export const updateExchange = mutation({
       entityId: transaction._id,
       entityType: "transaction",
     })
-    await applyJournalBalanceChange(ctx, transaction, {
-      kind: prepared.kind,
-      total: prepared.total,
-    })
+    await applyJournalBalanceChange(ctx, transaction, updatedTransaction)
 
     return {
       incomingTotal: prepared.incomingTotal,
@@ -1097,6 +1167,13 @@ export const remove = mutation({
       [...states.values()].map((state) =>
         ctx.db.patch(state.product._id, { currentStock: state.baseStock })
       )
+    )
+    await applyInventoryProductChanges(
+      ctx,
+      [...states.values()].map((state) => ({
+        after: { ...state.product, currentStock: state.baseStock },
+        before: state.product,
+      }))
     )
     await ctx.db.delete(transaction._id)
     await applyJournalBalanceChange(ctx, transaction, undefined)
@@ -1320,6 +1397,7 @@ export const update = mutation({
         ...(comment ? { comment } : {}),
         ...(counterparty ? { counterparty } : {}),
         ...(discount > 0 ? { discount } : {}),
+        financial: true,
         kind: args.kind,
         ...(transaction.legacyKey ? { legacyKey: transaction.legacyKey } : {}),
         lineCount: preparedLines.length,
@@ -1395,6 +1473,7 @@ export const update = mutation({
         ...(comment ? { comment } : {}),
         ...(counterparty ? { counterparty } : {}),
         ...(discount > 0 ? { discount } : {}),
+        financial: isFinancialTransaction({ kind: args.kind }),
         kind: args.kind,
         ...(transaction.legacyKey ? { legacyKey: transaction.legacyKey } : {}),
         occurredAt: args.occurredAt,
@@ -1415,6 +1494,7 @@ export const update = mutation({
         })
       }
     }
+    const inventoryChanges = []
     for (const state of states.values()) {
       const delta = newDeltas.get(state.product._id)?.delta ?? 0
       if (state.baseStock + delta < 0) {
@@ -1456,6 +1536,10 @@ export const update = mutation({
       const delta = newDeltas.get(state.product._id)?.delta ?? 0
       const resultingStock = state.baseStock + delta
       await ctx.db.patch(state.product._id, { currentStock: resultingStock })
+      inventoryChanges.push({
+        after: { ...state.product, currentStock: resultingStock },
+        before: state.product,
+      })
       if (delta !== 0) {
         await ctx.db.insert("stockMovements", {
           delta,
@@ -1468,6 +1552,7 @@ export const update = mutation({
         })
       }
     }
+    await applyInventoryProductChanges(ctx, inventoryChanges)
     await ctx.db.insert("auditLogs", {
       action: "transaction.updated",
       actorUserId: String(user._id),

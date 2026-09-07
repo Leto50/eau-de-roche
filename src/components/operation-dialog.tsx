@@ -609,6 +609,7 @@ export function OperationDialog({
   characters,
   initialKind = "exchange",
   initialProductId,
+  loading = false,
   onOpenChange,
   open: controlledOpen,
   products,
@@ -620,6 +621,7 @@ export function OperationDialog({
   characters: readonly Doc<"characters">[]
   initialKind?: OperationKind
   initialProductId?: Id<"products">
+  loading?: boolean
   onOpenChange?: (open: boolean) => void
   open?: boolean
   products: readonly Doc<"products">[]
@@ -1050,8 +1052,21 @@ export function OperationDialog({
           </DialogDescription>
         </DialogHeader>
 
+        {loading ? (
+          <div
+            aria-live="polite"
+            className="flex min-h-56 items-center justify-center gap-2 text-sm text-muted-foreground"
+          >
+            <Spinner
+              aria-hidden="true"
+              className="motion-reduce:animate-none"
+            />
+            Chargement des données…
+          </div>
+        ) : null}
         <form
-          className="mt-1 grid gap-5"
+          aria-hidden={loading || undefined}
+          className={cn("mt-1 grid gap-5", loading && "hidden")}
           noValidate
           onSubmit={(event) => {
             event.preventDefault()

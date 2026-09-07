@@ -355,7 +355,16 @@ describe("recipes", () => {
       ingredients: [{ productId: ingredientId, quantity: 2 }],
       name: "Élixir du veilleur",
     })
-    await backend.run((ctx) => ctx.db.patch(ingredientId, { purchasePrice: 2 }))
+    await admin.mutation(api.products.save, {
+      active: true,
+      category: "ingredient",
+      minimumStock: 2,
+      name: "Poudre minérale",
+      productId: ingredientId,
+      purchasePrice: 2,
+      salePrice: null,
+      targetStock: 20,
+    })
 
     const recipes = await admin.query(api.recipes.list, {})
     expect(recipes[0]).toMatchObject({

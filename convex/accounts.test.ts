@@ -23,12 +23,10 @@ async function insertTransaction(
 }
 
 describe("accounts", () => {
-  it("maintient le solde matérialisé lors des écritures du journal", async () => {
+  it("maintient les projections comptables lors des écritures du journal", async () => {
     const backend = createTestBackend()
     const employee = await asAuthenticatedUser(backend)
     const now = Date.now()
-    await insertTransaction(backend, now, 100)
-    await backend.mutation(internal.migrations.rebuildJournalSummary, {})
     const { characterId, productId } = await backend.run(async (ctx) => ({
       characterId: await ctx.db.insert("characters", {
         active: true,
@@ -45,6 +43,8 @@ describe("accounts", () => {
         tracksStock: true,
       }),
     }))
+    await insertTransaction(backend, now, 100)
+    await backend.mutation(internal.migrations.rebuildReadModels, {})
 
     const created = await employee.mutation(api.transactions.record, {
       characterId,
@@ -53,16 +53,167 @@ describe("accounts", () => {
       productId,
       quantity: 1,
     })
-    expect(
-      (await employee.query(api.accounts.overview, {})).journalBalance
-    ).toBe(125)
+    const afterCreation = await employee.query(api.accounts.overview, {
+      currentWeekStartsAt: now,
+    })
+    expect(afterCreation.journalBalance).toBe(125)
+    expect(afterCreation.weeks[0]).toMatchObject({
+      incoming: 125,
+      net: 125,
+      transactionCount: 2,
+    })
 
     await employee.mutation(api.transactions.remove, {
       transactionId: created.transactionId,
     })
+    const afterRemoval = await employee.query(api.accounts.overview, {
+      currentWeekStartsAt: now,
+    })
+    expect(afterRemoval.journalBalance).toBe(100)
+    expect(afterRemoval.weeks[0]).toMatchObject({
+      incoming: 100,
+      net: 100,
+      transactionCount: 1,
+    })
+  })
+
+  it("reconstruit les modèles de lecture de façon idempotente", async () => {
+    const backend = createTestBackend()
+    const employee = await asAuthenticatedUser(backend)
+    const now = Date.now()
+    await backend.run(async (ctx) => {
+      for (const [kind, total] of [
+        ["sale", 40],
+        ["sale", 0],
+        ["production", 0],
+      ] as const) {
+        await ctx.db.insert("transactions", {
+          actorName: "Alchimiste test",
+          kind,
+          occurredAt: now,
+          productName: "Écriture test",
+          quantity: 1,
+          source: "web",
+          total,
+        })
+      }
+    })
+
+    const firstResult = await backend.mutation(
+      internal.migrations.rebuildReadModels,
+      {}
+    )
+    const firstOverview = await employee.query(api.accounts.overview, {
+      currentWeekStartsAt: now,
+    })
+    const secondResult = await backend.mutation(
+      internal.migrations.rebuildReadModels,
+      {}
+    )
+    const journalPage = await employee.query(api.transactions.listPage, {
+      paginationOpts: { cursor: null, numItems: 10 },
+    })
+    const state = await backend.run(async (ctx) => ({
+      markers: await ctx.db
+        .query("systemSettings")
+        .withIndex("by_key", (index) => index.eq("key", "read-models-v1"))
+        .collect(),
+      summaries: await ctx.db.query("accountWeekSummaries").collect(),
+      transactions: await ctx.db.query("transactions").collect(),
+    }))
+
+    expect(firstResult).toMatchObject({
+      accountWeeks: 1,
+      indexedTransactions: 3,
+    })
+    expect(secondResult).toMatchObject({
+      accountWeeks: 1,
+      indexedTransactions: 0,
+    })
+    expect(state.markers).toHaveLength(1)
+    expect(state.summaries).toHaveLength(1)
     expect(
-      (await employee.query(api.accounts.overview, {})).journalBalance
-    ).toBe(100)
+      state.transactions.map((transaction) => transaction.financial)
+    ).toEqual([true, true, false])
+    expect(journalPage.page.map((transaction) => transaction.kind)).toEqual([
+      "sale",
+      "sale",
+    ])
+    expect(firstOverview.weeks[0]).toMatchObject({
+      actors: [
+        {
+          actorName: "Alchimiste test",
+          incoming: 40,
+          transactionCount: 1,
+        },
+      ],
+      incoming: 40,
+      transactionCount: 2,
+    })
+  })
+
+  it("déplace une correction vers la bonne semaine et le bon personnage", async () => {
+    const backend = createTestBackend()
+    const employee = await asAuthenticatedUser(backend)
+    const now = Date.now()
+    const previousWeek = now - 8 * 24 * 60 * 60 * 1_000
+    const { firstCharacterId, productId, secondCharacterId } =
+      await backend.run(async (ctx) => ({
+        firstCharacterId: await ctx.db.insert("characters", {
+          active: true,
+          name: "Premier personnage",
+        }),
+        productId: await ctx.db.insert("products", {
+          active: true,
+          category: "potion",
+          currentStock: 10,
+          minimumStock: 0,
+          name: "Potion mobile",
+          normalizedName: "potion mobile",
+          salePrice: 25,
+          tracksStock: true,
+        }),
+        secondCharacterId: await ctx.db.insert("characters", {
+          active: true,
+          name: "Second personnage",
+        }),
+      }))
+    await backend.mutation(internal.migrations.rebuildReadModels, {})
+    const recorded = await employee.mutation(api.transactions.record, {
+      characterId: firstCharacterId,
+      kind: "sale",
+      occurredAt: previousWeek,
+      productId,
+      quantity: 1,
+    })
+
+    await employee.mutation(api.transactions.update, {
+      characterId: secondCharacterId,
+      kind: "sale",
+      lines: [{ kind: "product", productId, quantity: 1, unitPrice: 25 }],
+      occurredAt: now,
+      transactionId: recorded.transactionId,
+    })
+    const account = await employee.query(api.accounts.overview, {
+      currentWeekStartsAt: now,
+    })
+
+    expect(account.weeks[0]).toMatchObject({
+      actors: [
+        {
+          actorName: "Second personnage",
+          incoming: 25,
+          transactionCount: 1,
+        },
+      ],
+      incoming: 25,
+      transactionCount: 1,
+    })
+    expect(account.weeks[1]).toMatchObject({
+      actors: [],
+      incoming: 0,
+      transactionCount: 0,
+    })
   })
 
   it("calcule le bilan courant et les charges initiales du classeur", async () => {
@@ -138,13 +289,14 @@ describe("accounts", () => {
   it("sépare les entrées et sorties brutes d’un échange mixte", async () => {
     const backend = createTestBackend()
     const employee = await asAuthenticatedUser(backend)
+    const now = Date.now()
 
     await backend.run((ctx) =>
       ctx.db.insert("transactions", {
         actorName: "Alixard Veliane",
         incomingTotal: 80,
         kind: "exchange",
-        occurredAt: Date.now(),
+        occurredAt: now,
         outgoingTotal: 100,
         productName: "Échange mixte",
         quantity: 2,
@@ -153,7 +305,15 @@ describe("accounts", () => {
       })
     )
 
-    const account = await employee.query(api.accounts.overview, {})
+    const queryArgs = { currentWeekStartsAt: now }
+    const account = await employee.query(api.accounts.overview, queryArgs)
+    await backend.mutation(internal.migrations.rebuildReadModels, {})
+    const projectedAccount = await employee.query(
+      api.accounts.overview,
+      queryArgs
+    )
+
+    expect(projectedAccount).toEqual(account)
 
     expect(account.weeks[0]).toMatchObject({
       actors: [
@@ -221,7 +381,15 @@ describe("accounts", () => {
       }
     })
 
-    const account = await employee.query(api.accounts.overview, {})
+    const queryArgs = { currentWeekStartsAt: now }
+    const account = await employee.query(api.accounts.overview, queryArgs)
+    await backend.mutation(internal.migrations.rebuildReadModels, {})
+    const projectedAccount = await employee.query(
+      api.accounts.overview,
+      queryArgs
+    )
+
+    expect(projectedAccount).toEqual(account)
 
     expect(account.weeks[0]).toMatchObject({
       actors: [

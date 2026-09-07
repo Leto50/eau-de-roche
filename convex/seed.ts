@@ -3,10 +3,17 @@ import { ConvexError, v } from "convex/values"
 import seedData from "../data/inventaire.seed.json"
 import { type Doc, type Id } from "./_generated/dataModel"
 import { mutation } from "./_generated/server"
+import {
+  isFinancialTransaction,
+  rebuildAccountWeekSummaries,
+} from "./lib/accountSummary"
+import { rebuildInventorySummary } from "./lib/inventorySummary"
 import { normalizeName } from "./lib/text"
 import { buildTransactionSearchText } from "./lib/transactionSearch"
 import { rebuildJournalSummary } from "./lib/journalSummary"
 import { isLootOnlyLegacyProduct } from "./lib/products"
+import { markReadModelsReady } from "./lib/readModels"
+import { rebuildRecipeCostProjections } from "./lib/recipeCost"
 import { canonicalRecipeFamily } from "./lib/recipeFamilies"
 import {
   canonicalProductName,
@@ -152,6 +159,7 @@ export const importWorkbook = mutation({
         ...(transaction.discount === undefined
           ? {}
           : { discount: transaction.discount }),
+        financial: isFinancialTransaction({ kind }),
         kind,
         legacyKey: transaction.legacyKey,
         occurredAt: transaction.occurredAt,
@@ -279,7 +287,11 @@ export const importWorkbook = mutation({
     const migration = await convertLegacyOperationsData(ctx)
     const recipeMigration = await repairRecipeReferencesData(ctx)
     const catalogNamesMigration = await normalizeCatalogNamesData(ctx)
+    await rebuildRecipeCostProjections(ctx)
     await rebuildJournalSummary(ctx)
+    await rebuildAccountWeekSummaries(ctx)
+    await rebuildInventorySummary(ctx)
+    await markReadModelsReady(ctx)
 
     const updatedAt = Date.parse(seedData.metadata.sourceModifiedAt)
     await ctx.db.insert("systemSettings", {
