@@ -81,7 +81,7 @@ if (positionalArgs.length !== 1 || !target || !PREVIEW_REFERENCE.test(target)) {
     runConvex(["export", "--prod", "--path", sourceArchive])
     await mkdir(extractedDirectory)
     await mkdir(sanitizedDirectory)
-    run("unzip", ["-q", sourceArchive, "-d", extractedDirectory])
+    run("bsdtar", ["-xf", sourceArchive, "-C", extractedDirectory])
 
     await cp(
       join(extractedDirectory, "_tables"),
@@ -114,7 +114,7 @@ if (positionalArgs.length !== 1 || !target || !PREVIEW_REFERENCE.test(target)) {
       sanitizedArchive,
       "--deployment",
       target,
-      "--replace",
+      "--replace-all",
       "--yes",
     ])
     runConvex([

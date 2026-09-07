@@ -202,7 +202,7 @@ pnpm preview:copy-data -- <équipe>:<projet>:preview/<nom-de-la-preview>
 
 Le script exporte la production en lecture seule, retire tous les composants
 Better Auth (comptes, sessions, stockage et JWKS), importe les tables métier
-avec `--replace`, puis reconstruit les modèles de lecture. Il refuse toute
+avec `--replace-all`, puis reconstruit les modèles de lecture. Il refuse toute
 destination qui n’est pas une référence `preview/`, qualifiée ou non par
 l’équipe et le projet, et ne touche jamais à la base de production. Les comptes
 de test et les variables `SITE_URL`,
