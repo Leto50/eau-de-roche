@@ -197,14 +197,15 @@ Une fois le premier build de branche terminé, copier un instantané cohérent d
 seules tables métier avec la référence indiquée dans les logs Convex :
 
 ```bash
-pnpm preview:copy-data -- preview/<nom-de-la-preview>
+pnpm preview:copy-data -- <équipe>:<projet>:preview/<nom-de-la-preview>
 ```
 
 Le script exporte la production en lecture seule, retire tous les composants
 Better Auth (comptes, sessions, stockage et JWKS), importe les tables métier
 avec `--replace`, puis reconstruit les modèles de lecture. Il refuse toute
-destination qui ne commence pas par `preview/` et ne touche jamais à la base de
-production. Les comptes de test et les variables `SITE_URL`,
+destination qui n’est pas une référence `preview/`, qualifiée ou non par
+l’équipe et le projet, et ne touche jamais à la base de production. Les comptes
+de test et les variables `SITE_URL`,
 `BETTER_AUTH_SECRET`, `INITIAL_ADMIN_IDENTIFIER` et
 `INITIAL_ADMIN_PASSWORD` doivent être configurés séparément sur la preview. Le
 build Netlify reconstruit automatiquement les modèles de lecture à chaque
@@ -233,4 +234,4 @@ nouveau déploiement de preview ; cette étape est ignorée en production.
 | `pnpm test`                                                        | Tests métier Convex + Better Auth                      |
 | `pnpm build`                                                       | Build client, SSR et fonction Netlify                  |
 | `pnpm build:netlify`                                               | Déploiement Convex puis build Netlify                  |
-| `pnpm preview:copy-data -- preview/<nom>`                          | Copie les seules données métier vers une preview       |
+| `pnpm preview:copy-data -- <équipe>:<projet>:preview/<nom>`        | Copie les seules données métier vers une preview       |

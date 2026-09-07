@@ -21,6 +21,8 @@ const BUSINESS_TABLES = [
   "transactions",
 ]
 const READ_MODELS_KEY = "read-models-v1"
+const PREVIEW_REFERENCE =
+  /^(?:[A-Za-z0-9_-]+:[A-Za-z0-9_-]+:)?preview\/[A-Za-z0-9._/-]+$/
 
 function fail(message) {
   console.error(message)
@@ -61,14 +63,9 @@ async function filterJsonLines(path, predicate) {
 
 const positionalArgs = process.argv.slice(2).filter((arg) => arg !== "--")
 const target = positionalArgs[0]
-if (
-  positionalArgs.length !== 1 ||
-  !target?.startsWith("preview/") ||
-  target.length <= "preview/".length ||
-  !/^preview\/[A-Za-z0-9._/-]+$/.test(target)
-) {
+if (positionalArgs.length !== 1 || !target || !PREVIEW_REFERENCE.test(target)) {
   fail(
-    "Usage : pnpm preview:copy-data -- preview/<nom>\nLa destination doit obligatoirement être un déploiement Convex de preview."
+    "Usage : pnpm preview:copy-data -- [<équipe>:<projet>:]preview/<nom>\nLa destination doit obligatoirement être un déploiement Convex de preview."
   )
 } else {
   const temporaryDirectory = await mkdtemp(
